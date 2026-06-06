@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { invoicesData } from "@/data/mock";
 import { PriorityInvoiceCard } from "@/components/PriorityInvoiceCard";
-import { InvoiceLifecycleBoard } from "@/components/InvoiceLifecycleBoard";
 import { DataTable } from "@/components/DataTable";
 import { EntityDrawer } from "@/components/EntityDrawer";
 import { PageHeader } from "@/components/PageHeader";
@@ -231,16 +230,7 @@ export function Invoices() {
         )}
       </section>
 
-      {/* 3. Invoice Lifecycle */}
-      <section>
-        <div className="mb-5">
-          <h3 className="text-xl font-bold tracking-tight text-foreground">Invoice Lifecycle</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Every invoice by stage, from draft to paid.</p>
-        </div>
-        <InvoiceLifecycleBoard invoices={invoices} onCardClick={(inv) => setSelectedInvoice(inv)} />
-      </section>
-
-      {/* 4. All Invoices */}
+      {/* 3. All Invoices */}
       <section>
         <div className="mb-5 flex items-baseline justify-between">
           <h3 className="text-xl font-bold tracking-tight text-foreground">All Invoices</h3>
