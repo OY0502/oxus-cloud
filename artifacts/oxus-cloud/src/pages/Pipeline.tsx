@@ -12,12 +12,12 @@ import { Clock } from "lucide-react";
 import { DealCard, DealCardData } from "@/components/DealCard";
 import { KanbanColumn } from "@/components/KanbanColumn";
 
-function SortableItem({ id, item, onClick }: { id: string; item: DealCardData; onClick: () => void }) {
+function SortableItem({ id, item, onClick, isArchived }: { id: string; item: DealCardData; onClick: () => void; isArchived?: boolean }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id });
   const style = { transform: CSS.Transform.toString(transform), transition };
 
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners} onClick={onClick}>
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners} onClick={onClick} className={isArchived ? "opacity-50 grayscale" : undefined}>
       <DealCard item={item} className="cursor-grab active:cursor-grabbing" />
     </div>
   );
@@ -35,41 +35,36 @@ export function Pipeline() {
 
   const columnIds = columns.map((c) => c.id);
 
-  const resolveColumnId = (id: string) => {
+  const resolveColumnId = (id: string, currentItems: typeof items) => {
     if (columnIds.includes(id)) return id;
-    const card = items.find((item) => item.id === id);
+    const card = currentItems.find((item) => item.id === id);
     return card ? card.columnId : null;
   };
 
-  const handleDragEnd = (event: any) => {
+  const handleDragOver = (event: any) => {
     const { active, over } = event;
     if (!over) return;
 
     const activeId = active.id as string;
     const overId = over.id as string;
-    if (activeId === overId) return;
 
-    const sourceColumn = resolveColumnId(activeId);
-    const targetColumn = resolveColumnId(overId);
-    if (!sourceColumn || !targetColumn) return;
+    setItems(prev => {
+      const sourceCol = resolveColumnId(activeId, prev);
+      const targetCol = resolveColumnId(overId, prev);
+      if (!sourceCol || !targetCol || sourceCol === targetCol) return prev;
+      return prev.map(item => item.id === activeId ? { ...item, columnId: targetCol } : item);
+    });
+  };
 
-    setItems((prev) => {
-      const activeIndex = prev.findIndex((item) => item.id === activeId);
-      if (activeIndex === -1) return prev;
+  const handleDragEnd = (event: any) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
 
-      if (sourceColumn !== targetColumn) {
-        const next = prev.map((item) =>
-          item.id === activeId ? { ...item, columnId: targetColumn } : item
-        );
-        const movedIndex = next.findIndex((item) => item.id === activeId);
-        const overIndex = next.findIndex((item) => item.id === overId);
-        const insertIndex = overIndex === -1 ? next.length - 1 : overIndex;
-        return arrayMove(next, movedIndex, insertIndex);
-      }
-
-      const overIndex = prev.findIndex((item) => item.id === overId);
-      if (overIndex === -1) return prev;
-      return arrayMove(prev, activeIndex, overIndex);
+    setItems(prev => {
+      const activeIdx = prev.findIndex(i => i.id === active.id);
+      const overIdx = prev.findIndex(i => i.id === over.id);
+      if (activeIdx === -1 || overIdx === -1) return prev;
+      return arrayMove(prev, activeIdx, overIdx);
     });
   };
 
@@ -87,7 +82,7 @@ export function Pipeline() {
       
       <div className="flex-1 overflow-x-auto overflow-y-hidden pb-4">
         <div className="flex gap-4 h-full min-w-max">
-          <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={handleDragEnd}>
+          <DndContext sensors={sensors} collisionDetection={closestCorners} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
             {columns.map((col) => {
               const colItems = items.filter((item) => item.columnId === col.id);
               return (
@@ -98,6 +93,7 @@ export function Pipeline() {
                       id={item.id}
                       item={item}
                       onClick={() => setSelectedCard(item)}
+                      isArchived={col.id === "archived"}
                     />
                   ))}
                 </KanbanColumn>

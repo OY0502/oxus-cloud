@@ -120,12 +120,12 @@ export function Finance() {
               >
                 <defs>
                   <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(var(--soft-green))" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="hsl(var(--soft-green))" stopOpacity={0}/>
+                    <stop offset="5%" stopColor="#6ee7b7" stopOpacity={0.35}/>
+                    <stop offset="95%" stopColor="#6ee7b7" stopOpacity={0}/>
                   </linearGradient>
                   <linearGradient id="colorExpenses" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(var(--soft-red))" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="hsl(var(--soft-red))" stopOpacity={0}/>
+                    <stop offset="5%" stopColor="#fca5a5" stopOpacity={0.35}/>
+                    <stop offset="95%" stopColor="#fca5a5" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
                 <XAxis 
@@ -161,8 +161,8 @@ export function Finance() {
                   type="monotone" 
                   dataKey="income" 
                   name="Income" 
-                  stroke="hsl(var(--soft-green))" 
-                  strokeWidth={3} 
+                  stroke="#6ee7b7"
+                  strokeWidth={2.5} 
                   fillOpacity={1} 
                   fill="url(#colorIncome)" 
                 />
@@ -170,8 +170,8 @@ export function Finance() {
                   type="monotone" 
                   dataKey="expenses" 
                   name="Expenses" 
-                  stroke="hsl(var(--soft-red))" 
-                  strokeWidth={3} 
+                  stroke="#fca5a5"
+                  strokeWidth={2.5} 
                   fillOpacity={1} 
                   fill="url(#colorExpenses)" 
                 />

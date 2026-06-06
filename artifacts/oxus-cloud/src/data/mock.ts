@@ -3,7 +3,8 @@ export const pipelineData = {
     { id: "new-lead", title: "New Lead", description: "Recently captured leads" },
     { id: "scoping", title: "Scoping", description: "Defining requirements" },
     { id: "proposal", title: "Proposal", description: "Awaiting client sign-off" },
-    { id: "won", title: "Won", description: "Closed deals" }
+    { id: "won", title: "Won", description: "Closed deals" },
+    { id: "archived", title: "Archived", description: "No longer active" }
   ],
   cards: [
     { id: "c1", columnId: "new-lead", company: "Northwind Studio", contact: "Mara Lindqvist", projectType: "E-commerce", budget: 8500, ownerAvatar: "https://i.pravatar.cc/150?u=11", ageInStage: 2, nextAction: "Follow-up email", tags: ["E-commerce", "React"], urgency: "normal" },
@@ -16,7 +17,10 @@ export const pipelineData = {
     { id: "c8", columnId: "proposal", company: "Cobalt Media", contact: "Sofia Marin", projectType: "CMS", budget: 12400, ownerAvatar: "https://i.pravatar.cc/150?u=18", ageInStage: 7, nextAction: "Follow-up", tags: ["Editorial", "Design"], urgency: "normal" },
     { id: "c9", columnId: "won", company: "Umbrella Group", contact: "Alice Williams", projectType: "Enterprise Tool", budget: 42000, ownerAvatar: "https://i.pravatar.cc/150?u=19", ageInStage: 1, nextAction: "Kickoff meeting", tags: ["Enterprise", "Custom"], urgency: "normal" },
     { id: "c10", columnId: "won", company: "Pulse Robotics", contact: "Kenji Watanabe", projectType: "Portal", budget: 27500, ownerAvatar: "https://i.pravatar.cc/150?u=20", ageInStage: 3, nextAction: "Resource allocation", tags: ["IoT", "Realtime"], urgency: "high" },
-    { id: "c11", columnId: "won", company: "Harbor & Co.", contact: "Grace Bennett", projectType: "Storefront", budget: 15600, ownerAvatar: "https://i.pravatar.cc/150?u=21", ageInStage: 2, nextAction: "Setup repo", tags: ["E-commerce", "Shopify"], urgency: "normal" }
+    { id: "c11", columnId: "won", company: "Harbor & Co.", contact: "Grace Bennett", projectType: "Storefront", budget: 15600, ownerAvatar: "https://i.pravatar.cc/150?u=21", ageInStage: 2, nextAction: "Setup repo", tags: ["E-commerce", "Shopify"], urgency: "normal" },
+    { id: "c12", columnId: "archived", company: "Solaris Media", contact: "Tom Baxter", projectType: "Rebrand", budget: 7200, ownerAvatar: "https://i.pravatar.cc/150?u=22", ageInStage: 45, nextAction: "Closed — budget cut", tags: ["Branding", "Design"], urgency: "low" },
+    { id: "c13", columnId: "archived", company: "Delta Ventures", contact: "Rina Chowdhury", projectType: "Landing Page", budget: 3800, ownerAvatar: "https://i.pravatar.cc/150?u=23", ageInStage: 30, nextAction: "Closed — no response", tags: ["Marketing", "Webflow"], urgency: "low" },
+    { id: "c14", columnId: "archived", company: "Epoch Systems", contact: "Chris Nguyen", projectType: "API Integration", budget: 11000, ownerAvatar: "https://i.pravatar.cc/150?u=24", ageInStage: 60, nextAction: "Closed — competitor chosen", tags: ["API", "Node.js"], urgency: "low" }
   ]
 };
 
@@ -98,11 +102,11 @@ export const financeData = {
     { month: "Dec", income: 52000, expenses: 28000, net: 24000 }
   ],
   categories: [
-    { name: "Payroll", value: 45, color: "var(--color-chart-1)" },
-    { name: "Software", value: 15, color: "var(--color-chart-2)" },
-    { name: "Contractors", value: 25, color: "var(--color-chart-3)" },
-    { name: "Marketing", value: 10, color: "var(--color-chart-4)" },
-    { name: "Office", value: 5, color: "var(--color-chart-5)" }
+    { name: "Payroll", value: 45, color: "#c4b5fd" },
+    { name: "Contractors", value: 25, color: "#a5f3fc" },
+    { name: "Software", value: 15, color: "#fca5a5" },
+    { name: "Marketing", value: 10, color: "#fde68a" },
+    { name: "Office", value: 5, color: "#bbf7d0" }
   ],
   transactions: [
     { id: "tx1", date: "2026-06-15", description: "Vercel Hosting", amount: -120, category: "Software" },

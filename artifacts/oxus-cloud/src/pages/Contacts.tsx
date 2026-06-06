@@ -98,7 +98,7 @@ export function Contacts() {
   ];
 
   return (
-    <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-6">
+    <div className="space-y-6">
       <PageHeader 
         title="Contacts" 
         subtitle="Manage leads, clients, and partners."

@@ -25,7 +25,7 @@ export function EntityDrawer({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className={cn("sm:max-w-xl w-[90vw] overflow-y-auto bg-background/95 backdrop-blur-xl border-l-border/50", className)}>
         <SheetHeader className="pb-6 border-b border-border/50">
-          <div className="flex justify-between items-start gap-4">
+          <div className="flex justify-between items-start gap-4 pr-10">
             <div>
               <SheetTitle className="text-2xl font-serif">{title}</SheetTitle>
               {description && <SheetDescription className="mt-1.5">{description}</SheetDescription>}
