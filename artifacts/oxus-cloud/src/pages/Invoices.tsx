@@ -50,6 +50,8 @@ import {
   Eye,
   CheckCircle2,
   Bell,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 
 type DateRange = "all" | "month" | "quarter" | "overdue-window";
@@ -63,6 +65,7 @@ export function Invoices() {
   const [clientFilter, setClientFilter] = useState<string>("all");
   const [dateRange, setDateRange] = useState<DateRange>("all");
   const [overdueOnly, setOverdueOnly] = useState(false);
+  const [attentionIndex, setAttentionIndex] = useState(0);
 
   const { toast } = useToast();
 
@@ -200,28 +203,49 @@ export function Invoices() {
 
       {/* 2. Needs Attention */}
       <section>
-        <div className="mb-5 flex items-baseline justify-between">
+        <div className="mb-5 flex items-center justify-between">
           <div>
             <h3 className="text-xl font-bold tracking-tight text-foreground">Needs Attention</h3>
             <p className="mt-1 text-sm text-muted-foreground">Overdue, due soon, and drafts waiting to be sent.</p>
           </div>
-          <span className="text-xs font-medium text-muted-foreground">{attentionInvoices.length} to review</span>
+          {attentionInvoices.length > 0 && (
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-medium text-muted-foreground">
+                {attentionIndex + 1} of {attentionInvoices.length}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setAttentionIndex((i) => Math.max(0, i - 1))}
+                  disabled={attentionIndex === 0}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => setAttentionIndex((i) => Math.min(attentionInvoices.length - 1, i + 1))}
+                  disabled={attentionIndex === attentionInvoices.length - 1}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
-        {attentionInvoices.length > 0 ? (
-          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-            {attentionInvoices.map((inv) => (
-              <PriorityInvoiceCard
-                key={inv.id}
-                invoice={inv}
-                onView={() => setSelectedInvoice(inv)}
-                onMarkPaid={() => markPaid(inv)}
-                onSendReminder={() => sendReminder(inv)}
-                onSend={() => sendInvoice(inv)}
-              />
-            ))}
-          </div>
-        ) : (
+        {attentionInvoices.length > 0 ? (() => {
+          const inv = attentionInvoices[attentionIndex];
+          return (
+            <PriorityInvoiceCard
+              key={inv.id}
+              invoice={inv}
+              onView={() => setSelectedInvoice(inv)}
+              onMarkPaid={() => { markPaid(inv); setAttentionIndex((i) => Math.min(i, Math.max(0, attentionInvoices.length - 2))); }}
+              onSendReminder={() => sendReminder(inv)}
+              onSend={() => sendInvoice(inv)}
+            />
+          );
+        })() : (
           <div className="flex flex-col items-center justify-center rounded-2xl border border-border bg-card py-16 text-center">
             <CheckCircle2 className="mb-3 h-8 w-8 text-soft-green" />
             <p className="font-medium text-foreground">All clear</p>
