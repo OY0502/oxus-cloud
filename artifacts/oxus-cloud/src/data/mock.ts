@@ -74,16 +74,18 @@ export const contactsData = [
 ];
 
 export const invoicesData = [
+  { id: "inv0", number: "INV-2026-020", client: "Cobalt Media", amount: 14800, status: "draft", date: "2026-06-05", dueDate: "2026-07-05", issueDate: "2026-06-05", lineItems: [{ description: "Brand Refresh Retainer", amount: 14800 }] },
+  { id: "inv0b", number: "INV-2026-019", client: "Verdant Farms", amount: 6700, status: "draft", date: "2026-06-04", dueDate: "2026-07-02", issueDate: "2026-06-04", lineItems: [{ description: "Discovery Workshop", amount: 6700 }] },
   { id: "inv1", number: "INV-2026-018", client: "Atlas Fintech", amount: 12500, status: "pending", date: "2026-06-01", dueDate: "2026-06-20", issueDate: "2026-06-01", lineItems: [{ description: "Development Milestone 1", amount: 12500 }] },
   { id: "inv2", number: "INV-2026-017", client: "Pulse Robotics", amount: 9200, status: "pending", date: "2026-05-28", dueDate: "2026-06-18", issueDate: "2026-05-28", lineItems: [{ description: "UI Design Phase", amount: 9200 }] },
+  { id: "inv5", number: "INV-2026-014", client: "Harbor & Co.", amount: 8300, status: "pending", date: "2026-06-03", dueDate: "2026-06-25", issueDate: "2026-06-03", lineItems: [{ description: "Monthly Maintenance", amount: 8300 }] },
   { id: "inv3", number: "INV-2026-016", client: "Initech Labs", amount: 7400, status: "overdue", date: "2026-05-02", dueDate: "2026-05-22", issueDate: "2026-05-02", lineItems: [{ description: "Consulting Retainer", amount: 7400 }] },
   { id: "inv4", number: "INV-2026-015", client: "Lumen Health", amount: 5600, status: "overdue", date: "2026-04-25", dueDate: "2026-05-15", issueDate: "2026-04-25", lineItems: [{ description: "Server Setup & Config", amount: 5600 }] },
-  { id: "inv5", number: "INV-2026-014", client: "Harbor & Co.", amount: 8300, status: "pending", date: "2026-06-03", dueDate: "2026-06-25", issueDate: "2026-06-03", lineItems: [{ description: "Monthly Maintenance", amount: 8300 }] },
-  { id: "inv6", number: "INV-2026-013", client: "Globex Logistics", amount: 11000, status: "paid", date: "2026-05-15", dueDate: "2026-05-30", issueDate: "2026-05-15", lineItems: [{ description: "Initial Deposit", amount: 11000 }] },
-  { id: "inv7", number: "INV-2026-012", client: "Verdant Farms", amount: 9800, status: "paid", date: "2026-05-10", dueDate: "2026-05-24", issueDate: "2026-05-10", lineItems: [{ description: "Final Payment", amount: 9800 }] },
-  { id: "inv8", number: "INV-2026-011", client: "Umbrella Group", amount: 21000, status: "paid", date: "2026-05-04", dueDate: "2026-05-18", issueDate: "2026-05-04", lineItems: [{ description: "Enterprise License", amount: 21000 }] },
-  { id: "inv9", number: "INV-2026-010", client: "Cobalt Media", amount: 6200, status: "paid", date: "2026-04-28", dueDate: "2026-05-12", issueDate: "2026-04-28", lineItems: [{ description: "Content Migration", amount: 6200 }] },
-  { id: "inv10", number: "INV-2026-009", client: "Northwind Studio", amount: 4500, status: "paid", date: "2026-04-20", dueDate: "2026-05-04", issueDate: "2026-04-20", lineItems: [{ description: "Design System Audit", amount: 4500 }] }
+  { id: "inv6", number: "INV-2026-013", client: "Globex Logistics", amount: 11000, status: "paid", date: "2026-05-15", dueDate: "2026-05-30", paidDate: "2026-06-02", issueDate: "2026-05-15", lineItems: [{ description: "Initial Deposit", amount: 11000 }] },
+  { id: "inv7", number: "INV-2026-012", client: "Verdant Farms", amount: 9800, status: "paid", date: "2026-05-10", dueDate: "2026-05-24", paidDate: "2026-06-01", issueDate: "2026-05-10", lineItems: [{ description: "Final Payment", amount: 9800 }] },
+  { id: "inv8", number: "INV-2026-011", client: "Umbrella Group", amount: 21000, status: "paid", date: "2026-05-04", dueDate: "2026-05-18", paidDate: "2026-05-21", issueDate: "2026-05-04", lineItems: [{ description: "Enterprise License", amount: 21000 }] },
+  { id: "inv9", number: "INV-2026-010", client: "Cobalt Media", amount: 6200, status: "paid", date: "2026-04-28", dueDate: "2026-05-12", paidDate: "2026-05-19", issueDate: "2026-04-28", lineItems: [{ description: "Content Migration", amount: 6200 }] },
+  { id: "inv10", number: "INV-2026-009", client: "Northwind Studio", amount: 4500, status: "paid", date: "2026-04-20", dueDate: "2026-05-04", paidDate: "2026-05-09", issueDate: "2026-04-20", lineItems: [{ description: "Design System Audit", amount: 4500 }] }
 ];
 
 export const financeData = {
