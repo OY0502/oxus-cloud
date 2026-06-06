@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import { DndContext, closestCorners, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { arrayMove, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -33,40 +33,32 @@ export function Pipeline() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  const columnIds = columns.map((c) => c.id);
+  const columnIds = useMemo(() => columns.map((c) => c.id), [columns]);
 
-  const resolveColumnId = (id: string, currentItems: typeof items) => {
-    if (columnIds.includes(id)) return id;
-    const card = currentItems.find((item) => item.id === id);
-    return card ? card.columnId : null;
-  };
-
-  const handleDragOver = (event: any) => {
+  const handleDragOver = useCallback((event: any) => {
     const { active, over } = event;
     if (!over) return;
-
     const activeId = active.id as string;
     const overId = over.id as string;
-
     setItems(prev => {
-      const sourceCol = resolveColumnId(activeId, prev);
-      const targetCol = resolveColumnId(overId, prev);
+      const resolve = (id: string) => columnIds.includes(id) ? id : prev.find(i => i.id === id)?.columnId ?? null;
+      const sourceCol = resolve(activeId);
+      const targetCol = resolve(overId);
       if (!sourceCol || !targetCol || sourceCol === targetCol) return prev;
       return prev.map(item => item.id === activeId ? { ...item, columnId: targetCol } : item);
     });
-  };
+  }, [columnIds]);
 
-  const handleDragEnd = (event: any) => {
+  const handleDragEnd = useCallback((event: any) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-
     setItems(prev => {
       const activeIdx = prev.findIndex(i => i.id === active.id);
       const overIdx = prev.findIndex(i => i.id === over.id);
       if (activeIdx === -1 || overIdx === -1) return prev;
       return arrayMove(prev, activeIdx, overIdx);
     });
-  };
+  }, []);
 
   return (
     <div className="h-[calc(100vh-6rem)] flex flex-col -mx-2 px-2">
