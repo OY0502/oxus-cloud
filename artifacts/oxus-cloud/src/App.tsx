@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
-import { Layout } from "@/components/Layout";
+import { AppShell } from "@/components/AppShell";
 import { Dashboard } from "@/pages/Dashboard";
 import { Pipeline } from "@/pages/Pipeline";
 import { Quotes } from "@/pages/Quotes";
@@ -24,15 +24,15 @@ function Router() {
     <Switch>
       <Route path="/login" component={Login} />
       <Route path="/signup" component={Signup} />
-      <Route path="/" component={() => <Layout><Dashboard /></Layout>} />
-      <Route path="/pipeline" component={() => <Layout><Pipeline /></Layout>} />
-      <Route path="/quotes" component={() => <Layout><Quotes /></Layout>} />
-      <Route path="/projects" component={() => <Layout><Projects /></Layout>} />
-      <Route path="/calendar" component={() => <Layout><Calendar /></Layout>} />
-      <Route path="/team" component={() => <Layout><Team /></Layout>} />
-      <Route path="/contacts" component={() => <Layout><Contacts /></Layout>} />
-      <Route path="/invoices" component={() => <Layout><Invoices /></Layout>} />
-      <Route path="/finance" component={() => <Layout><Finance /></Layout>} />
+      <Route path="/" component={() => <AppShell><Dashboard /></AppShell>} />
+      <Route path="/pipeline" component={() => <AppShell><Pipeline /></AppShell>} />
+      <Route path="/quotes" component={() => <AppShell><Quotes /></AppShell>} />
+      <Route path="/projects" component={() => <AppShell><Projects /></AppShell>} />
+      <Route path="/calendar" component={() => <AppShell><Calendar /></AppShell>} />
+      <Route path="/team" component={() => <AppShell><Team /></AppShell>} />
+      <Route path="/contacts" component={() => <AppShell><Contacts /></AppShell>} />
+      <Route path="/invoices" component={() => <AppShell><Invoices /></AppShell>} />
+      <Route path="/finance" component={() => <AppShell><Finance /></AppShell>} />
       <Route component={NotFound} />
     </Switch>
   );

@@ -1,72 +1,24 @@
 import React, { useState } from "react";
-import { DndContext, closestCorners, KeyboardSensor, PointerSensor, useSensor, useSensors, useDroppable } from "@dnd-kit/core";
-import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
+import { DndContext, closestCorners, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { arrayMove, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { pipelineData } from "@/data/mock";
-import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { EntityDrawer } from "@/components/EntityDrawer";
+import { PageHeader } from "@/components/PageHeader";
+import { Button } from "@/components/ui/button";
+import { Clock } from "lucide-react";
+import { DealCard, DealCardData } from "@/components/DealCard";
+import { KanbanColumn } from "@/components/KanbanColumn";
 
-function SortableItem({ id, item, onClick }: { id: string, item: any, onClick: () => void }) {
+function SortableItem({ id, item, onClick }: { id: string; item: DealCardData; onClick: () => void }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id });
   const style = { transform: CSS.Transform.toString(transform), transition };
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners} onClick={onClick}>
-      <Card className="mb-3 cursor-grab active:cursor-grabbing hover-elevate">
-        <CardContent className="p-4">
-          <div className="flex justify-between items-start mb-2">
-            <h4 className="font-medium text-sm">{item.company}</h4>
-            <span className="text-xs font-semibold text-chart-2">${item.value.toLocaleString()}</span>
-          </div>
-          <p className="text-xs text-muted-foreground mb-3">{item.contact}</p>
-          <div className="flex justify-between items-center">
-            <div className="flex gap-1">
-              {item.tags.map((tag: string) => (
-                <Badge key={tag} variant="secondary" className="text-[10px] px-1.5 py-0">
-                  {tag}
-                </Badge>
-              ))}
-            </div>
-            <Avatar className="w-6 h-6">
-              <AvatarImage src={item.avatar} />
-              <AvatarFallback>U</AvatarFallback>
-            </Avatar>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function PipelineColumn({
-  column,
-  items,
-  onCardClick,
-}: {
-  column: { id: string; title: string };
-  items: any[];
-  onCardClick: (item: any) => void;
-}) {
-  const { setNodeRef, isOver } = useDroppable({ id: column.id });
-
-  return (
-    <div className="flex-none w-80 bg-muted/30 rounded-lg p-4 flex flex-col">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="font-semibold text-sm">{column.title}</h3>
-        <Badge variant="outline" className="bg-background">{items.length}</Badge>
-      </div>
-      <div
-        ref={setNodeRef}
-        className={`flex-1 overflow-y-auto rounded-md transition-colors min-h-24 ${isOver ? "bg-primary/5 ring-2 ring-primary/20" : ""}`}
-      >
-        <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
-          {items.map((item) => (
-            <SortableItem key={item.id} id={item.id} item={item} onClick={() => onCardClick(item)} />
-          ))}
-        </SortableContext>
-      </div>
+      <DealCard item={item} className="cursor-grab active:cursor-grabbing" />
     </div>
   );
 }
@@ -105,7 +57,6 @@ export function Pipeline() {
       const activeIndex = prev.findIndex((item) => item.id === activeId);
       if (activeIndex === -1) return prev;
 
-      // Moving across columns: reassign columnId, then position near the drop target.
       if (sourceColumn !== targetColumn) {
         const next = prev.map((item) =>
           item.id === activeId ? { ...item, columnId: targetColumn } : item
@@ -116,7 +67,6 @@ export function Pipeline() {
         return arrayMove(next, movedIndex, insertIndex);
       }
 
-      // Reordering within the same column.
       const overIndex = prev.findIndex((item) => item.id === overId);
       if (overIndex === -1) return prev;
       return arrayMove(prev, activeIndex, overIndex);
@@ -124,51 +74,105 @@ export function Pipeline() {
   };
 
   return (
-    <div className="h-[calc(100vh-8rem)] flex flex-col">
-      <div className="mb-6 flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-foreground">Pipeline</h2>
-          <p className="text-muted-foreground text-sm">Manage your leads and deals.</p>
+    <div className="h-[calc(100vh-6rem)] flex flex-col -mx-2 px-2">
+      <PageHeader 
+        title="Pipeline" 
+        subtitle="Manage leads and deals through the sales process."
+        actions={
+          <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
+            Add Deal
+          </Button>
+        }
+      />
+      
+      <div className="flex-1 overflow-x-auto overflow-y-hidden pb-4">
+        <div className="flex gap-4 h-full min-w-max">
+          <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={handleDragEnd}>
+            {columns.map((col) => {
+              const colItems = items.filter((item) => item.columnId === col.id);
+              return (
+                <KanbanColumn key={col.id} column={col} items={colItems}>
+                  {colItems.map((item) => (
+                    <SortableItem
+                      key={item.id}
+                      id={item.id}
+                      item={item}
+                      onClick={() => setSelectedCard(item)}
+                    />
+                  ))}
+                </KanbanColumn>
+              );
+            })}
+          </DndContext>
         </div>
       </div>
-      
-      <div className="flex-1 flex gap-6 overflow-x-auto pb-4">
-        <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={handleDragEnd}>
-          {columns.map((col) => (
-            <PipelineColumn
-              key={col.id}
-              column={col}
-              items={items.filter((item) => item.columnId === col.id)}
-              onCardClick={setSelectedCard}
-            />
-          ))}
-        </DndContext>
-      </div>
 
-      <Sheet open={!!selectedCard} onOpenChange={() => setSelectedCard(null)}>
-        <SheetContent className="sm:max-w-md">
-          <SheetHeader>
-            <SheetTitle>{selectedCard?.company} - Quote Details</SheetTitle>
-            <SheetDescription>Lead value: ${selectedCard?.value.toLocaleString()}</SheetDescription>
-          </SheetHeader>
-          {selectedCard && (
-            <div className="mt-6 space-y-4">
-              <div>
-                <h4 className="text-sm font-medium text-muted-foreground">Contact</h4>
-                <p className="text-base">{selectedCard.contact}</p>
+      <EntityDrawer 
+        open={!!selectedCard} 
+        onOpenChange={(open) => !open && setSelectedCard(null)}
+        title={selectedCard?.company}
+        description={`Lead value: $${selectedCard?.budget?.toLocaleString()}`}
+        headerActions={
+          <Button variant="outline" size="sm">Edit Deal</Button>
+        }
+      >
+        {selectedCard && (
+          <div className="space-y-8">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-4 bg-muted/30 rounded-xl border border-border/50">
+                <span className="text-xs text-muted-foreground uppercase tracking-wider font-semibold mb-1 block">Project Type</span>
+                <span className="text-sm font-medium">{selectedCard.projectType}</span>
               </div>
-              <div>
-                <h4 className="text-sm font-medium text-muted-foreground">Tags</h4>
-                <div className="flex gap-2 mt-1">
-                  {selectedCard.tags.map((tag: string) => (
-                    <Badge key={tag} className="bg-chart-1 text-white">{tag}</Badge>
-                  ))}
+              <div className="p-4 bg-muted/30 rounded-xl border border-border/50">
+                <span className="text-xs text-muted-foreground uppercase tracking-wider font-semibold mb-1 block">Contact</span>
+                <span className="text-sm font-medium">{selectedCard.contact}</span>
+              </div>
+              <div className="p-4 bg-muted/30 rounded-xl border border-border/50">
+                <span className="text-xs text-muted-foreground uppercase tracking-wider font-semibold mb-1 block">Age in Stage</span>
+                <span className="text-sm font-medium flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5" /> {selectedCard.ageInStage} days
+                </span>
+              </div>
+              <div className="p-4 bg-muted/30 rounded-xl border border-border/50">
+                <span className="text-xs text-muted-foreground uppercase tracking-wider font-semibold mb-1 block">Next Action</span>
+                <span className="text-sm font-medium text-primary">{selectedCard.nextAction}</span>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-sm font-semibold text-foreground mb-3">Tags</h4>
+              <div className="flex gap-2">
+                {selectedCard.tags.map((tag: string) => (
+                  <Badge key={tag} variant="secondary">{tag}</Badge>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-sm font-semibold text-foreground mb-3">Owner</h4>
+              <div className="flex items-center gap-3 p-3 bg-muted/20 rounded-xl border border-border/50">
+                <Avatar className="w-10 h-10 border-2 border-background">
+                  <AvatarImage src={selectedCard.ownerAvatar} />
+                  <AvatarFallback>U</AvatarFallback>
+                </Avatar>
+                <div>
+                  <p className="text-sm font-medium text-foreground">Alex Designer</p>
+                  <p className="text-xs text-muted-foreground">Sales Executive</p>
                 </div>
               </div>
             </div>
-          )}
-        </SheetContent>
-      </Sheet>
+
+            <div className="pt-6 border-t border-border/50 flex gap-3">
+              <Button className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90">
+                Convert to Project
+              </Button>
+              <Button variant="outline" className="flex-1 text-destructive hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30">
+                Mark as Lost
+              </Button>
+            </div>
+          </div>
+        )}
+      </EntityDrawer>
     </div>
   );
 }

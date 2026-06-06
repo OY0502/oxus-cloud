@@ -18,30 +18,52 @@ export function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-md bg-card border-border shadow-2xl">
-        <CardContent className="p-8">
-          <div className="flex flex-col items-center mb-8">
-            <div className="w-12 h-12 rounded bg-primary flex items-center justify-center text-primary-foreground font-bold mb-4">
-              O
-            </div>
-            <h1 className="font-serif font-bold text-3xl tracking-wide text-primary">OXUS Cloud</h1>
-            <p className="text-muted-foreground mt-2 text-sm">Welcome back to your workspace</p>
+    <div className="min-h-screen flex bg-background">
+      <div className="hidden lg:flex lg:w-1/2 bg-sidebar relative overflow-hidden flex-col justify-between p-12">
+        <div className="absolute inset-0 bg-gradient-to-br from-logo-blue/20 to-transparent pointer-events-none" />
+        <div className="absolute top-0 right-0 p-32 opacity-20 pointer-events-none">
+          <svg width="400" height="400" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="2" className="text-logo-blue" />
+            <circle cx="50" cy="50" r="30" stroke="currentColor" strokeWidth="2" className="text-logo-blue" />
+          </svg>
+        </div>
+        
+        <div className="z-10 flex items-center gap-2">
+          <div className="w-8 h-8 rounded bg-chart-4 flex items-center justify-center text-sidebar font-bold">O</div>
+          <span className="font-serif font-bold text-xl tracking-wide text-[#D1E8FF]">OXUS Cloud</span>
+        </div>
+
+        <div className="z-10 max-w-md">
+          <h1 className="text-4xl font-serif font-bold text-white mb-4">Agency OS for modern teams.</h1>
+          <p className="text-sidebar-foreground/80 text-lg">Manage projects, pipelines, and finance in one beautiful interface designed for clarity.</p>
+        </div>
+      </div>
+      
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-background relative">
+        <div className="w-full max-w-md">
+          <div className="lg:hidden flex items-center gap-2 mb-12">
+            <div className="w-8 h-8 rounded bg-primary flex items-center justify-center text-primary-foreground font-bold">O</div>
+            <span className="font-serif font-bold text-xl tracking-wide text-primary">OXUS Cloud</span>
+          </div>
+
+          <div className="mb-8">
+            <h2 className="text-3xl font-bold tracking-tight text-foreground">Welcome back</h2>
+            <p className="text-muted-foreground mt-2">Enter your credentials to access your workspace.</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" placeholder="alex@oxus.cloud" required className="bg-background" />
+              <Input id="email" type="email" placeholder="alex@oxus.cloud" required className="bg-background h-12" />
             </div>
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <Label htmlFor="password">Password</Label>
-                <Link href="#" className="text-xs text-primary hover:underline">Forgot password?</Link>
+                <Link href="#" className="text-xs text-primary font-medium hover:underline">Forgot password?</Link>
               </div>
-              <Input id="password" type="password" required className="bg-background" />
+              <Input id="password" type="password" required className="bg-background h-12" />
             </div>
-            <Button type="submit" className="w-full bg-primary text-primary-foreground hover:bg-primary/90" disabled={loading}>
+            <Button type="submit" className="w-full h-12 text-md bg-primary text-primary-foreground hover:bg-primary/90" disabled={loading}>
               {loading ? "Signing in..." : "Sign In"}
             </Button>
           </form>
@@ -50,8 +72,8 @@ export function Login() {
             Don't have an account?{" "}
             <Link href="/signup" className="text-primary font-medium hover:underline">Sign up</Link>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }

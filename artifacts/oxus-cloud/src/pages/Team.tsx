@@ -1,102 +1,228 @@
 import React, { useState } from "react";
 import { teamData } from "@/data/mock";
-import { Card, CardContent } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/PageHeader";
+import { DataTable } from "@/components/DataTable";
+import { StatusBadge } from "@/components/StatusBadge";
+import { EntityDrawer } from "@/components/EntityDrawer";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { MapPin, Mail, Briefcase, FileText, CheckCircle2, Clock } from "lucide-react";
+import { motion } from "framer-motion";
 
 export function Team() {
   const [selectedMember, setSelectedMember] = useState<any>(null);
 
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-foreground">Team</h2>
-          <p className="text-muted-foreground text-sm">Manage your contractors and employees.</p>
+  const columns = [
+    {
+      header: "Member",
+      cell: (member: any) => (
+        <div className="flex items-center gap-3">
+          <Avatar className="w-10 h-10 border-2 border-background shadow-sm">
+            <AvatarImage src={member.avatar} />
+            <AvatarFallback>{member.name.charAt(0)}</AvatarFallback>
+          </Avatar>
+          <div>
+            <div className="font-semibold text-foreground">{member.name}</div>
+            <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+              <MapPin className="w-3 h-3" />
+              {member.location}
+            </div>
+          </div>
         </div>
-      </div>
+      ),
+      className: "w-[250px]",
+    },
+    {
+      header: "Role",
+      accessorKey: "role" as any,
+      cell: (member: any) => (
+        <span className="font-medium text-muted-foreground">{member.role}</span>
+      ),
+    },
+    {
+      header: "Stack",
+      cell: (member: any) => (
+        <div className="flex flex-wrap gap-1.5">
+          {member.stack.slice(0, 2).map((tech: string, i: number) => (
+            <Badge key={i} variant="outline" className="bg-muted/50 font-normal">
+              {tech}
+            </Badge>
+          ))}
+          {member.stack.length > 2 && (
+            <Badge variant="outline" className="bg-muted/50 font-normal">
+              +{member.stack.length - 2}
+            </Badge>
+          )}
+        </div>
+      ),
+    },
+    {
+      header: "Rate",
+      cell: (member: any) => (
+        <div className="font-medium">${member.rate}<span className="text-muted-foreground text-xs font-normal">/hr</span></div>
+      ),
+    },
+    {
+      header: "Availability",
+      cell: (member: any) => {
+        let variant: "success" | "warning" | "danger" | "neutral" = "neutral";
+        if (member.availability === "full") variant = "success";
+        if (member.availability === "partial") variant = "warning";
+        if (member.availability === "busy") variant = "danger";
+        if (member.availability === "unavailable") variant = "neutral";
+        return <StatusBadge status={member.availability} variant={variant} />;
+      },
+    },
+    {
+      header: "Workload",
+      cell: (member: any) => (
+        <div className="flex flex-col gap-1">
+          <div className="text-sm font-medium">
+            {member.activeProjects} Active Projects
+          </div>
+          {member.unpaidInvoices > 0 ? (
+            <div className="text-xs text-soft-red font-medium flex items-center gap-1">
+              <Clock className="w-3 h-3" /> {member.unpaidInvoices} Unpaid Invoices
+            </div>
+          ) : (
+            <div className="text-xs text-muted-foreground flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3" /> All paid up
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      header: "Status",
+      cell: (member: any) => (
+        <StatusBadge status={member.status} />
+      ),
+    },
+  ];
 
-      <div className="bg-card rounded-lg border border-border overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Member</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Rate</TableHead>
-              <TableHead>Location</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {teamData.map((member) => (
-              <TableRow key={member.id} onClick={() => setSelectedMember(member)} className="cursor-pointer hover:bg-muted/50">
-                <TableCell className="font-medium flex items-center gap-3">
-                  <Avatar className="w-8 h-8">
-                    <AvatarImage src={member.avatar} />
-                    <AvatarFallback>{member.name.charAt(0)}</AvatarFallback>
-                  </Avatar>
-                  {member.name}
-                </TableCell>
-                <TableCell>{member.role}</TableCell>
-                <TableCell>
-                  <Badge variant={member.status === 'active' ? 'default' : 'secondary'} className={member.status === 'active' ? 'bg-chart-2 hover:bg-chart-2/80' : ''}>
-                    {member.status}
-                  </Badge>
-                </TableCell>
-                <TableCell>${member.rate}/hr</TableCell>
-                <TableCell>{member.location}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="space-y-6"
+    >
+      <PageHeader
+        title="Team & Contractors"
+        subtitle="Manage your roster, monitor availability, and track contractor invoices."
+        breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Team" }]}
+        actions={
+          <Button className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-soft">
+            Add Team Member
+          </Button>
+        }
+      />
 
-      <Sheet open={!!selectedMember} onOpenChange={() => setSelectedMember(null)}>
-        <SheetContent className="sm:max-w-md">
-          <SheetHeader className="flex flex-row items-center gap-4">
-            <Avatar className="w-16 h-16">
+      <DataTable
+        data={teamData}
+        columns={columns}
+        onRowClick={setSelectedMember}
+      />
+
+      <EntityDrawer
+        open={!!selectedMember}
+        onOpenChange={(open) => !open && setSelectedMember(null)}
+        title={
+          <div className="flex items-center gap-3">
+            <Avatar className="w-12 h-12 border-2 border-background shadow-sm">
               <AvatarImage src={selectedMember?.avatar} />
               <AvatarFallback>{selectedMember?.name?.charAt(0)}</AvatarFallback>
             </Avatar>
             <div>
-              <SheetTitle>{selectedMember?.name}</SheetTitle>
-              <SheetDescription>{selectedMember?.role}</SheetDescription>
-            </div>
-          </SheetHeader>
-          {selectedMember && (
-            <div className="mt-8 space-y-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-4 bg-muted rounded-lg space-y-1">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Rate</span>
-                  <p className="text-lg font-bold">${selectedMember.rate}/hr</p>
-                </div>
-                <div className="p-4 bg-muted rounded-lg space-y-1">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Location</span>
-                  <p className="text-sm font-medium">{selectedMember.location}</p>
-                </div>
-              </div>
-              
-              <div>
-                <h4 className="font-medium mb-3">Recent Invoices</h4>
-                <div className="space-y-2">
-                  <div className="p-3 border border-border rounded-md flex justify-between items-center text-sm">
-                    <span className="text-muted-foreground">INV-001</span>
-                    <span className="font-medium">$1,200</span>
-                    <Badge variant="outline">Paid</Badge>
-                  </div>
-                  <div className="p-3 border border-border rounded-md flex justify-between items-center text-sm">
-                    <span className="text-muted-foreground">INV-002</span>
-                    <span className="font-medium">$850</span>
-                    <Badge variant="secondary">Pending</Badge>
-                  </div>
-                </div>
+              <div>{selectedMember?.name}</div>
+              <div className="text-sm text-muted-foreground font-sans font-normal flex items-center gap-2 mt-1">
+                <StatusBadge status={selectedMember?.status || "Unknown"} />
+                <span>•</span>
+                <span className="flex items-center gap-1">
+                  <MapPin className="w-3 h-3" />
+                  {selectedMember?.location}
+                </span>
               </div>
             </div>
-          )}
-        </SheetContent>
-      </Sheet>
-    </div>
+          </div>
+        }
+        headerActions={
+          <>
+            <Button variant="outline" size="icon">
+              <Mail className="w-4 h-4" />
+            </Button>
+            <Button>Assign Project</Button>
+          </>
+        }
+      >
+        {selectedMember && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 gap-4">
+              <Card className="shadow-none border-border/50 bg-muted/20">
+                <CardContent className="p-4">
+                  <div className="text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider">Role</div>
+                  <div className="font-semibold text-lg">{selectedMember.role}</div>
+                </CardContent>
+              </Card>
+              <Card className="shadow-none border-border/50 bg-muted/20">
+                <CardContent className="p-4">
+                  <div className="text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider">Hourly Rate</div>
+                  <div className="font-semibold text-lg">${selectedMember.rate}<span className="text-sm font-normal text-muted-foreground">/hr</span></div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <Card className="shadow-none border-border/50 bg-muted/20">
+                <CardContent className="p-4">
+                  <div className="text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider flex items-center gap-1.5">
+                    <Briefcase className="w-3.5 h-3.5" />
+                    Active Projects
+                  </div>
+                  <div className="font-semibold text-lg">{selectedMember.activeProjects}</div>
+                </CardContent>
+              </Card>
+              <Card className={selectedMember.unpaidInvoices > 0 ? "shadow-none border-soft-red/30 bg-soft-red/5" : "shadow-none border-border/50 bg-muted/20"}>
+                <CardContent className="p-4">
+                  <div className="text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5" />
+                    Unpaid Invoices
+                  </div>
+                  <div className={selectedMember.unpaidInvoices > 0 ? "font-semibold text-lg text-soft-red" : "font-semibold text-lg"}>
+                    {selectedMember.unpaidInvoices}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card className="shadow-none border-border/50">
+              <CardHeader className="pb-3 px-5 pt-5">
+                <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Tech Stack</CardTitle>
+              </CardHeader>
+              <CardContent className="px-5 pb-5">
+                <div className="flex flex-wrap gap-2">
+                  {selectedMember.stack.map((tech: string, i: number) => (
+                    <Badge key={i} variant="secondary" className="bg-muted px-3 py-1 font-medium">
+                      {tech}
+                    </Badge>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-none border-border/50 bg-amber-50/50 dark:bg-amber-950/10">
+              <CardHeader className="pb-2 px-5 pt-5">
+                <CardTitle className="text-sm font-medium text-amber-800 dark:text-amber-500 uppercase tracking-wider">Management Notes</CardTitle>
+              </CardHeader>
+              <CardContent className="px-5 pb-5 text-sm text-amber-900 dark:text-amber-400/90 leading-relaxed">
+                {selectedMember.notes}
+              </CardContent>
+            </Card>
+
+          </div>
+        )}
+      </EntityDrawer>
+    </motion.div>
   );
 }

@@ -1,11 +1,13 @@
 import React, { useState } from "react";
 import { invoicesData } from "@/data/mock";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { FileText, ArrowUpRight, CheckCircle2 } from "lucide-react";
+import { InvoicePaperCard } from "@/components/InvoicePaperCard";
+import { DataTable } from "@/components/DataTable";
+import { EntityDrawer } from "@/components/EntityDrawer";
+import { PageHeader } from "@/components/PageHeader";
+import { MetricCard } from "@/components/MetricCard";
+import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
+import { FileText, ArrowUpRight, Plus, Download } from "lucide-react";
 
 export function Invoices() {
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
@@ -15,176 +17,168 @@ export function Invoices() {
 
   const totalOutstanding = pendingInvoices.reduce((sum, inv) => sum + inv.amount, 0);
   const totalPaid = paidInvoices.reduce((sum, inv) => sum + inv.amount, 0);
+  const totalOverdue = pendingInvoices.filter(i => i.status === 'overdue').reduce((sum, inv) => sum + inv.amount, 0);
 
   return (
-    <div className="space-y-8">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-foreground">Invoices</h2>
-          <p className="text-muted-foreground text-sm">Manage billing and payments.</p>
-        </div>
-      </div>
+    <div className="space-y-12">
+      <PageHeader 
+        title="Invoices"
+        subtitle="Manage billing, payments, and outstanding balances."
+        actions={
+          <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
+            <Plus className="w-4 h-4 mr-2" /> New Invoice
+          </Button>
+        }
+      />
 
       <div className="grid gap-6 md:grid-cols-3">
-        <Card className="bg-primary text-primary-foreground border-primary-border relative overflow-hidden">
-          <div className="absolute right-0 top-0 opacity-10 scale-150 translate-x-4 -translate-y-4">
-            <FileText size={120} />
-          </div>
-          <CardContent className="p-6 relative z-10">
-            <h3 className="text-sm font-medium opacity-80">Outstanding Balance</h3>
-            <p className="text-4xl font-bold mt-2">${totalOutstanding.toLocaleString()}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-6">
-            <h3 className="text-sm font-medium text-muted-foreground">Paid This Month</h3>
-            <p className="text-3xl font-bold mt-2 text-chart-2">${totalPaid.toLocaleString()}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-6">
-            <h3 className="text-sm font-medium text-muted-foreground">Overdue</h3>
-            <p className="text-3xl font-bold mt-2 text-destructive">
-              ${invoicesData.filter(i => i.status === 'overdue').reduce((s, i) => s + i.amount, 0).toLocaleString()}
-            </p>
-          </CardContent>
-        </Card>
+        <MetricCard 
+          title="Outstanding Balance"
+          value={`$${totalOutstanding.toLocaleString()}`}
+          trend={{ value: `${pendingInvoices.length}`, label: "invoices pending", positive: false }}
+          className="bg-primary text-primary-foreground border-primary-border"
+          valueClassName="text-primary-foreground"
+          icon={<FileText className="w-5 h-5 text-primary-foreground/50" />}
+        />
+        <MetricCard 
+          title="Paid This Month"
+          value={`$${totalPaid.toLocaleString()}`}
+          trend={{ value: "+24%", label: "vs last month", positive: true }}
+          valueClassName="text-soft-green"
+        />
+        <MetricCard 
+          title="Overdue"
+          value={`$${totalOverdue.toLocaleString()}`}
+          trend={{ value: "Action required", label: "", positive: false }}
+          valueClassName="text-soft-red"
+        />
       </div>
 
       <div>
-        <h3 className="text-lg font-bold mb-4">Pending Attention</h3>
-        <div className="grid gap-6 md:grid-cols-3">
+        <h3 className="text-xl font-bold font-serif mb-6 text-foreground">Desk View</h3>
+        <div className="grid gap-8 md:grid-cols-3 p-8 bg-muted/20 rounded-2xl border border-border/50 relative overflow-hidden">
+          {/* Subtle desk texture / shading */}
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-muted/30 z-0 pointer-events-none" />
+          
           {pendingInvoices.map((inv) => (
-            <Card 
+            <InvoicePaperCard 
               key={inv.id} 
-              className="cursor-pointer hover-elevate transition-all group overflow-hidden relative border-t-4 data-[status=overdue]:border-t-destructive data-[status=pending]:border-t-chart-5"
-              data-status={inv.status}
-              onClick={() => setSelectedInvoice(inv)}
-            >
-              <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/5 z-0" />
-              <CardContent className="p-6 relative z-10 flex flex-col h-full">
-                <div className="flex justify-between items-start mb-4">
-                  <Badge variant={inv.status === 'overdue' ? 'destructive' : 'outline'} className={inv.status === 'pending' ? 'bg-chart-5/10 text-chart-5 border-chart-5/20' : ''}>
-                    {inv.status}
-                  </Badge>
-                  <span className="text-xs text-muted-foreground font-medium">{inv.number}</span>
-                </div>
-                <div className="flex-1">
-                  <h4 className="text-2xl font-serif font-bold">${inv.amount.toLocaleString()}</h4>
-                  <p className="text-sm font-medium mt-1 text-muted-foreground">{inv.client}</p>
-                </div>
-                <div className="mt-6 pt-4 border-t border-border flex justify-between items-center text-xs text-muted-foreground">
-                  <span>Due: {inv.dueDate}</span>
-                  <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center text-primary font-medium">
-                    View <ArrowUpRight className="w-3 h-3 ml-1" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+              invoice={inv} 
+              onClick={() => setSelectedInvoice(inv)} 
+            />
           ))}
         </div>
       </div>
 
-      <div className="mt-8">
-        <h3 className="text-lg font-bold mb-4">Completed Payments</h3>
-        <div className="bg-card rounded-lg border border-border overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Invoice</TableHead>
-                <TableHead>Client</TableHead>
-                <TableHead>Amount</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead>Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {paidInvoices.map((inv) => (
-                <TableRow key={inv.id} onClick={() => setSelectedInvoice(inv)} className="cursor-pointer hover:bg-muted/50">
-                  <TableCell className="font-medium">{inv.number}</TableCell>
-                  <TableCell>{inv.client}</TableCell>
-                  <TableCell>${inv.amount.toLocaleString()}</TableCell>
-                  <TableCell>{inv.date}</TableCell>
-                  <TableCell>
-                    <div className="flex items-center text-chart-2 text-sm font-medium">
-                      <CheckCircle2 className="w-4 h-4 mr-1" /> Paid
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+      <div>
+        <h3 className="text-xl font-bold font-serif mb-6 text-foreground">Payment Archive</h3>
+        <DataTable 
+          data={paidInvoices}
+          onRowClick={(inv) => setSelectedInvoice(inv)}
+          columns={[
+            {
+              header: "Invoice",
+              accessorKey: "number",
+              className: "font-mono text-xs",
+            },
+            {
+              header: "Client",
+              accessorKey: "client",
+              className: "font-medium",
+            },
+            {
+              header: "Amount",
+              cell: (inv) => <span className="font-semibold">${inv.amount.toLocaleString()}</span>,
+            },
+            {
+              header: "Date Paid",
+              accessorKey: "date",
+            },
+            {
+              header: "Status",
+              cell: (inv) => <StatusBadge status={inv.status} />
+            }
+          ]}
+        />
       </div>
 
-      <Sheet open={!!selectedInvoice} onOpenChange={() => setSelectedInvoice(null)}>
-        <SheetContent className="sm:max-w-[600px] w-[90vw]">
-          <SheetHeader className="pb-6 border-b border-border">
-            <div className="flex justify-between items-start">
+      <EntityDrawer 
+        open={!!selectedInvoice} 
+        onOpenChange={(open) => !open && setSelectedInvoice(null)}
+        title={selectedInvoice?.number}
+        description="Invoice Details"
+        headerActions={
+          <>
+            <Button variant="outline" size="sm">
+              <Download className="w-4 h-4 mr-2" /> PDF
+            </Button>
+            <StatusBadge status={selectedInvoice?.status || 'pending'} />
+          </>
+        }
+      >
+        {selectedInvoice && (
+          <div className="space-y-8">
+            <div className="flex justify-between p-6 bg-card border border-border rounded-xl shadow-sm">
               <div>
-                <SheetTitle className="text-2xl font-serif">{selectedInvoice?.number}</SheetTitle>
-                <SheetDescription>Invoice Details</SheetDescription>
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Billed To</h4>
+                <p className="font-medium text-lg text-foreground">{selectedInvoice.client}</p>
+                <p className="text-sm text-muted-foreground mt-1">123 Business Rd.<br/>San Francisco, CA</p>
               </div>
-              <Badge variant={
-                selectedInvoice?.status === 'paid' ? 'default' : 
-                selectedInvoice?.status === 'overdue' ? 'destructive' : 'outline'
-              } className={selectedInvoice?.status === 'paid' ? 'bg-chart-2 text-white' : ''}>
-                {selectedInvoice?.status}
-              </Badge>
-            </div>
-          </SheetHeader>
-          {selectedInvoice && (
-            <div className="mt-6 space-y-8">
-              <div className="flex justify-between">
-                <div>
-                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Billed To</h4>
-                  <p className="font-medium text-lg">{selectedInvoice.client}</p>
-                </div>
-                <div className="text-right">
-                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Amount Due</h4>
-                  <p className="font-bold text-3xl text-primary">${selectedInvoice.amount.toLocaleString()}</p>
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg">
-                <div>
-                  <span className="text-xs text-muted-foreground block mb-1">Issue Date</span>
-                  <span className="font-medium">{selectedInvoice.date}</span>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground block mb-1">Due Date</span>
-                  <span className="font-medium">{selectedInvoice.dueDate}</span>
-                </div>
-              </div>
-
-              {/* Mock Line Items */}
-              <div>
-                <h4 className="font-semibold mb-3 border-b border-border pb-2">Line Items</h4>
-                <div className="space-y-3">
-                  <div className="flex justify-between text-sm">
-                    <span className="font-medium">Web Development Services</span>
-                    <span>${(selectedInvoice.amount * 0.8).toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="font-medium">UI/UX Design</span>
-                    <span>${(selectedInvoice.amount * 0.2).toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between font-bold pt-3 border-t border-border mt-3 text-lg">
-                    <span>Total</span>
-                    <span>${selectedInvoice.amount.toLocaleString()}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-8">
-                {selectedInvoice.status !== 'paid' && (
-                  <Button className="w-full h-12 text-lg">Mark as Paid</Button>
-                )}
+              <div className="text-right">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Amount Due</h4>
+                <p className="font-bold text-4xl text-primary font-serif">${selectedInvoice.amount.toLocaleString()}</p>
               </div>
             </div>
-          )}
-        </SheetContent>
-      </Sheet>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-4 bg-muted/30 rounded-xl border border-border/50">
+                <span className="text-xs text-muted-foreground block mb-1 uppercase tracking-wider font-semibold">Issue Date</span>
+                <span className="font-medium">{selectedInvoice.date}</span>
+              </div>
+              <div className="p-4 bg-muted/30 rounded-xl border border-border/50">
+                <span className="text-xs text-muted-foreground block mb-1 uppercase tracking-wider font-semibold">Due Date</span>
+                <span className="font-medium">{selectedInvoice.dueDate}</span>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-semibold mb-4 text-foreground">Line Items</h4>
+              <div className="space-y-3 bg-card border border-border rounded-xl p-6">
+                {(selectedInvoice.lineItems || [
+                  { description: "Consulting Services", amount: selectedInvoice.amount }
+                ]).map((item: any, i: number) => (
+                  <div key={i} className="flex justify-between items-center py-2 border-b border-border/50 last:border-0 text-sm">
+                    <span className="font-medium text-foreground">{item.description}</span>
+                    <span className="text-muted-foreground">${item.amount.toLocaleString()}</span>
+                  </div>
+                ))}
+                
+                <div className="flex justify-between font-bold pt-4 mt-2 text-lg text-foreground">
+                  <span>Total</span>
+                  <span>${selectedInvoice.amount.toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-6">
+              {selectedInvoice.status !== 'paid' ? (
+                <div className="flex gap-4">
+                  <Button className="flex-1 h-12 text-md bg-primary text-primary-foreground hover:bg-primary/90">
+                    Record Payment
+                  </Button>
+                  <Button variant="outline" className="flex-1 h-12 text-md">
+                    Send Reminder
+                  </Button>
+                </div>
+              ) : (
+                <div className="p-4 bg-soft-green/10 text-soft-green border border-soft-green/20 rounded-xl flex items-center justify-center font-medium">
+                  Payment Completed
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </EntityDrawer>
     </div>
   );
 }

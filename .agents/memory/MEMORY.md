@@ -1,0 +1,1 @@
+- [Recharts screenshot animation](recharts-screenshot-animation.md) — charts that look tiny/collapsed in app_preview are usually entrance-animation caught mid-frame, not a sizing bug; set isAnimationActive={false} to verify.

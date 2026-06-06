@@ -1,0 +1,116 @@
+The current UI is too generic and simple. Do not just add more cards. I want you to redesign the app into a premium, modern, startup style internal operating system for a web development agency called OXUS Cloud.
+
+Important:
+Keep the existing React plus Vite project, but improve the visual design heavily.
+Use Tailwind, shadcn/ui style components, Framer Motion animations, Lucide icons, and Recharts where needed.
+Create a reusable design system with tokens for colors, spacing, cards, typography, shadows, buttons, tables, drawers, badges, page headers, and empty states.
+Use Jost for the logo and Outfit for the app UI.
+Primary color: #0B1A33
+Logo light blue: #D1E8FF
+Accent colors: magenta, mint blue, soft green, warm yellow, soft red
+The app should stay light theme, but with a deep navy sidebar and header.
+
+Do not make the app feel like a generic admin template.
+Make it feel like a beautiful agency operating system.
+Use more custom layouts, visual metaphors, layered cards, subtle gradients, paper textures, soft shadows, glass effects, hover states, and smooth transitions.
+Every page should have its own personality while still belonging to the same design system.
+
+Redesign these pages:
+
+1. Dashboard
+Make it feel like an agency cockpit.
+Add a better hero area with today summary, current month revenue, open work, overdue invoices, active proposals, and recent activity.
+Add a “Today at OXUS” section.
+Add small timeline or activity feed.
+Add mini charts, not only number cards.
+Use better hierarchy and spacing.
+
+2. Pipeline
+The current kanban feels too simple.
+Make it feel like a sales deal room.
+Each column should have stronger visual identity, total value, number of deals, conversion hint, and column actions.
+Deal cards should look richer with client logo placeholder, project type, budget, owner avatar, age in stage, next action, tags, and urgency.
+Add smooth hover effects.
+On card click, open a beautiful right drawer with quote details, client info, deal value, next steps, timeline, attached quote, and action buttons.
+Make the kanban horizontally scrollable and visually polished.
+Do not make plain white cards only.
+
+3. Quotes
+Keep the table, but make it more premium.
+Add quote status overview cards, conversion rate, pending value, accepted value, declined value.
+The table should have better status badges, client avatars, quick actions, created date, amount, owner, and search filters.
+Add a right drawer preview when clicking a quote.
+
+4. Projects
+Do not use a basic table only.
+Create a ClickUp inspired project command page.
+Use a table with rich rows, status, priority, timeline, progress, owner avatars, budget, deadline risk, and health indicator.
+Add view switcher tabs: Table, Board, Timeline.
+Only Table needs to work for now, but the visual tabs should exist.
+Progress should feel visually polished with nice bars and labels.
+
+5. Calendar
+Make a full monthly calendar that clearly shows today and current time.
+I dislike Google Calendar because it does not visually show what is happening now.
+Create a large month view with a highlighted today cell, current day ribbon, small event cards, and a right side “Today” agenda panel.
+Add beautiful empty states for days without events.
+
+6. Team
+Make this feel like a contractor operations page.
+Use a rich table with avatar, role, stack, rate, availability, active projects, unpaid invoices, and status.
+On row click, open a right drawer with profile, payment info, invoices, skills, notes, and current workload.
+
+7. Contacts
+Make it similar to a lightweight HubSpot CRM, but more beautiful.
+Use contact type badges: Client, Lead, Contractor, Partner, Vendor.
+Add company, email, phone, last contact, relationship strength, source, and notes.
+On row click, open a drawer with contact timeline and related quotes, invoices, projects.
+
+8. Invoices
+This page is very important.
+The current invoice page is not what I want.
+I want pending invoices to look like paper documents sitting on my desk.
+Create a “Desk View” section at the top.
+Pending and overdue invoices should be displayed as document style cards, slightly rotated, layered, with paper texture, invoice number, client, amount, due date, status stamp, and quick actions.
+Use subtle shadows so they look like physical paper on a desk.
+Overdue invoices should have a red stamped feeling.
+Pending invoices can have yellow or warm status marks.
+Paid invoices should be lower in a clean table called Payment Archive.
+Add summary cards for outstanding, paid this month, overdue, next due invoice.
+Make this page feel unique and memorable.
+
+9. Finance
+Create a finance tracker page with beautiful gradient area charts.
+Show income, expenses, profit, monthly trend, cash flow, category breakdown, and recent transactions.
+Use soft cards, charts, and insight blocks.
+Make it feel more like a founder finance cockpit than an accountant table.
+
+Global UX:
+Add page transitions with Framer Motion.
+Add hover states to all cards and rows.
+Add skeleton or empty states where useful.
+Add breadcrumbs or page subtitles.
+Add a command style top search input.
+Add consistent right drawers for object details.
+Add reusable components:
+AppShell
+Sidebar
+TopBar
+PageHeader
+MetricCard
+StatusBadge
+DataTable
+EntityDrawer
+KanbanColumn
+DealCard
+InvoicePaperCard
+ProjectHealthBadge
+AvatarStack
+ChartCard
+
+Keep code clean, scalable, and reusable.
+Do not hardcode repeated UI everywhere.
+Use mock data in separate files.
+Do not break existing navigation.
+Make sure the UI is responsive.
+Focus on making the app visually impressive and usable, not just functional.
