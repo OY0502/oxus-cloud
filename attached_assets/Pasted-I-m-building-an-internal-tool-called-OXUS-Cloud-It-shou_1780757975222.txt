@@ -1,0 +1,24 @@
+I'm building an internal tool called OXUS Cloud. It should serve as an operating system for our small agency focusing on developing Web Apps. Key mission is to combine different functions and features of other tools all in one. At first, I want you to focus on UI&UX building, because after I will switch to my own development in Cursor.
+
+The app should start from the login/signup page. Once user is authorized, they land on the dashboard with the navbar on the left. In the navbar it should show OXUS Cloud and logo. We need such pages as Pipeline, Quotes, Projects, Calendar, Team, Contacts, Invoices, Finance
+
+Pipeline should be a drag&drop kanban desk with statuses: New Lead, Scoping, Proposal, Won. When I click on a card, it should show a drawer on the right side with Quote details.
+
+Quotes should be a page with a table of quotes sorted by created date in desc. Main fields. Show summary infographics at the top. Search/filters should be working.
+
+Projects page - i don't know the best format for this page. I guess it should be a clickup like table with main properties about projects, like progress bar (calculated based on difference between start date and deadline). Suggest your vision.
+
+Calendar should be a calendar page, make it full scale montly view calendar with current month dates highlighted. I hate google calendar because it doesn't show what is now visually. Later on I will pull up events to this calendar from outside.
+
+Team page should be also a table, with my contractors data. On row click should be a drawer linking to their info and invoices information.
+
+Contacts should be a table of contacts like contractors, people, clients and other, similar to hubspot.
+
+Invoices is very important page, I invoice usually with Stripe but I need this page to better visualize my invoices like documents on the table, for example showing pending invoices that were not paid yet. All the other paid invoices can go into the table, but the invoices I'm working on should be highlighted somehow interestingly.
+
+Finance page should be a finance tracker, showing different insights on expenses, income and income - minus expenses. I like area gradient line charts.
+
+Regarding preferred colors and fonts, please use #0B1A33 for the sidebar&header and as main highlight. Otherwise built the app in light theme. As a note, I like this black if it works: #040404.
+Our logo font is Jost, for everything else I believe google font "Outfit" works the best. Other colors I like - magenta, mint blue. Our logo color is D1E8FF
+
+Please help me out to build modern and nice looking UI, so it doesn' feel corporate. We're a startup and we like nice things. Add animations wherever it makes sense. Keep code clean and scalable and reusable. Code should be ready for export
