@@ -1,4 +1,7 @@
 import type { StatusVariant } from "@/components/StatusBadge";
+import type { InvoiceWithItems } from "@/lib/types";
+import { formatEUR } from "@/lib/currency";
+import { formatDistanceToNow } from "date-fns";
 
 export const TODAY = new Date("2026-06-15");
 
@@ -73,7 +76,7 @@ export function attentionRank(inv: Invoice): number {
 }
 
 export function formatMoney(n: number): string {
-  return `$${n.toLocaleString()}`;
+  return formatEUR(n);
 }
 
 export function formatDate(iso: string | null): string {
@@ -84,4 +87,27 @@ export function formatDate(iso: string | null): string {
 export function formatDateShort(iso: string | null): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+/** Map a Supabase invoice row (snake_case + nested line items) into the UI shape. */
+export function invoiceFromRow(r: InvoiceWithItems): Invoice {
+  return {
+    id: r.id,
+    number: r.number,
+    client: r.client_name ?? "—",
+    project: r.project ?? "—",
+    amount: Number(r.amount),
+    amountPaid: Number(r.amount_paid),
+    status: r.status,
+    issueDate: r.issue_date,
+    dueDate: r.due_date ?? r.issue_date,
+    paidDate: r.paid_date,
+    paymentMethod: r.payment_method,
+    owner: r.owner_name ?? "Unassigned",
+    lastReminder: r.last_reminder_at
+      ? formatDistanceToNow(new Date(r.last_reminder_at), { addSuffix: true })
+      : null,
+    stripeStatus: r.stripe_status ?? "—",
+    lineItems: r.line_items.map((li) => ({ description: li.description, amount: Number(li.amount) })),
+  };
 }

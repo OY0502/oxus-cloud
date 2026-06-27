@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { MoreHorizontal, Clock, AlertCircle } from "lucide-react";
+import { formatEUR } from "@/lib/currency";
 
 export interface DealCardData {
   id: string;
@@ -10,7 +11,8 @@ export interface DealCardData {
   contact: string;
   projectType: string;
   budget: number;
-  ownerAvatar: string;
+  pocName: string;
+  avatarUrl?: string | null;
   ageInStage: number;
   nextAction: string;
   tags: string[];
@@ -20,6 +22,13 @@ export interface DealCardData {
 interface DealCardProps {
   item: DealCardData;
   className?: string;
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
 }
 
 export function DealCard({ item, className }: DealCardProps) {
@@ -46,11 +55,13 @@ export function DealCard({ item, className }: DealCardProps) {
         
         <div className="flex justify-between items-center mb-4">
           <span className="text-lg font-bold font-sans tracking-tight text-foreground">
-            ${item.budget.toLocaleString()}
+            {formatEUR(item.budget)}
           </span>
-          <Avatar className="w-7 h-7 border-2 border-background">
-            <AvatarImage src={item.ownerAvatar} />
-            <AvatarFallback>U</AvatarFallback>
+          <Avatar className="w-7 h-7 border-2 border-background" title={item.pocName || undefined}>
+            {item.avatarUrl && <AvatarImage src={item.avatarUrl} />}
+            <AvatarFallback className="bg-primary/10 text-primary text-[10px] font-semibold">
+              {initials(item.pocName)}
+            </AvatarFallback>
           </Avatar>
         </div>
 

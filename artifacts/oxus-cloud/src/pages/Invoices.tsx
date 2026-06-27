@@ -1,5 +1,4 @@
 import React, { useMemo, useState } from "react";
-import { invoicesData } from "@/data/mock";
 import { PriorityInvoiceCard } from "@/components/PriorityInvoiceCard";
 import { DataTable } from "@/components/DataTable";
 import { EntityDrawer } from "@/components/EntityDrawer";
@@ -24,6 +23,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
+import { useInvoices, useUpdateInvoice } from "@/hooks/api";
+import { CreateInvoiceDialog } from "@/components/forms/CreateDialogs";
+import { TableSkeleton, CardGridSkeleton, EmptyState, ErrorState } from "@/components/states/QueryStates";
 import {
   type Invoice,
   type InvoiceStatus,
@@ -36,6 +38,7 @@ import {
   remaining,
   formatMoney,
   formatDate,
+  invoiceFromRow,
 } from "@/lib/invoices";
 import {
   Plus,
@@ -52,13 +55,18 @@ import {
   Bell,
   ChevronLeft,
   ChevronRight,
+  Receipt,
 } from "lucide-react";
 
 type DateRange = "all" | "month" | "quarter" | "overdue-window";
 
 export function Invoices() {
-  const [invoices, setInvoices] = useState<Invoice[]>(invoicesData as Invoice[]);
+  const { data: rows = [], isLoading, isError, error, refetch } = useInvoices();
+  const updateInvoice = useUpdateInvoice();
+  const invoices = useMemo<Invoice[]>(() => rows.map(invoiceFromRow), [rows]);
+
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<InvoiceStatus | "all">("all");
@@ -120,23 +128,26 @@ export function Invoices() {
   }, [invoices, overdueOnly, statusFilter, clientFilter, dateRange, search]);
 
   const markPaid = (inv: Invoice) => {
-    setInvoices((prev) =>
-      prev.map((i) =>
-        i.id === inv.id
-          ? { ...i, status: "paid", amountPaid: i.amount, paidDate: TODAY.toISOString().slice(0, 10), paymentMethod: i.paymentMethod || "Stripe", stripeStatus: "Paid" }
-          : i
-      )
-    );
+    updateInvoice.mutate({
+      id: inv.id,
+      patch: {
+        status: "paid",
+        amount_paid: inv.amount,
+        paid_date: TODAY.toISOString().slice(0, 10),
+        payment_method: inv.paymentMethod || "Stripe",
+        stripe_status: "Paid",
+      },
+    });
     toast({ title: "Payment recorded", description: `${inv.number} · ${inv.client} — ${formatMoney(inv.amount)}` });
   };
 
   const sendReminder = (inv: Invoice) => {
-    setInvoices((prev) => prev.map((i) => (i.id === inv.id ? { ...i, lastReminder: "just now" } : i)));
+    updateInvoice.mutate({ id: inv.id, patch: { last_reminder_at: new Date().toISOString() } });
     toast({ title: "Reminder sent", description: `A payment reminder was emailed to ${inv.client}.` });
   };
 
   const sendInvoice = (inv: Invoice) => {
-    setInvoices((prev) => prev.map((i) => (i.id === inv.id ? { ...i, status: "sent", stripeStatus: "Awaiting payment" } : i)));
+    updateInvoice.mutate({ id: inv.id, patch: { status: "sent", stripe_status: "Awaiting payment" } });
     toast({ title: "Invoice sent", description: `${inv.number} was sent to ${inv.client}.` });
   };
 
@@ -156,12 +167,30 @@ export function Invoices() {
         title="Invoices"
         subtitle="Your finance cockpit — track every invoice from draft to paid, and act before things slip."
         actions={
-          <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
+          <Button className="bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => setCreateOpen(true)}>
             <Plus className="mr-2 h-4 w-4" /> New Invoice
           </Button>
         }
       />
 
+      <CreateInvoiceDialog open={createOpen} onOpenChange={setCreateOpen} />
+
+      {isError && <ErrorState error={error} onRetry={() => refetch()} />}
+
+      {isLoading ? (
+        <>
+          <CardGridSkeleton count={5} />
+          <TableSkeleton columns={6} />
+        </>
+      ) : !isError && rows.length === 0 ? (
+        <EmptyState
+          icon={<Receipt />}
+          title="No invoices yet"
+          description="Create your first invoice to track billing from draft all the way to paid."
+          action={<Button onClick={() => setCreateOpen(true)}><Plus className="mr-2 h-4 w-4" />New Invoice</Button>}
+        />
+      ) : !isError ? (
+        <>
       {/* 1. Summary cards */}
       <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-5">
         <MetricCard
@@ -372,6 +401,8 @@ export function Invoices() {
           />
         </div>
       </section>
+        </>
+      ) : null}
 
       <EntityDrawer
         open={!!selectedInvoice}

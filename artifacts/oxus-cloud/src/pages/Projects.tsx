@@ -1,211 +1,322 @@
-import React, { useState } from "react";
-import { projectsData } from "@/data/mock";
+import React, { useEffect, useMemo, useState } from "react";
+import { useLocation } from "wouter";
+import { DndContext, closestCorners, PointerSensor, KeyboardSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { arrayMove, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { PageHeader } from "@/components/PageHeader";
 import { DataTable } from "@/components/DataTable";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ProjectHealthBadge } from "@/components/ProjectHealthBadge";
 import { AvatarStack } from "@/components/AvatarStack";
-import { EntityDrawer } from "@/components/EntityDrawer";
+import { KanbanColumn } from "@/components/KanbanColumn";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { Plus, LayoutGrid, List, CalendarDays, MoreHorizontal } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Plus, LayoutGrid, List, CalendarDays, Briefcase } from "lucide-react";
+import { useProjects, useUpdateProject } from "@/hooks/api";
+import { TableSkeleton, EmptyState, ErrorState } from "@/components/states/QueryStates";
+import type { ProjectStatus, ProjectWithAssignees } from "@/lib/types";
+import { contactInitials } from "@/lib/contacts";
+import { formatEUR } from "@/lib/currency";
+
+const STATUS_COLUMNS: { id: ProjectStatus; title: string; description: string }[] = [
+  { id: "planning", title: "Planning", description: "Not started yet" },
+  { id: "in-progress", title: "In Progress", description: "Actively being delivered" },
+  { id: "on-hold", title: "On Hold", description: "Paused" },
+  { id: "completed", title: "Completed", description: "Delivered" },
+];
+
+function avatarUrls(p: ProjectWithAssignees): string[] {
+  return p.team_contacts.map(() => "");
+}
+
+function avatarInitials(p: ProjectWithAssignees): string[] {
+  return p.team_contacts.map((c) => contactInitials(c.name));
+}
+
+function DraftBadge() {
+  return <Badge variant="outline" className="border-warm-yellow/40 bg-warm-yellow/10 text-warm-yellow text-[10px] uppercase">Draft</Badge>;
+}
+
+function ProjectCard({ p }: { p: ProjectWithAssignees }) {
+  return (
+    <Card className="mb-3 border-border/50 bg-card/80 shadow-sm hover-elevate">
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h4 className="font-semibold text-sm truncate">{p.name}</h4>
+            <p className="text-xs text-muted-foreground truncate">{p.client_name ?? "—"}</p>
+          </div>
+          {p.is_draft && <DraftBadge />}
+        </div>
+        <div>
+          <div className="flex justify-between text-xs text-muted-foreground mb-1">
+            <span>{p.progress}%</span>
+            <span className="font-medium text-foreground">{formatEUR(p.budget)}</span>
+          </div>
+          <Progress value={p.progress} className="h-1.5" />
+        </div>
+        <div className="flex items-center justify-between">
+          {p.team_contacts.length ? <AvatarStack urls={avatarUrls(p)} fallbacks={avatarInitials(p)} size="sm" /> : <span className="text-xs text-muted-foreground">Unassigned</span>}
+          <ProjectHealthBadge health={p.health} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SortableProjectCard({ p, onClick }: { p: ProjectWithAssignees; onClick: () => void }) {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: p.id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners} onClick={onClick} className="cursor-grab active:cursor-grabbing">
+      <ProjectCard p={p} />
+    </div>
+  );
+}
+
+function Timeline({ projects, onSelect }: { projects: ProjectWithAssignees[]; onSelect: (p: ProjectWithAssignees) => void }) {
+  const t = (iso: string) => new Date(iso).getTime();
+  // A project is on the timeline if it has at least a start date or a deadline.
+  const dated = projects.filter((p) => p.start_date || p.deadline);
+
+  const range = useMemo(() => {
+    if (dated.length === 0) return null;
+    const times: number[] = [];
+    for (const p of dated) {
+      if (p.start_date) times.push(t(p.start_date));
+      if (p.deadline) times.push(t(p.deadline));
+      // Deadline-only projects start from their creation date.
+      if (!p.start_date && p.deadline) times.push(t(p.created_at));
+    }
+    const min = Math.min(...times);
+    const max = Math.max(...times);
+    return { min, max, span: Math.max(1, max - min) };
+  }, [dated]);
+
+  if (!range) {
+    return <EmptyState icon={<CalendarDays />} title="No scheduled projects" description="Projects with a start date or a deadline will appear on the timeline." />;
+  }
+
+  const fmt = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+  return (
+    <Card className="bg-card border-border shadow-sm">
+      <CardContent className="p-6 space-y-3">
+        {dated.map((p) => {
+          // Resolve the bar's start/end and rendering mode.
+          let startMs: number;
+          let endMs: number;
+          let infinite = false; // start, no deadline → extends to the edge
+          let fromCreation = false; // deadline, no start → line from creation date
+
+          if (p.start_date && p.deadline) {
+            startMs = t(p.start_date);
+            endMs = t(p.deadline);
+          } else if (p.start_date && !p.deadline) {
+            startMs = t(p.start_date);
+            endMs = range.max;
+            infinite = true;
+          } else {
+            startMs = t(p.created_at);
+            endMs = t(p.deadline!);
+            fromCreation = true;
+          }
+
+          const left = ((startMs - range.min) / range.span) * 100;
+          const width = Math.max(2, ((endMs - startMs) / range.span) * 100);
+
+          const rangeLabel = infinite
+            ? `${fmt(p.start_date!)} → Ongoing`
+            : fromCreation
+              ? `${fmt(p.created_at)} → ${fmt(p.deadline!)}`
+              : `${fmt(p.start_date!)} → ${fmt(p.deadline!)}`;
+
+          return (
+            <button key={p.id} onClick={() => onSelect(p)} className="w-full text-left group">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-sm font-medium truncate">{p.name}</span>
+                {p.is_draft && <DraftBadge />}
+                {infinite && <Badge variant="outline" className="text-[10px] uppercase">Ongoing</Badge>}
+                <span className="text-xs text-muted-foreground ml-auto">{rangeLabel}</span>
+              </div>
+              <div className="relative h-6 rounded-md bg-muted/40">
+                <div
+                  className={
+                    "absolute top-0 h-6 rounded-md transition-colors flex items-center px-2 " +
+                    (fromCreation
+                      ? "bg-primary/40 group-hover:bg-primary/60 border border-dashed border-primary/60"
+                      : "bg-primary/70 group-hover:bg-primary") +
+                    (infinite ? " bg-gradient-to-r from-primary/70 to-primary/20 group-hover:from-primary" : "")
+                  }
+                  style={{ left: `${left}%`, width: `${width}%` }}
+                >
+                  <span className="text-[10px] font-medium text-primary-foreground">{p.progress}%</span>
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
+}
 
 export function Projects() {
-  const [selectedProject, setSelectedProject] = useState<typeof projectsData[0] | null>(null);
+  const [, navigate] = useLocation();
   const [view, setView] = useState("table");
+  const { data: projects = [], isLoading, isError, error, refetch } = useProjects();
+  const updateProject = useUpdateProject();
+  const [boardItems, setBoardItems] = useState<ProjectWithAssignees[]>([]);
 
-  const calculateProgress = (start: string, end: string) => {
-    const startDate = new Date(start).getTime();
-    const endDate = new Date(end).getTime();
-    const today = new Date("2026-06-15").getTime();
-    
-    if (today <= startDate) return 0;
-    if (today >= endDate) return 100;
-    
-    return Math.round(((today - startDate) / (endDate - startDate)) * 100);
-  };
+  useEffect(() => { setBoardItems(projects); }, [projects]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+  const columnIds = useMemo(() => STATUS_COLUMNS.map((c) => c.id) as string[], []);
+
+  const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—");
 
   const columns = [
     {
       header: "Project Name",
-      accessorKey: "name" as keyof typeof projectsData[0],
-      cell: (item: any) => (
-        <div className="font-medium text-foreground">
-          {item.name}
-          <div className="text-xs text-muted-foreground mt-0.5">{item.client}</div>
+      className: "min-w-[220px]",
+      cell: (item: ProjectWithAssignees) => (
+        <div className="flex flex-col">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-foreground">{item.name}</span>
+            {item.is_draft && <DraftBadge />}
+          </div>
+          <span className="text-xs text-muted-foreground mt-0.5">{item.client_name ?? "—"}</span>
         </div>
-      )
+      ),
     },
-    {
-      header: "Status",
-      accessorKey: "status" as keyof typeof projectsData[0],
-      cell: (item: any) => <StatusBadge status={item.status.replace('-', ' ')} />
-    },
+    { header: "Status", cell: (item: ProjectWithAssignees) => <StatusBadge status={item.status.replace("-", " ")} /> },
     {
       header: "Priority",
-      accessorKey: "priority" as keyof typeof projectsData[0],
-      cell: (item: any) => (
-        <Badge variant={item.priority === 'high' ? 'destructive' : item.priority === 'medium' ? 'secondary' : 'outline'} className="capitalize">
-          {item.priority}
-        </Badge>
-      )
+      cell: (item: ProjectWithAssignees) => (
+        <Badge variant={item.priority === "high" ? "destructive" : item.priority === "medium" ? "secondary" : "outline"} className="capitalize">{item.priority}</Badge>
+      ),
     },
     {
       header: "Assignees",
-      cell: (item: any) => <AvatarStack urls={item.assignees} size="sm" />
+      cell: (item: ProjectWithAssignees) => (item.team_contacts.length ? <AvatarStack urls={avatarUrls(item)} fallbacks={avatarInitials(item)} size="sm" /> : <span className="text-xs text-muted-foreground">Unassigned</span>),
     },
     {
       header: "Timeline",
       className: "w-[250px]",
-      cell: (item: any) => {
-        const progress = calculateProgress(item.startDate, item.deadline);
-        return (
-          <div className="flex flex-col gap-1.5 w-full max-w-[200px]">
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>{new Date(item.startDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
-              <span className="font-medium text-foreground">{progress}%</span>
-              <span>{new Date(item.deadline).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
-            </div>
-            <Progress value={progress} className="h-1.5" />
+      cell: (item: ProjectWithAssignees) => (
+        <div className="flex flex-col gap-1.5 w-full max-w-[200px]">
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>{fmt(item.start_date)}</span>
+            <span className="font-medium text-foreground">{item.progress}%</span>
+            <span>{fmt(item.deadline)}</span>
           </div>
-        );
-      }
+          <Progress value={item.progress} className="h-1.5" />
+        </div>
+      ),
     },
-    {
-      header: "Budget",
-      cell: (item: any) => (
-        <span className="font-medium">
-          ${item.budget.toLocaleString()}
-        </span>
-      )
-    },
-    {
-      header: "Health",
-      cell: (item: any) => <ProjectHealthBadge health={item.health} />
-    },
-    {
-      header: "",
-      className: "w-[50px]",
-      cell: () => (
-        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={(e) => e.stopPropagation()}>
-          <MoreHorizontal className="h-4 w-4" />
-        </Button>
-      )
-    }
+    { header: "Budget", cell: (item: ProjectWithAssignees) => <span className="font-medium">{formatEUR(item.budget)}</span> },
+    { header: "Health", cell: (item: ProjectWithAssignees) => <ProjectHealthBadge health={item.health} /> },
   ];
+
+  const handleDragOver = (event: any) => {
+    const { active, over } = event;
+    if (!over) return;
+    const activeId = active.id as string;
+    const overId = over.id as string;
+    setBoardItems((prev) => {
+      const resolve = (id: string) => (columnIds.includes(id) ? id : prev.find((i) => i.id === id)?.status ?? null);
+      const sourceCol = resolve(activeId);
+      const targetCol = resolve(overId);
+      if (!sourceCol || !targetCol || sourceCol === targetCol) return prev;
+      return prev.map((item) => (item.id === activeId ? { ...item, status: targetCol as ProjectStatus } : item));
+    });
+  };
+
+  const handleDragEnd = (event: any) => {
+    const { active, over } = event;
+    if (!over) return;
+    const moved = boardItems.find((i) => i.id === active.id);
+    const original = projects.find((i) => i.id === active.id);
+    if (moved && original && moved.status !== original.status) {
+      updateProject.mutate({ id: moved.id, patch: { status: moved.status } });
+    }
+    if (active.id !== over.id) {
+      setBoardItems((prev) => {
+        const a = prev.findIndex((i) => i.id === active.id);
+        const b = prev.findIndex((i) => i.id === over.id);
+        if (a === -1 || b === -1) return prev;
+        return arrayMove(prev, a, b);
+      });
+    }
+  };
+
+  const openProject = (p: ProjectWithAssignees) => navigate(`/projects/${p.id}`);
 
   return (
     <div className="space-y-6">
-      <PageHeader 
-        title="Projects" 
+      <PageHeader
+        title="Projects"
         subtitle="Command center for all active and upcoming projects."
-        actions={
-          <Button className="gap-2">
-            <Plus className="h-4 w-4" /> New Project
-          </Button>
-        }
+        actions={<Button className="gap-2" onClick={() => navigate("/projects/new")}><Plus className="h-4 w-4" /> New Project</Button>}
       />
 
       <Tabs value={view} onValueChange={setView} className="w-full">
         <div className="flex items-center justify-between mb-4">
           <TabsList className="bg-muted/50 p-1 border border-border">
-            <TabsTrigger value="table" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
-              <List className="h-4 w-4" /> Table
-            </TabsTrigger>
-            <TabsTrigger value="board" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
-              <LayoutGrid className="h-4 w-4" /> Board
-            </TabsTrigger>
-            <TabsTrigger value="timeline" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
-              <CalendarDays className="h-4 w-4" /> Timeline
-            </TabsTrigger>
+            <TabsTrigger value="table" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm"><List className="h-4 w-4" /> Table</TabsTrigger>
+            <TabsTrigger value="board" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm"><LayoutGrid className="h-4 w-4" /> Board</TabsTrigger>
+            <TabsTrigger value="timeline" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm"><CalendarDays className="h-4 w-4" /> Timeline</TabsTrigger>
           </TabsList>
         </div>
 
-        <TabsContent value="table" className="m-0 border-none p-0 outline-none">
-          <DataTable 
-            data={projectsData} 
-            columns={columns} 
-            onRowClick={(item) => setSelectedProject(item)} 
+        {isLoading ? (
+          <TableSkeleton columns={7} />
+        ) : isError ? (
+          <ErrorState error={error} onRetry={() => refetch()} />
+        ) : projects.length === 0 ? (
+          <EmptyState
+            icon={<Briefcase />}
+            title="No projects yet"
+            description="Spin up your first project to track delivery, timelines, and team workload."
+            action={<Button onClick={() => navigate("/projects/new")}><Plus className="h-4 w-4 mr-2" />New Project</Button>}
           />
-        </TabsContent>
-        
-        <TabsContent value="board" className="m-0 border-none p-0 outline-none">
-          <div className="flex items-center justify-center h-64 border border-dashed rounded-xl bg-card/50 text-muted-foreground">
-            Board view coming soon
-          </div>
-        </TabsContent>
+        ) : (
+          <>
+            <TabsContent value="table" className="m-0 border-none p-0 outline-none">
+              <DataTable data={projects} columns={columns} onRowClick={openProject} />
+            </TabsContent>
 
-        <TabsContent value="timeline" className="m-0 border-none p-0 outline-none">
-          <div className="flex items-center justify-center h-64 border border-dashed rounded-xl bg-card/50 text-muted-foreground">
-            Timeline view coming soon
-          </div>
-        </TabsContent>
-      </Tabs>
-
-      <EntityDrawer 
-        open={!!selectedProject} 
-        onOpenChange={(open) => !open && setSelectedProject(null)}
-        title={selectedProject?.name}
-        description={`Client: ${selectedProject?.client}`}
-        headerActions={
-          <Button variant="outline" size="sm">Edit Project</Button>
-        }
-      >
-        {selectedProject && (
-          <div className="space-y-8">
-            <div className="grid grid-cols-2 gap-6">
-              <div className="space-y-1.5">
-                <span className="text-sm font-medium text-muted-foreground">Status</span>
-                <div><StatusBadge status={selectedProject.status.replace('-', ' ')} /></div>
-              </div>
-              <div className="space-y-1.5">
-                <span className="text-sm font-medium text-muted-foreground">Health</span>
-                <div><ProjectHealthBadge health={selectedProject.health} /></div>
-              </div>
-              <div className="space-y-1.5">
-                <span className="text-sm font-medium text-muted-foreground">Priority</span>
-                <div>
-                  <Badge variant={selectedProject.priority === 'high' ? 'destructive' : selectedProject.priority === 'medium' ? 'secondary' : 'outline'} className="capitalize">
-                    {selectedProject.priority}
-                  </Badge>
+            <TabsContent value="board" className="m-0 border-none p-0 outline-none">
+              <div className="overflow-x-auto pb-4">
+                <div className="flex gap-4 min-w-max h-[calc(100vh-18rem)]">
+                  <DndContext sensors={sensors} collisionDetection={closestCorners} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
+                    {STATUS_COLUMNS.map((col) => {
+                      const colItems = boardItems.filter((p) => p.status === col.id);
+                      return (
+                        <KanbanColumn key={col.id} column={col} items={colItems}>
+                          {colItems.map((p) => (
+                            <SortableProjectCard key={p.id} p={p} onClick={() => openProject(p)} />
+                          ))}
+                        </KanbanColumn>
+                      );
+                    })}
+                  </DndContext>
                 </div>
               </div>
-              <div className="space-y-1.5">
-                <span className="text-sm font-medium text-muted-foreground">Budget</span>
-                <div className="font-medium text-lg">${selectedProject.budget.toLocaleString()}</div>
-              </div>
-            </div>
+            </TabsContent>
 
-            <div className="space-y-3">
-              <div className="flex justify-between items-center text-sm font-medium">
-                <span>Progress Overview</span>
-                <span className="text-muted-foreground">{calculateProgress(selectedProject.startDate, selectedProject.deadline)}%</span>
-              </div>
-              <Progress value={calculateProgress(selectedProject.startDate, selectedProject.deadline)} className="h-2" />
-              <div className="flex justify-between text-sm text-muted-foreground">
-                <span>Started: {new Date(selectedProject.startDate).toLocaleDateString()}</span>
-                <span>Deadline: {new Date(selectedProject.deadline).toLocaleDateString()}</span>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <h3 className="text-sm font-medium text-muted-foreground border-b pb-2">Team</h3>
-              <div className="flex gap-2">
-                 <AvatarStack urls={selectedProject.assignees} size="md" />
-              </div>
-            </div>
-            
-            <div className="space-y-3">
-              <h3 className="text-sm font-medium text-muted-foreground border-b pb-2">Risk Assessment</h3>
-              <p className="text-sm capitalize text-foreground font-medium flex items-center gap-2">
-                <Badge variant={selectedProject.risk === 'high' ? 'destructive' : 'outline'}>{selectedProject.risk} Risk</Badge>
-              </p>
-            </div>
-          </div>
+            <TabsContent value="timeline" className="m-0 border-none p-0 outline-none">
+              <Timeline projects={projects} onSelect={openProject} />
+            </TabsContent>
+          </>
         )}
-      </EntityDrawer>
+      </Tabs>
     </div>
   );
 }

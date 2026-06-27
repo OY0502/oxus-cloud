@@ -1,20 +1,85 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AlertCircle, Check, X } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import {
+  passwordRules,
+  isPasswordValid,
+  getPasswordStrength,
+} from "@/lib/password";
+import { cn } from "@/lib/utils";
+import { BrandLogo } from "@/components/BrandLogo";
+import { isValidEmail } from "@/lib/validation";
 
 export function Signup() {
   const [, setLocation] = useLocation();
+  const { signUp } = useAuth();
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmationSent, setConfirmationSent] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const strength = useMemo(() => getPasswordStrength(password), [password]);
+  const passwordValid = isPasswordValid(password);
+  const passwordsMatch = password.length > 0 && password === confirm;
+  const emailValid = isValidEmail(email);
+  const canSubmit = emailValid && passwordValid && passwordsMatch && !loading;
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+
+    if (!emailValid) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+    if (!passwordValid) {
+      setError("Please choose a password that meets all the requirements.");
+      return;
+    }
+    if (!passwordsMatch) {
+      setError("Passwords do not match.");
+      return;
+    }
+
     setLoading(true);
-    setTimeout(() => {
-      setLocation("/");
-    }, 800);
+    try {
+      const { needsEmailConfirmation } = await signUp(
+        email,
+        password,
+        fullName,
+      );
+      if (needsEmailConfirmation) {
+        setConfirmationSent(true);
+        setLoading(false);
+      } else {
+        setLocation("/");
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to create your account. Please try again.",
+      );
+      setLoading(false);
+    }
   };
+
+  const strengthBarColor =
+    strength.label === "strong"
+      ? "bg-green-500"
+      : strength.label === "good"
+        ? "bg-emerald-500"
+        : strength.label === "fair"
+          ? "bg-amber-500"
+          : "bg-destructive";
 
   return (
     <div className="min-h-screen flex bg-background">
@@ -27,9 +92,8 @@ export function Signup() {
           </svg>
         </div>
         
-        <div className="z-10 flex items-center gap-2">
-          <div className="w-8 h-8 rounded bg-chart-4 flex items-center justify-center text-sidebar font-bold">O</div>
-          <span className="font-serif font-bold text-xl tracking-wide text-[#D1E8FF]">OXUS Cloud</span>
+        <div className="z-10">
+          <BrandLogo />
         </div>
 
         <div className="z-10 max-w-md">
@@ -40,38 +104,148 @@ export function Signup() {
       
       <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-background relative">
         <div className="w-full max-w-md">
-          <div className="lg:hidden flex items-center gap-2 mb-12">
-            <div className="w-8 h-8 rounded bg-primary flex items-center justify-center text-primary-foreground font-bold">O</div>
-            <span className="font-serif font-bold text-xl tracking-wide text-primary">OXUS Cloud</span>
+          <div className="lg:hidden mb-12">
+            <BrandLogo textClassName="text-primary" />
           </div>
 
-          <div className="mb-8">
-            <h2 className="text-3xl font-bold tracking-tight text-foreground">Create account</h2>
-            <p className="text-muted-foreground mt-2">Sign up for your workspace today.</p>
-          </div>
+          {confirmationSent ? (
+            <div className="space-y-6">
+              <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
+                <Check className="w-6 h-6 text-primary" />
+              </div>
+              <div>
+                <h2 className="text-3xl font-bold tracking-tight text-foreground">Check your inbox</h2>
+                <p className="text-muted-foreground mt-2">
+                  We sent a confirmation link to <span className="font-medium text-foreground">{email}</span>.
+                  Confirm your email to activate your account, then sign in.
+                </p>
+              </div>
+              <Button asChild className="w-full h-12 bg-primary text-primary-foreground hover:bg-primary/90">
+                <Link href="/login">Back to sign in</Link>
+              </Button>
+            </div>
+          ) : (
+            <>
+              <div className="mb-8">
+                <h2 className="text-3xl font-bold tracking-tight text-foreground">Create account</h2>
+                <p className="text-muted-foreground mt-2">Sign up for your workspace today.</p>
+              </div>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="space-y-2">
-              <Label htmlFor="name">Full Name</Label>
-              <Input id="name" placeholder="Alex Designer" required className="bg-background h-12" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" placeholder="alex@oxus.cloud" required className="bg-background h-12" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input id="password" type="password" required className="bg-background h-12" />
-            </div>
-            <Button type="submit" className="w-full h-12 text-md bg-primary text-primary-foreground hover:bg-primary/90" disabled={loading}>
-              {loading ? "Creating account..." : "Sign Up"}
-            </Button>
-          </form>
+              {error && (
+                <Alert variant="destructive" className="mb-6">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
 
-          <div className="mt-8 text-center text-sm text-muted-foreground">
-            Already have an account?{" "}
-            <Link href="/login" className="text-primary font-medium hover:underline">Sign in</Link>
-          </div>
+              <form onSubmit={handleSubmit} className="space-y-5">
+                <div className="space-y-2">
+                  <Label htmlFor="name">Full Name</Label>
+                  <Input
+                    id="name"
+                    autoComplete="name"
+                    placeholder="Alex Designer"
+                    required
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    className="bg-background h-12"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    autoComplete="email"
+                    placeholder="alex@oxus.cloud"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="bg-background h-12"
+                  />
+                  {email.length > 0 && !emailValid && (
+                    <p className="text-xs text-destructive">Enter a valid email address.</p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="bg-background h-12"
+                  />
+
+                  {password.length > 0 && (
+                    <div className="pt-1 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
+                          <div
+                            className={cn("h-full transition-all", strengthBarColor)}
+                            style={{ width: `${strength.score}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-muted-foreground capitalize w-12 text-right">
+                          {strength.label}
+                        </span>
+                      </div>
+                      <ul className="grid grid-cols-1 gap-1">
+                        {passwordRules.map((rule) => {
+                          const ok = rule.test(password);
+                          return (
+                            <li
+                              key={rule.id}
+                              className={cn(
+                                "flex items-center gap-2 text-xs",
+                                ok ? "text-green-600" : "text-muted-foreground",
+                              )}
+                            >
+                              {ok ? (
+                                <Check className="w-3.5 h-3.5 shrink-0" />
+                              ) : (
+                                <X className="w-3.5 h-3.5 shrink-0" />
+                              )}
+                              {rule.label}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="confirm">Confirm Password</Label>
+                  <Input
+                    id="confirm"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    value={confirm}
+                    onChange={(e) => setConfirm(e.target.value)}
+                    className="bg-background h-12"
+                  />
+                  {confirm.length > 0 && !passwordsMatch && (
+                    <p className="text-xs text-destructive">Passwords do not match.</p>
+                  )}
+                </div>
+                <Button
+                  type="submit"
+                  className="w-full h-12 text-md bg-primary text-primary-foreground hover:bg-primary/90"
+                  disabled={!canSubmit}
+                >
+                  {loading ? "Creating account..." : "Sign Up"}
+                </Button>
+              </form>
+
+              <div className="mt-8 text-center text-sm text-muted-foreground">
+                Already have an account?{" "}
+                <Link href="/login" className="text-primary font-medium hover:underline">Sign in</Link>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

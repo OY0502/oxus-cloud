@@ -4,6 +4,8 @@ import { cn } from "@/lib/utils";
 
 interface AvatarStackProps {
   urls: string[];
+  /** Optional initials shown when a url is empty (same order as urls). */
+  fallbacks?: string[];
   max?: number;
   size?: "sm" | "md" | "lg";
   className?: string;
@@ -15,7 +17,7 @@ const sizeClasses = {
   lg: "w-10 h-10 border-[3px]"
 };
 
-export function AvatarStack({ urls, max = 3, size = "md", className }: AvatarStackProps) {
+export function AvatarStack({ urls, fallbacks = [], max = 3, size = "md", className }: AvatarStackProps) {
   const visible = urls.slice(0, max);
   const remaining = urls.length - max;
 
@@ -23,8 +25,10 @@ export function AvatarStack({ urls, max = 3, size = "md", className }: AvatarSta
     <div className={cn("flex items-center -space-x-2", className)}>
       {visible.map((url, i) => (
         <Avatar key={i} className={cn("border-background", sizeClasses[size])}>
-          <AvatarImage src={url} />
-          <AvatarFallback>U</AvatarFallback>
+          {url ? <AvatarImage src={url} /> : null}
+          <AvatarFallback className="bg-primary/10 text-primary text-[10px] font-semibold">
+            {fallbacks[i] ?? "?"}
+          </AvatarFallback>
         </Avatar>
       ))}
       

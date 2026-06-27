@@ -3,6 +3,7 @@ import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
+import { useAutoKickOut } from "@/components/auth/RouteGuards";
 
 const navigationMap: Record<string, string> = {
   "/": "Dashboard",
@@ -14,11 +15,13 @@ const navigationMap: Record<string, string> = {
   "/contacts": "Contacts",
   "/invoices": "Invoices",
   "/finance": "Finance",
+  "/settings": "Settings",
 };
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const currentTitle = navigationMap[location] || "Dashboard";
+  useAutoKickOut();
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">

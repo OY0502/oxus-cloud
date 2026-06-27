@@ -20,7 +20,7 @@ const variantStyles: Record<StatusVariant, string> = {
   success: "bg-soft-green/15 text-soft-green border-soft-green/30",
   warning: "bg-warm-yellow/15 text-warm-yellow border-warm-yellow/30",
   danger: "bg-soft-red/15 text-soft-red border-soft-red/30",
-  info: "bg-logo-blue/15 text-logo-blue border-logo-blue/30",
+  info: "bg-logo-blue/20 text-primary border-logo-blue/40",
   default: "bg-primary/10 text-primary border-primary/20",
   neutral: "bg-muted text-muted-foreground border-border",
 };

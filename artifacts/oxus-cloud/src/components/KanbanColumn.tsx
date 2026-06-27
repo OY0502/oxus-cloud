@@ -4,6 +4,7 @@ import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable"
 import { Badge } from "@/components/ui/badge";
 import { Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatEUR } from "@/lib/currency";
 
 interface KanbanColumnProps {
   column: {
@@ -35,7 +36,7 @@ export function KanbanColumn({ column, items, children }: KanbanColumnProps) {
         </div>
         <div className="flex justify-between items-center mt-2">
           <span className="text-xs text-muted-foreground">{column.description}</span>
-          <span className="text-sm font-semibold text-primary">${totalValue.toLocaleString()}</span>
+          <span className="text-sm font-semibold text-primary">{formatEUR(totalValue)}</span>
         </div>
       </div>
       <div

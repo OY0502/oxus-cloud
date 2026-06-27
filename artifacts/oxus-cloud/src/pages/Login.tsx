@@ -1,20 +1,41 @@
 import React, { useState } from "react";
-import { Link, useLocation } from "wouter";
-import { Card, CardContent } from "@/components/ui/card";
+import { Link, useLocation, useSearch } from "wouter";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AlertCircle } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { BrandLogo } from "@/components/BrandLogo";
+import { isValidEmail } from "@/lib/validation";
 
 export function Login() {
   const [, setLocation] = useLocation();
+  const search = useSearch();
+  const { signInWithPassword } = useAuth();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const emailValid = isValidEmail(email);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     setLoading(true);
-    setTimeout(() => {
-      setLocation("/");
-    }, 800);
+    try {
+      await signInWithPassword(email, password);
+      const params = new URLSearchParams(search);
+      const next = params.get("next");
+      setLocation(next ? decodeURIComponent(next) : "/");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to sign in. Please try again.",
+      );
+      setLoading(false);
+    }
   };
 
   return (
@@ -28,9 +49,8 @@ export function Login() {
           </svg>
         </div>
         
-        <div className="z-10 flex items-center gap-2">
-          <div className="w-8 h-8 rounded bg-chart-4 flex items-center justify-center text-sidebar font-bold">O</div>
-          <span className="font-serif font-bold text-xl tracking-wide text-[#D1E8FF]">OXUS Cloud</span>
+        <div className="z-10">
+          <BrandLogo />
         </div>
 
         <div className="z-10 max-w-md">
@@ -41,9 +61,8 @@ export function Login() {
       
       <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-background relative">
         <div className="w-full max-w-md">
-          <div className="lg:hidden flex items-center gap-2 mb-12">
-            <div className="w-8 h-8 rounded bg-primary flex items-center justify-center text-primary-foreground font-bold">O</div>
-            <span className="font-serif font-bold text-xl tracking-wide text-primary">OXUS Cloud</span>
+          <div className="lg:hidden mb-12">
+            <BrandLogo textClassName="text-primary" />
           </div>
 
           <div className="mb-8">
@@ -51,19 +70,46 @@ export function Login() {
             <p className="text-muted-foreground mt-2">Enter your credentials to access your workspace.</p>
           </div>
 
+          {error && (
+            <Alert variant="destructive" className="mb-6">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" placeholder="alex@oxus.cloud" required className="bg-background h-12" />
+              <Input
+                id="email"
+                type="email"
+                autoComplete="email"
+                placeholder="alex@oxus.cloud"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="bg-background h-12"
+              />
+              {email.length > 0 && !emailValid && (
+                <p className="text-xs text-destructive">Enter a valid email address.</p>
+              )}
             </div>
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <Label htmlFor="password">Password</Label>
-                <Link href="#" className="text-xs text-primary font-medium hover:underline">Forgot password?</Link>
+                <Link href="/forgot-password" className="text-xs text-primary font-medium hover:underline">Forgot password?</Link>
               </div>
-              <Input id="password" type="password" required className="bg-background h-12" />
+              <Input
+                id="password"
+                type="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="bg-background h-12"
+              />
             </div>
-            <Button type="submit" className="w-full h-12 text-md bg-primary text-primary-foreground hover:bg-primary/90" disabled={loading}>
+            <Button type="submit" className="w-full h-12 text-md bg-primary text-primary-foreground hover:bg-primary/90" disabled={loading || !emailValid}>
               {loading ? "Signing in..." : "Sign In"}
             </Button>
           </form>

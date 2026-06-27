@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "pnpm --filter @workspace/oxus-cloud run build",
+  "installCommand": "pnpm install",
+  "outputDirectory": "artifacts/oxus-cloud/dist/public",
+  "framework": "vite",
+  "rewrites": [{ "source": "/((?!assets/).*)", "destination": "/index.html" }]
+}
