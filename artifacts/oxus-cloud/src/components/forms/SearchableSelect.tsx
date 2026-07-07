@@ -30,6 +30,8 @@ interface SearchableSelectProps {
   onFooterClick?: () => void;
   className?: string;
   disabled?: boolean;
+  /** Use when rendered inside a modal dialog so scroll and stacking behave correctly. */
+  inModal?: boolean;
 }
 
 export function SearchableSelect({
@@ -43,12 +45,13 @@ export function SearchableSelect({
   onFooterClick,
   className,
   disabled,
+  inModal = false,
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false);
   const selected = options.find((o) => o.value === value);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen} modal={inModal}>
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -66,16 +69,26 @@ export function SearchableSelect({
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-        <Command>
+      <PopoverContent
+        className={cn(
+          "w-[--radix-popover-trigger-width] p-0",
+          inModal && "z-[200]",
+        )}
+        align="start"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
+        <Command shouldFilter>
           <CommandInput placeholder={searchPlaceholder} />
-          <CommandList>
+          <CommandList
+            className="max-h-[min(280px,var(--radix-popover-content-available-height))]"
+            onWheel={(e) => e.stopPropagation()}
+          >
             <CommandEmpty>{emptyText}</CommandEmpty>
-            <CommandGroup>
+            <CommandGroup className="overflow-visible">
               {options.map((o) => (
                 <CommandItem
                   key={o.value}
-                  value={`${o.label} ${o.sublabel ?? ""}`}
+                  value={`${o.label} ${o.sublabel ?? ""} ${o.value}`}
                   onSelect={() => {
                     onChange(o.value === value ? "" : o.value);
                     setOpen(false);

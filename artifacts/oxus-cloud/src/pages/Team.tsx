@@ -12,6 +12,7 @@ import { motion } from "framer-motion";
 import { useContacts } from "@/hooks/api";
 import { CreateContactDialog } from "@/components/forms/CreateDialogs";
 import { TableSkeleton, EmptyState, ErrorState } from "@/components/states/QueryStates";
+import { useAuth } from "@/contexts/AuthContext";
 import { formatEUR } from "@/lib/currency";
 import type { Contact } from "@/lib/types";
 
@@ -25,6 +26,7 @@ function initials(name: string): string {
 export function Team() {
   const [selectedMember, setSelectedMember] = useState<Contact | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const { isSuperAdmin } = useAuth();
   const { data: contacts = [], isLoading, isError, error, refetch } = useContacts();
 
   // The roster is everyone in Contacts marked as a contractor.
@@ -92,9 +94,11 @@ export function Team() {
         subtitle="Your roster of contractors, sourced from Contacts."
         breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Team" }]}
         actions={
-          <Button className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-soft gap-2" onClick={() => setCreateOpen(true)}>
-            <Plus className="w-4 h-4" /> Add Contractor
-          </Button>
+          isSuperAdmin ? (
+            <Button className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-soft gap-2" onClick={() => setCreateOpen(true)}>
+              <Plus className="w-4 h-4" /> Add Contractor
+            </Button>
+          ) : undefined
         }
       />
 
@@ -107,7 +111,7 @@ export function Team() {
           icon={<Users />}
           title="No contractors yet"
           description="Add a contact of type “Contractor” to build your roster and track availability and rates."
-          action={<Button onClick={() => setCreateOpen(true)}><Plus className="w-4 h-4 mr-2" />Add your first contractor</Button>}
+          action={isSuperAdmin ? <Button onClick={() => setCreateOpen(true)}><Plus className="w-4 h-4 mr-2" />Add your first contractor</Button> : undefined}
         />
       ) : (
         <DataTable data={team} columns={columns} onRowClick={setSelectedMember} />

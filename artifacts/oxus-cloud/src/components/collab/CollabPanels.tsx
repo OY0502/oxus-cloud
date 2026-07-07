@@ -6,7 +6,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Paperclip, Download, Send, Plus, FileText } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Trash2, Paperclip, Download, Send, Plus, FileText, ExternalLink, Figma } from "lucide-react";
 import {
   useComments,
   useAddComment,
@@ -20,7 +27,7 @@ import {
   useDeleteAttachment,
   getAttachmentUrl,
 } from "@/hooks/api";
-import type { Attachment, EntityType } from "@/lib/types";
+import type { Attachment, EntityType, Task, TaskPriority } from "@/lib/types";
 import { profileAvatarUrl, profileDisplayName } from "@/lib/profiles";
 import { useToast } from "@/hooks/use-toast";
 
@@ -90,18 +97,127 @@ export function CommentsPanel({ entityType, entityId }: PanelProps) {
   );
 }
 
+const TASK_PRIORITIES: TaskPriority[] = ["low", "medium", "high", "urgent"];
+
+function taskSourceLabel(task: Task): string | null {
+  switch (task.source_type) {
+    case "figma":
+      return "Figma";
+    case "ai_proposed_task":
+      return "AI";
+    case "clickup":
+      return "ClickUp";
+    case "slack":
+      return "Slack";
+    case "manual":
+      return "Manual";
+    default:
+      return null;
+  }
+}
+
+function TaskDetails({ task }: { task: Task }) {
+  const hasDetails =
+    !!task.description ||
+    task.acceptance_criteria.length > 0 ||
+    task.qa_scenarios.length > 0 ||
+    task.implementation_notes.length > 0 ||
+    task.design_notes.length > 0 ||
+    task.estimate_hours !== null ||
+    !!task.design_url;
+  if (!hasDetails) return null;
+
+  return (
+    <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
+      {task.description && <p className="text-sm text-muted-foreground whitespace-pre-wrap">{task.description}</p>}
+      {task.estimate_hours !== null && (
+        <p className="text-xs text-muted-foreground">Estimate: {task.estimate_hours}h</p>
+      )}
+      {task.design_url && (
+        <a
+          href={task.design_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+        >
+          <Figma className="h-3.5 w-3.5" /> Open design <ExternalLink className="h-3 w-3" />
+        </a>
+      )}
+      {task.acceptance_criteria.length > 0 && (
+        <div>
+          <h6 className="section-label mb-1">Acceptance Criteria</h6>
+          <ul className="space-y-1 text-sm text-muted-foreground list-disc pl-5">
+            {task.acceptance_criteria.map((item, index) => <li key={index}>{item}</li>)}
+          </ul>
+        </div>
+      )}
+      {task.implementation_notes.length > 0 && (
+        <div>
+          <h6 className="section-label mb-1">Implementation Notes</h6>
+          <ul className="space-y-1 text-sm text-muted-foreground list-disc pl-5">
+            {task.implementation_notes.map((item, index) => <li key={index}>{item}</li>)}
+          </ul>
+        </div>
+      )}
+      {task.design_notes.length > 0 && (
+        <div>
+          <h6 className="section-label mb-1">Design Notes</h6>
+          <ul className="space-y-1 text-sm text-muted-foreground list-disc pl-5">
+            {task.design_notes.map((item, index) => <li key={index}>{item}</li>)}
+          </ul>
+        </div>
+      )}
+      {task.qa_scenarios.length > 0 && (
+        <div>
+          <h6 className="section-label mb-1">QA Scenarios</h6>
+          <div className="space-y-2">
+            {task.qa_scenarios.map((scenario, index) => (
+              <div key={`${scenario.title}-${index}`} className="rounded-lg border border-border/60 bg-muted/20 p-2">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className="text-sm font-medium">{scenario.title}</span>
+                  <Badge variant="outline" className="capitalize">{scenario.priority}</Badge>
+                </div>
+                {scenario.steps.length > 0 && (
+                  <ol className="text-sm text-muted-foreground list-decimal pl-5 space-y-1">
+                    {scenario.steps.map((step, stepIndex) => <li key={stepIndex}>{step}</li>)}
+                  </ol>
+                )}
+                {scenario.expected_result && (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    <span className="font-medium text-foreground/80">Expected:</span> {scenario.expected_result}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function TasksPanel({ entityType, entityId }: PanelProps) {
   const { data: tasks = [], isLoading } = useTasks(entityType, entityId);
   const create = useCreateTask();
   const update = useUpdateTask();
   const del = useDeleteTask();
   const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [priority, setPriority] = useState<TaskPriority>("medium");
 
   const add = async () => {
     const t = title.trim();
     if (!t) return;
-    await create.mutateAsync({ entity_type: entityType, entity_id: entityId, title: t });
+    await create.mutateAsync({
+      entity_type: entityType,
+      entity_id: entityId,
+      title: t,
+      description: description.trim() || null,
+      priority,
+    });
     setTitle("");
+    setDescription("");
+    setPriority("medium");
   };
 
   const toggle = (id: string, done: boolean) =>
@@ -109,16 +225,34 @@ export function TasksPanel({ entityType, entityId }: PanelProps) {
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-2">
-        <Input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Add a task…"
-          onKeyDown={(e) => { if (e.key === "Enter") add(); }}
+      <div className="space-y-2">
+        <div className="flex gap-2">
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Add a task…"
+            onKeyDown={(e) => { if (e.key === "Enter") add(); }}
+          />
+          <Select value={priority} onValueChange={(v) => setPriority(v as TaskPriority)}>
+            <SelectTrigger className="w-[120px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {TASK_PRIORITIES.map((p) => (
+                <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button size="icon" onClick={add} disabled={!title.trim() || create.isPending}>
+            <Plus className="h-4 w-4" />
+          </Button>
+        </div>
+        <Textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Optional description…"
+          rows={2}
         />
-        <Button size="icon" onClick={add} disabled={!title.trim() || create.isPending}>
-          <Plus className="h-4 w-4" />
-        </Button>
       </div>
 
       {isLoading ? (
@@ -126,25 +260,33 @@ export function TasksPanel({ entityType, entityId }: PanelProps) {
       ) : tasks.length === 0 ? (
         <p className="text-sm text-muted-foreground">No tasks yet.</p>
       ) : (
-        <div className="space-y-1">
-          {tasks.map((t) => (
-            <div key={t.id} className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 group">
-              <Checkbox checked={t.status === "done"} onCheckedChange={(v) => toggle(t.id, !!v)} />
-              <span className={`text-sm flex-1 ${t.status === "done" ? "line-through text-muted-foreground" : ""}`}>{t.title}</span>
-              {t.assignee && (
-                <Avatar className="w-6 h-6">
-                  <AvatarImage src={profileAvatarUrl(t.assignee)} />
-                  <AvatarFallback>{profileDisplayName(t.assignee).charAt(0)}</AvatarFallback>
-                </Avatar>
-              )}
-              <button
-                className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition"
-                onClick={() => del.mutate({ id: t.id, entity_type: entityType, entity_id: entityId })}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ))}
+        <div className="space-y-2">
+          {tasks.map((t) => {
+            const sourceLabel = taskSourceLabel(t);
+            return (
+              <div key={t.id} className="rounded-lg border border-border bg-card px-3 py-2 group">
+                <div className="flex items-center gap-3">
+                  <Checkbox checked={t.status === "done"} onCheckedChange={(v) => toggle(t.id, !!v)} />
+                  <span className={`text-sm flex-1 ${t.status === "done" ? "line-through text-muted-foreground" : ""}`}>{t.title}</span>
+                  {t.priority && <Badge variant="outline" className="capitalize">{t.priority}</Badge>}
+                  {sourceLabel && <Badge variant="secondary">{sourceLabel}</Badge>}
+                  {t.assignee && (
+                    <Avatar className="w-6 h-6">
+                      <AvatarImage src={profileAvatarUrl(t.assignee)} />
+                      <AvatarFallback>{profileDisplayName(t.assignee).charAt(0)}</AvatarFallback>
+                    </Avatar>
+                  )}
+                  <button
+                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition"
+                    onClick={() => del.mutate({ id: t.id, entity_type: entityType, entity_id: entityId })}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <TaskDetails task={t} />
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

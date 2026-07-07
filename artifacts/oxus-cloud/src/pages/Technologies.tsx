@@ -152,7 +152,7 @@ export function Technologies() {
         subtitle="Configure the technologies available across quotes and projects."
         actions={
           <div className="flex items-center gap-4">
-            <Input placeholder="Search technologies..." className="w-[220px] bg-card border-border shadow-sm" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+            <Input placeholder="Search technologies..." className="w-[220px] bg-card border-card-border shadow-soft" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
             <Button className="gap-2" onClick={openCreate}><Plus className="w-4 h-4" /> Add Technology</Button>
           </div>
         }

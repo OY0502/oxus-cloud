@@ -16,6 +16,7 @@ import {
   useUserOptions,
 } from "@/components/forms/refOptions";
 import { PROJECT_TYPES } from "@/lib/types";
+import { isLikelyWebsiteUrl } from "@/lib/companyWebsite";
 
 // Next quote number: QT-{year}-{N}, where N is the highest existing sequence + 1.
 function nextQuoteNumber(numbers: (string | null)[]): string {
@@ -58,6 +59,10 @@ export function QuoteForm() {
   const [urgency, setUrgency] = useState<"low" | "normal" | "high">("normal");
   const [assignedUserId, setAssignedUserId] = useState("");
   const [tags, setTags] = useState<string[]>([]);
+  const [companyWebsiteUrl, setCompanyWebsiteUrl] = useState("");
+  const [requestMessage, setRequestMessage] = useState("");
+
+  const websiteInvalid = companyWebsiteUrl.trim() !== "" && !isLikelyWebsiteUrl(companyWebsiteUrl);
 
   // Auto-populate the quote number once quotes have loaded (unless edited).
   useEffect(() => {
@@ -67,7 +72,7 @@ export function QuoteForm() {
   const orgName = useMemo(() => clients.find((c) => c.id === organizationId)?.name ?? "", [clients, organizationId]);
 
   const canSubmit =
-    number.trim() !== "" && !!pointOfContactId && !!projectType && !!stage && !!urgency;
+    number.trim() !== "" && !!pointOfContactId && !!projectType && !!stage && !!urgency && !websiteInvalid;
 
   const submit = async () => {
     try {
@@ -85,6 +90,8 @@ export function QuoteForm() {
         urgency,
         assigned_user_id: assignedUserId || null,
         tags,
+        company_website_url: companyWebsiteUrl.trim() || null,
+        request_message: requestMessage.trim() || null,
       });
       toast({ title: "Quote created", description: number });
       goBack("/pipeline", navigate);
@@ -105,7 +112,7 @@ export function QuoteForm() {
         }
       />
 
-      <Card className="bg-card border-border shadow-sm">
+      <Card>
         <CardContent className="p-6 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <Field label="Quote number" required>
@@ -179,6 +186,34 @@ export function QuoteForm() {
             onChange={setProjectDescription}
             placeholder="Short summary of the work and goals…"
           />
+
+          <div className="space-y-1">
+            <TextField
+              label="Company website"
+              value={companyWebsiteUrl}
+              onChange={setCompanyWebsiteUrl}
+              type="url"
+              placeholder="https://acme.com"
+            />
+            <p className="text-xs text-muted-foreground">
+              Used to auto-enrich the client's company details when a project is created. We only read this exact site.
+            </p>
+            {websiteInvalid && (
+              <p className="text-xs text-soft-red">Enter a valid URL, e.g. https://acme.com.</p>
+            )}
+          </div>
+
+          <div className="space-y-1">
+            <TextareaField
+              label="Request message"
+              value={requestMessage}
+              onChange={setRequestMessage}
+              placeholder="Paste the client's original request, lead message, or initial ask here…"
+            />
+            <p className="text-xs text-muted-foreground">
+              The client's original ask. This is the primary signal for the initial Project Intelligence scope.
+            </p>
+          </div>
 
           <div className="grid grid-cols-2 gap-4">
             <SelectField

@@ -117,7 +117,7 @@ export function Quotes() {
         </div>
       )}
 
-      <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-card p-4 rounded-xl border border-border shadow-soft">
+      <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-card p-4 rounded-xl border border-card-border shadow-soft">
         <div className="relative w-full sm:w-80">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input placeholder="Search quotes by org, contact…" className="pl-9 bg-background/50 border-border focus-visible:ring-magenta" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />

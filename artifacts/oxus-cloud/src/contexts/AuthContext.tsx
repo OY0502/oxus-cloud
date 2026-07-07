@@ -1,5 +1,6 @@
 import React, {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -7,14 +8,23 @@ import React, {
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { isPmRole, isSuperAdminRole, normalizeProfileRole } from "@/lib/roles";
+import type { Profile, ProfileRole } from "@/lib/types";
 
 interface AuthContextValue {
   session: Session | null;
   user: User | null;
+  profile: Profile | null;
+  role: ProfileRole | null;
   /** True while the initial session is being resolved. */
   initializing: boolean;
+  /** True while the current user's profile is loading. */
+  profileLoading: boolean;
   /** True while a password recovery link is being handled. */
   isRecovering: boolean;
+  isSuperAdmin: boolean;
+  isPM: boolean;
+  refreshProfile: () => Promise<void>;
   signInWithPassword: (email: string, password: string) => Promise<void>;
   signUp: (
     email: string,
@@ -30,8 +40,27 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [initializing, setInitializing] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(false);
   const [isRecovering, setIsRecovering] = useState(false);
+
+  const loadProfile = useCallback(async (userId: string) => {
+    setProfileLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", userId)
+        .maybeSingle();
+      if (error) throw error;
+      setProfile(data as Profile | null);
+    } catch {
+      setProfile(null);
+    } finally {
+      setProfileLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -40,6 +69,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!active) return;
       setSession(data.session);
       setInitializing(false);
+      if (data.session?.user?.id) {
+        void loadProfile(data.session.user.id);
+      } else {
+        setProfile(null);
+        setProfileLoading(false);
+      }
     });
 
     const {
@@ -50,22 +85,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (event === "PASSWORD_RECOVERY") {
         setIsRecovering(true);
       }
+      if (nextSession?.user?.id) {
+        void loadProfile(nextSession.user.id);
+      } else {
+        setProfile(null);
+        setProfileLoading(false);
+      }
     });
 
     return () => {
       active = false;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [loadProfile]);
 
   const value = useMemo<AuthContextValue>(() => {
     const redirectBase = `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, "")}`;
+    const role = profile ? normalizeProfileRole(profile.role) : null;
 
     return {
       session,
       user: session?.user ?? null,
+      profile,
+      role,
       initializing,
+      profileLoading,
       isRecovering,
+      isSuperAdmin: isSuperAdminRole(role),
+      isPM: isPmRole(role),
+      refreshProfile: async () => {
+        if (session?.user?.id) await loadProfile(session.user.id);
+      },
       async signInWithPassword(email, password) {
         const { error } = await supabase.auth.signInWithPassword({
           email,
@@ -83,13 +133,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           },
         });
         if (error) throw error;
-        // When email confirmation is required, no session is returned.
         const needsEmailConfirmation = !data.session;
         return { needsEmailConfirmation };
       },
       async signOut() {
         const { error } = await supabase.auth.signOut();
         if (error) throw error;
+        setProfile(null);
       },
       async sendPasswordReset(email) {
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
@@ -103,7 +153,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setIsRecovering(false);
       },
     };
-  }, [session, initializing, isRecovering]);
+  }, [session, profile, initializing, profileLoading, isRecovering, loadProfile]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

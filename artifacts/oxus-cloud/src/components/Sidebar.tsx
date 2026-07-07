@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/contexts/AuthContext";
 import { BrandLogo } from "@/components/BrandLogo";
+import { filterPagesForRole } from "@/lib/roles";
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -49,7 +50,8 @@ function getInitials(name: string): string {
 
 export function Sidebar() {
   const [location] = useLocation();
-  const { user, signOut } = useAuth();
+  const { user, signOut, role } = useAuth();
+  const visibleNavigation = filterPagesForRole(navigation, role);
 
   const email = user?.email ?? "";
   const fullName =
@@ -74,7 +76,7 @@ export function Sidebar() {
         </Link>
       </div>
       <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
-        {navigation.map((item) => {
+        {visibleNavigation.map((item) => {
           const isActive = location === item.href;
           return (
             <Link 

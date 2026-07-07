@@ -10,6 +10,7 @@ import {
   Receipt,
   LineChart,
   Settings,
+  Cpu,
 } from "lucide-react";
 
 export type SearchResultKind = "page" | "record";
@@ -32,6 +33,7 @@ export const APP_PAGES: SearchResult[] = [
   { id: "page-calendar", kind: "page", title: "Calendar", subtitle: "Events & schedule", href: "/calendar", icon: CalendarDays },
   { id: "page-team", kind: "page", title: "Team", subtitle: "Roster & availability", href: "/team", icon: Users },
   { id: "page-contacts", kind: "page", title: "Contacts", subtitle: "People & relationships", href: "/contacts", icon: Contact2 },
+  { id: "page-technologies", kind: "page", title: "Technologies", subtitle: "Stack & tooling catalog", href: "/technologies", icon: Cpu },
   { id: "page-invoices", kind: "page", title: "Invoices", subtitle: "Billing lifecycle", href: "/invoices", icon: Receipt },
   { id: "page-finance", kind: "page", title: "Finance", subtitle: "Cash flow & transactions", href: "/finance", icon: LineChart },
   { id: "page-settings", kind: "page", title: "Settings", subtitle: "Account & preferences", href: "/settings", icon: Settings },

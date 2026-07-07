@@ -53,3 +53,5 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+.vercel
+.trigger

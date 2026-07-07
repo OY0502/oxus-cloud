@@ -19,12 +19,15 @@ import {
   useTeamMembers,
 } from "@/hooks/api";
 import { APP_PAGES, filterSearchResults, type SearchResult } from "@/lib/search";
+import { filterPagesForRole, isSuperAdminRole } from "@/lib/roles";
+import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 
 export function GlobalSearch() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [, setLocation] = useLocation();
+  const { role } = useAuth();
 
   const { data: clients = [] } = useClients();
   const { data: contacts = [] } = useContacts();
@@ -46,6 +49,7 @@ export function GlobalSearch() {
 
   const recordResults = useMemo<SearchResult[]>(() => {
     const rows: SearchResult[] = [];
+    const superAdmin = isSuperAdminRole(role);
 
     for (const c of clients) {
       rows.push({
@@ -78,6 +82,7 @@ export function GlobalSearch() {
       });
     }
     for (const q of quotes) {
+      if (!superAdmin) continue;
       rows.push({
         id: `quote-${q.id}`,
         kind: "record",
@@ -88,6 +93,7 @@ export function GlobalSearch() {
       });
     }
     for (const inv of invoices) {
+      if (!superAdmin) continue;
       rows.push({
         id: `invoice-${inv.id}`,
         kind: "record",
@@ -109,9 +115,10 @@ export function GlobalSearch() {
     }
 
     return rows;
-  }, [clients, contacts, projects, quotes, invoices, team]);
+  }, [clients, contacts, projects, quotes, invoices, team, role]);
 
-  const pageResults = useMemo(() => filterSearchResults(APP_PAGES, query), [query]);
+  const visiblePages = useMemo(() => filterPagesForRole(APP_PAGES, role), [role]);
+  const pageResults = useMemo(() => filterSearchResults(visiblePages, query), [visiblePages, query]);
   const filteredRecords = useMemo(() => filterSearchResults(recordResults, query), [recordResults, query]);
 
   const navigate = (href: string) => {

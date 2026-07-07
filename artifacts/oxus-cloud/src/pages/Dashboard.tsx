@@ -43,7 +43,7 @@ export function Dashboard() {
   const avatarInitials = (p: ProjectWithAssignees) => p.team_contacts.map((c) => contactInitials(c.name));
 
   const dotClass = (kind: string) =>
-    kind === "success" ? "bg-soft-green" : kind === "info" ? "bg-logo-blue" : kind === "warning" ? "bg-warm-yellow" : "bg-muted-foreground";
+    kind === "success" ? "bg-soft-green" : kind === "info" ? "bg-periwinkle" : kind === "warning" ? "bg-amber" : "bg-cool-slate";
 
   const metricsLoading = lp || li || lq;
 
@@ -74,12 +74,12 @@ export function Dashboard() {
           ) : activeProjects.length === 0 ? (
             <EmptyState icon={<Briefcase />} title="No active projects" description="Projects you move to 'In Progress' will show up here." action={<Button onClick={() => navigate("/projects/new")}>Create Project</Button>} />
           ) : (
-            <Card className="bg-card border-border shadow-soft overflow-hidden">
+            <Card className="overflow-hidden">
               <div className="p-0">
                 {activeProjects.slice(0, 3).map((project, idx) => (
                   <div key={project.id} className={`p-6 flex items-center justify-between transition-colors hover:bg-muted/30 ${idx !== 0 ? "border-t border-border" : ""}`}>
                     <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-lg bg-primary/5 flex items-center justify-center border border-primary/10"><Briefcase className="w-5 h-5 text-primary" /></div>
+                      <div className="w-10 h-10 rounded-lg bg-periwinkle/15 flex items-center justify-center border border-periwinkle/25"><Briefcase className="w-5 h-5 text-primary" /></div>
                       <div>
                         <h4 className="font-semibold text-foreground">{project.name}</h4>
                         <p className="text-sm text-muted-foreground">{project.client_name ?? "—"}</p>
@@ -102,7 +102,7 @@ export function Dashboard() {
 
         <div className="space-y-6">
           <h3 className="text-xl font-bold font-serif text-foreground">Activity Feed</h3>
-          <Card className="bg-card border-border shadow-soft">
+          <Card>
             <CardContent className="p-6 space-y-6">
               {la ? (
                 Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)

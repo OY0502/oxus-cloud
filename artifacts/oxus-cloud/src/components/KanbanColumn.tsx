@@ -21,12 +21,12 @@ export function KanbanColumn({ column, items, children }: KanbanColumnProps) {
   const totalValue = items.reduce((sum, i) => sum + (i.budget || 0), 0);
 
   return (
-    <div className="flex-none w-80 flex flex-col h-full bg-muted/20 rounded-xl border border-border/50 overflow-hidden">
-      <div className="p-4 border-b border-border/50 bg-muted/30">
+    <div className="flex-none w-80 flex flex-col h-full bg-muted/15 rounded-xl border border-card-border overflow-hidden shadow-soft">
+      <div className="p-4 border-b border-border/60 bg-muted/25">
         <div className="flex justify-between items-center mb-1">
           <h3 className="font-semibold text-sm text-foreground flex items-center gap-2">
             {column.title}
-            <Badge variant="secondary" className="bg-background/80 text-muted-foreground rounded-full px-1.5 min-w-5 justify-center">
+            <Badge variant="secondary" className="bg-periwinkle/10 text-primary border-periwinkle/25 rounded-full px-1.5 min-w-5 justify-center">
               {items.length}
             </Badge>
           </h3>
@@ -35,7 +35,7 @@ export function KanbanColumn({ column, items, children }: KanbanColumnProps) {
           </button>
         </div>
         <div className="flex justify-between items-center mt-2">
-          <span className="text-xs text-muted-foreground">{column.description}</span>
+          <span className="text-xs text-cool-slate">{column.description}</span>
           <span className="text-sm font-semibold text-primary">{formatEUR(totalValue)}</span>
         </div>
       </div>

@@ -1,0 +1,44 @@
+# Supabase project config — function JWT rules persist across deploys.
+# See: https://supabase.com/docs/guides/functions/function-configuration
+
+project_id = "xyphlqyujifneqqtzmto"
+
+# ClickUp OAuth redirect has no Supabase JWT — must be public.
+[functions.clickup-oauth-callback]
+verify_jwt = false
+
+# ClickUp webhooks are called by ClickUp servers without a user JWT.
+[functions.clickup-webhook]
+verify_jwt = false
+
+[functions.slack-oauth-callback]
+verify_jwt = false
+
+[functions.slack-events]
+verify_jwt = false
+
+# Trigger.dev workers authenticate with the service role key (custom auth in function body).
+[functions.clickup-sync-project-docs]
+verify_jwt = false
+
+[functions.merge-project-memory-from-docs]
+verify_jwt = false
+
+[functions.embed-project-knowledge]
+verify_jwt = false
+
+[functions.confirm-agent-tool-run-worker]
+verify_jwt = false
+
+[functions.project-agent-run-worker]
+verify_jwt = false
+
+[functions.clickup-sync-project-hierarchy]
+verify_jwt = false
+
+[functions.clickup-create-doc-from-agent]
+verify_jwt = false
+
+# Trigger.dev worker re-invokes this with the service role key (custom auth in body).
+[functions.enrich-project-from-website]
+verify_jwt = false

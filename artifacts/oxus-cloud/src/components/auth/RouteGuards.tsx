@@ -2,6 +2,8 @@ import React, { useEffect } from "react";
 import { Redirect, useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { Spinner } from "@/components/ui/spinner";
+import { useToast } from "@/hooks/use-toast";
+import { canAccessRoute, getDefaultHomeRoute } from "@/lib/roles";
 
 function FullScreenLoader() {
   return (
@@ -21,7 +23,6 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
 
   if (initializing) return <FullScreenLoader />;
 
-  // Force the user to complete password recovery before using the app.
   if (isRecovering) {
     return <Redirect to="/reset-password" />;
   }
@@ -35,6 +36,32 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
 }
 
 /**
+ * Blocks PM users from super-admin-only routes. Redirects to dashboard with toast.
+ */
+export function RequireSuperAdmin({ children }: { children: React.ReactNode }) {
+  const { session, initializing, profileLoading, isSuperAdmin, role } = useAuth();
+  const [location, setLocation] = useLocation();
+  const { toast } = useToast();
+
+  useEffect(() => {
+    if (initializing || profileLoading || !session || isSuperAdmin) return;
+    if (!canAccessRoute(role, location)) {
+      toast({
+        title: "Access denied",
+        description: "You do not have permission to access this page.",
+        variant: "destructive",
+      });
+      setLocation(getDefaultHomeRoute(role));
+    }
+  }, [initializing, profileLoading, session, isSuperAdmin, role, location, setLocation, toast]);
+
+  if (initializing || profileLoading) return <FullScreenLoader />;
+  if (!isSuperAdmin && !canAccessRoute(role, location)) return null;
+
+  return <>{children}</>;
+}
+
+/**
  * For auth pages (login/signup). Authenticated users are bounced to the app.
  */
 export function RedirectIfAuthenticated({
@@ -42,12 +69,12 @@ export function RedirectIfAuthenticated({
 }: {
   children: React.ReactNode;
 }) {
-  const { session, initializing, isRecovering } = useAuth();
+  const { session, initializing, isRecovering, profileLoading, role } = useAuth();
 
-  if (initializing) return <FullScreenLoader />;
+  if (initializing || (session && profileLoading)) return <FullScreenLoader />;
 
   if (session && !isRecovering) {
-    return <Redirect to="/" />;
+    return <Redirect to={getDefaultHomeRoute(role)} />;
   }
 
   return <>{children}</>;

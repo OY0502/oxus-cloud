@@ -18,11 +18,11 @@ interface MetricCardProps {
 
 export function MetricCard({ title, value, trend, icon, chart, className, valueClassName }: MetricCardProps) {
   return (
-    <Card className={cn("hover-elevate bg-card", className)}>
+    <Card className={cn("hover-elevate border-card-border", className)}>
       <CardContent className="p-6">
         <div className="flex justify-between items-start mb-2">
-          <h3 className="text-sm font-medium text-muted-foreground">{title}</h3>
-          {icon && <div className="text-muted-foreground/50">{icon}</div>}
+          <h3 className="text-sm font-medium text-cool-slate">{title}</h3>
+          {icon && <div className="text-cool-slate/60">{icon}</div>}
         </div>
         
         <div className="mt-2">
@@ -35,11 +35,11 @@ export function MetricCard({ title, value, trend, icon, chart, className, valueC
               <span className={cn(
                 "font-medium", 
                 trend.positive === true ? "text-soft-green" : 
-                trend.positive === false ? "text-soft-red" : "text-muted-foreground"
+                trend.positive === false ? "text-soft-red" : "text-cool-slate"
               )}>
                 {trend.value}
               </span>
-              <span className="text-muted-foreground">{trend.label}</span>
+              <span className="text-cool-slate">{trend.label}</span>
             </p>
           )}
           

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,9 +17,30 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, Check, ShieldAlert, X } from "lucide-react";
+import { AlertCircle, Check, Link2, ShieldAlert, Slack, Unlink, X } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { useDeleteOwnAccount, useProfiles, useUpdateProfile } from "@/hooks/api";
+import {
+  useClickupMyConnection,
+  useDeleteOwnAccount,
+  useDisconnectClickup,
+  useDisconnectSlack,
+  useProfiles,
+  useSetProfileRole,
+  useSlackWorkspaces,
+  useStartClickupOAuth,
+  useStartSlackOAuth,
+  useUpdateProfile,
+} from "@/hooks/api";
+import { useClickupOAuthHandler } from "@/hooks/useClickupOAuthHandler";
+import { normalizeProfileRole, roleLabel } from "@/lib/roles";
+import type { ProfileRole } from "@/lib/types";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import {
   passwordRules,
@@ -29,12 +50,31 @@ import {
 import { cn } from "@/lib/utils";
 
 export function Settings() {
-  const { user, updatePassword, signOut } = useAuth();
+  const { user, updatePassword, signOut, isSuperAdmin, refreshProfile } = useAuth();
   const { data: profiles = [] } = useProfiles();
   const updateProfile = useUpdateProfile();
+  const setProfileRole = useSetProfileRole();
   const deleteAccount = useDeleteOwnAccount();
+  const { data: clickupStatus, refetch: refetchClickup } = useClickupMyConnection();
+  const startClickupOAuth = useStartClickupOAuth();
+  const disconnectClickup = useDisconnectClickup();
+  const { data: slackWorkspaces = [], refetch: refetchSlack } = useSlackWorkspaces();
+  const startSlackOAuth = useStartSlackOAuth();
+  const disconnectSlack = useDisconnectSlack();
+  const { startConnect } = useClickupOAuthHandler();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const search = useSearch();
+
+  const clickupParams = useMemo(() => new URLSearchParams(search), [search]);
+  const highlightClickup = clickupParams.get("connect") === "clickup";
+  const clickupConnectedParam = clickupParams.get("clickup");
+  const clickupErrorMessage = clickupParams.get("message");
+  const highlightSlack = clickupParams.get("connect") === "slack";
+  const slackConnectedParam = clickupParams.get("slack");
+  const slackErrorMessage = clickupParams.get("message");
+
+  const activeSlackWorkspace = slackWorkspaces.find((w) => w.status === "active") ?? null;
 
   const myProfile = profiles.find((p) => p.id === user?.id);
   const [fullName, setFullName] = useState("");
@@ -46,6 +86,107 @@ export function Settings() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
 
   const [deleteConfirm, setDeleteConfirm] = useState("");
+
+  useEffect(() => {
+    if (clickupConnectedParam === "connected") {
+      void refetchClickup();
+      toast({ title: "ClickUp connected", description: "OXUS can now post updates as your ClickUp account." });
+      setLocation("/settings");
+    }
+    if (clickupConnectedParam === "error" && clickupErrorMessage) {
+      toast({
+        title: "ClickUp connection failed",
+        description: decodeURIComponent(clickupErrorMessage),
+        variant: "destructive",
+      });
+      setLocation("/settings");
+    }
+  }, [clickupConnectedParam, clickupErrorMessage, refetchClickup, setLocation, toast]);
+
+  useEffect(() => {
+    if (slackConnectedParam === "connected") {
+      void refetchSlack();
+      toast({ title: "Slack connected", description: "OXUS can now analyze linked project channels." });
+      setLocation("/settings");
+    }
+    if (slackConnectedParam === "error" && slackErrorMessage) {
+      toast({
+        title: "Slack connection failed",
+        description: decodeURIComponent(slackErrorMessage),
+        variant: "destructive",
+      });
+      setLocation("/settings");
+    }
+  }, [slackConnectedParam, slackErrorMessage, refetchSlack, setLocation, toast]);
+
+  const connectClickup = async () => {
+    try {
+      await startConnect(() => startClickupOAuth.mutateAsync({ redirect_after: "/settings" }));
+    } catch (err) {
+      toast({
+        title: "Could not start ClickUp connection",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleRoleChange = async (userId: string, role: ProfileRole) => {
+    try {
+      await setProfileRole.mutateAsync({ user_id: userId, role });
+      if (userId === user?.id) await refreshProfile();
+      toast({ title: "Role updated", description: `${roleLabel(role)} role saved.` });
+    } catch (err) {
+      toast({
+        title: "Could not update role",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const superAdminCount = profiles.filter((p) => normalizeProfileRole(p.role) === "super_admin").length;
+
+  const handleDisconnectClickup = async () => {
+    try {
+      await disconnectClickup.mutateAsync();
+      toast({ title: "ClickUp disconnected", description: "Your ClickUp account is no longer linked to OXUS." });
+    } catch (err) {
+      toast({
+        title: "Could not disconnect ClickUp",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const connectSlack = async () => {
+    try {
+      await startConnect(() => startSlackOAuth.mutateAsync({ redirect_after: "/settings" }));
+    } catch (err) {
+      toast({
+        title: "Could not start Slack connection",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDisconnectSlack = async () => {
+    try {
+      await disconnectSlack.mutateAsync();
+      toast({ title: "Slack disconnected", description: "The workspace is no longer linked to OXUS." });
+    } catch (err) {
+      toast({
+        title: "Could not disconnect Slack",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const clickupConnection = clickupStatus?.connection ?? null;
+  const clickupConnected = clickupStatus?.connected === true;
 
   useEffect(() => {
     const name =
@@ -241,6 +382,205 @@ export function Settings() {
           </form>
         </CardContent>
       </Card>
+
+      <Card className={highlightClickup ? "ring-2 ring-primary" : undefined} id="clickup-account">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Link2 className="h-5 w-5" />
+            ClickUp account
+          </CardTitle>
+          <CardDescription>
+            Connect ClickUp so OXUS can create tasks, post comments, and update statuses as you.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {(clickupConnection?.last_error || clickupConnectedParam === "error") && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                {clickupConnection?.last_error ?? (clickupErrorMessage ? decodeURIComponent(clickupErrorMessage) : "ClickUp connection error.")}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {clickupConnected && clickupConnection ? (
+            <div className="space-y-3 text-sm">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <p className="text-muted-foreground text-xs">ClickUp user</p>
+                  <p className="font-medium">
+                    {clickupConnection.clickup_username ?? clickupConnection.clickup_email ?? "Connected user"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Workspace</p>
+                  <p className="font-medium">{clickupConnection.selected_team_name ?? clickupConnection.selected_team_id ?? "—"}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Connected</p>
+                  <p>{new Date(clickupConnection.connected_at).toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Last verified</p>
+                  <p>{clickupConnection.last_verified_at ? new Date(clickupConnection.last_verified_at).toLocaleString() : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Status</p>
+                  <p className="capitalize">{clickupConnection.status}</p>
+                </div>
+              </div>
+              {clickupConnection.authorized_teams?.length > 1 && (
+                <p className="text-xs text-muted-foreground">
+                  Authorized workspaces: {clickupConnection.authorized_teams.map((team) => team.name).join(", ")}
+                </p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={connectClickup} disabled={startClickupOAuth.isPending}>
+                  {startClickupOAuth.isPending ? "Redirecting…" : "Reconnect ClickUp"}
+                </Button>
+                <Button variant="ghost" className="gap-1" onClick={handleDisconnectClickup} disabled={disconnectClickup.isPending}>
+                  <Unlink className="h-4 w-4" /> Disconnect
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                You are not connected to ClickUp. User-triggered actions like creating tasks, posting comments, and syncing updates require your personal ClickUp authorization.
+              </p>
+              <Button onClick={connectClickup} disabled={startClickupOAuth.isPending}>
+                {startClickupOAuth.isPending ? "Redirecting…" : "Connect ClickUp"}
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className={highlightSlack ? "ring-2 ring-primary" : undefined} id="slack-workspace">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Slack className="h-5 w-5" />
+            Slack workspace
+          </CardTitle>
+          <CardDescription>
+            Connect Slack so OXUS can analyze project channels for blockers, questions, decisions, and progress.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {(activeSlackWorkspace?.last_error || slackConnectedParam === "error") && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                {activeSlackWorkspace?.last_error ??
+                  (slackErrorMessage ? decodeURIComponent(slackErrorMessage) : "Slack connection error.")}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {activeSlackWorkspace ? (
+            <div className="space-y-3 text-sm">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <p className="text-muted-foreground text-xs">Workspace</p>
+                  <p className="font-medium">{activeSlackWorkspace.slack_team_name ?? activeSlackWorkspace.slack_team_id}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Team ID</p>
+                  <p className="font-mono text-xs">{activeSlackWorkspace.slack_team_id}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Connected</p>
+                  <p>{new Date(activeSlackWorkspace.connected_at).toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Status</p>
+                  <p className="capitalize">{activeSlackWorkspace.status}</p>
+                </div>
+              </div>
+              {isSuperAdmin ? (
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" onClick={connectSlack} disabled={startSlackOAuth.isPending}>
+                    {startSlackOAuth.isPending ? "Redirecting…" : "Reconnect Slack"}
+                  </Button>
+                  <Button variant="ghost" className="gap-1" onClick={handleDisconnectSlack} disabled={disconnectSlack.isPending}>
+                    <Unlink className="h-4 w-4" /> Disconnect
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Workspace is connected. Link channels per project from Project Detail. Only super admins can reconnect or disconnect.
+                </p>
+              )}
+            </div>
+          ) : isSuperAdmin ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Connect your Slack workspace once, then link specific channels to each project.
+              </p>
+              <Button onClick={connectSlack} disabled={startSlackOAuth.isPending}>
+                {startSlackOAuth.isPending ? "Redirecting…" : "Connect Slack"}
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Slack is not connected yet. Ask a super admin to connect the workspace from Settings.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {isSuperAdmin && (
+        <Card>
+          <CardHeader>
+            <CardTitle>User roles</CardTitle>
+            <CardDescription>
+              Manage workspace access. Role changes are applied securely on the server.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {profiles.map((profile) => {
+              const role = normalizeProfileRole(profile.role);
+              const isSelf = profile.id === user?.id;
+              const isLastSuperAdmin = role === "super_admin" && superAdminCount <= 1;
+              return (
+                <div
+                  key={profile.id}
+                  className="flex flex-col gap-3 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium truncate">{profile.full_name ?? profile.email ?? "User"}</p>
+                    <p className="text-xs text-muted-foreground truncate">{profile.email ?? "—"}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Joined {new Date(profile.created_at).toLocaleDateString()}
+                      {isSelf ? " · you" : ""}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Select
+                      value={role}
+                      disabled={setProfileRole.isPending || isLastSuperAdmin}
+                      onValueChange={(value) => void handleRoleChange(profile.id, value as ProfileRole)}
+                    >
+                      <SelectTrigger className="w-[160px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pm">PM</SelectItem>
+                        <SelectItem value="super_admin">Super admin</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              );
+            })}
+            {superAdminCount <= 1 && (
+              <p className="text-xs text-muted-foreground">
+                The last super admin cannot be demoted. Promote another user first.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="border-destructive/40">
         <CardHeader>

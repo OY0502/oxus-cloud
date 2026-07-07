@@ -420,14 +420,14 @@ export function Invoices() {
       >
         {selectedInvoice && (
           <div className="space-y-8">
-            <div className="flex justify-between rounded-xl border border-border bg-card p-6 shadow-sm">
+            <div className="flex justify-between rounded-xl border border-card-border bg-card p-6 shadow-soft">
               <div>
-                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Billed To</h4>
+                <h4 className="mb-2 section-label">Billed To</h4>
                 <p className="text-lg font-medium text-foreground">{selectedInvoice.client}</p>
                 <p className="mt-1 text-sm text-muted-foreground">{selectedInvoice.project}</p>
               </div>
               <div className="text-right">
-                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <h4 className="mb-2 section-label">
                   {selectedInvoice.status === "partial" ? "Balance Due" : "Amount"}
                 </h4>
                 <p className="font-serif text-4xl font-bold text-primary">{formatMoney(remaining(selectedInvoice))}</p>
@@ -498,7 +498,7 @@ export function Invoices() {
 function DetailBox({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-border/50 bg-muted/30 p-4">
-      <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
+      <span className="mb-1 block section-label">{label}</span>
       <span className="font-medium">{value}</span>
     </div>
   );

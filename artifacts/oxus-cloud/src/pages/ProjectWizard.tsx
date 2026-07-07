@@ -8,9 +8,11 @@ import { SearchableSelect } from "@/components/forms/SearchableSelect";
 import { SearchableMultiSelect } from "@/components/forms/SearchableMultiSelect";
 import { CurrencyInput, DatePicker } from "@/components/forms/Inputs";
 import { ProjectDocuments } from "@/components/projects/ProjectDocuments";
-import { Check, FileText, Info, ArrowLeft, ArrowRight } from "lucide-react";
+import { ProjectImageField } from "@/components/projects/ProjectImageField";
+import { Check, FileText, Info, ArrowLeft, ArrowRight, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { useProject, useCreateProject, useUpdateProject, useClients } from "@/hooks/api";
+import { useAuth } from "@/contexts/AuthContext";
+import { useProject, useCreateProject, useUpdateProject, useDeleteProject, useClients, useEnrichProjectFromWebsite } from "@/hooks/api";
 import {
   useContactOptions,
   useOrganizationOptions,
@@ -18,8 +20,20 @@ import {
   useUserOptions,
 } from "@/components/forms/refOptions";
 import { PROJECT_TYPES } from "@/lib/types";
+import { isLikelyWebsiteUrl } from "@/lib/companyWebsite";
 import { cn } from "@/lib/utils";
+import { removeProjectImage, uploadProjectImage } from "@/lib/projectImage";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const STEPS = [
   { n: 1, label: "Main info", icon: Info },
@@ -34,6 +48,7 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
   const params = useParams();
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { isSuperAdmin } = useAuth();
 
   const routeId = (params.id as string | undefined) ?? projectIdProp;
   const [projectId, setProjectId] = useState<string | undefined>(routeId);
@@ -41,6 +56,8 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
 
   const create = useCreateProject();
   const update = useUpdateProject();
+  const deleteProject = useDeleteProject();
+  const enrichFromWebsite = useEnrichProjectFromWebsite();
   const { data: clients = [] } = useClients();
   const orgOptions = useOrganizationOptions();
   const contactOptions = useContactOptions();
@@ -49,9 +66,11 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
 
   const [step, setStep] = useState(1);
   const [hydrated, setHydrated] = useState(!routeId);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [companyWebsiteUrl, setCompanyWebsiteUrl] = useState("");
   const [organizationId, setOrganizationId] = useState("");
   const [pointOfContactId, setPointOfContactId] = useState("");
   const [technologyId, setTechnologyId] = useState("");
@@ -63,6 +82,9 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
   const [deadline, setDeadline] = useState<string | null>(null);
   const [ownerId, setOwnerId] = useState("");
   const [teamMembers, setTeamMembers] = useState<string[]>([]);
+  const [imagePath, setImagePath] = useState<string | null>(null);
+  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
+  const [removeExistingImage, setRemoveExistingImage] = useState(false);
 
   // Whether we are editing a project that has already been finished (not a draft).
   const isCompleted = !!existing.data && !existing.data.is_draft;
@@ -72,6 +94,7 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
       const p = existing.data;
       setName(p.name ?? "");
       setDescription(p.description ?? "");
+      setCompanyWebsiteUrl(p.company_website_url ?? "");
       setOrganizationId(p.organization_id ?? "");
       setPointOfContactId(p.point_of_contact_id ?? "");
       setTechnologyId(p.technology_id ?? "");
@@ -83,6 +106,9 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
       setDeadline(p.deadline ?? null);
       setOwnerId(p.owner_id ?? "");
       setTeamMembers(p.team_contacts.map((c) => c.id));
+      setImagePath(p.image_path ?? null);
+      setPendingImageFile(null);
+      setRemoveExistingImage(false);
       setStep(p.draft_step && p.draft_step > 1 ? p.draft_step : 1);
       setHydrated(true);
     }
@@ -90,9 +116,30 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
 
   const orgName = clients.find((c) => c.id === organizationId)?.name ?? null;
 
+  const syncProjectImage = async (id: string): Promise<string | null> => {
+    if (removeExistingImage && imagePath) {
+      await removeProjectImage(imagePath).catch(() => undefined);
+      await update.mutateAsync({ id, patch: { image_path: null } });
+      setImagePath(null);
+      setRemoveExistingImage(false);
+      return null;
+    }
+    if (pendingImageFile) {
+      const path = await uploadProjectImage(id, pendingImageFile);
+      await update.mutateAsync({ id, patch: { image_path: path } });
+      setImagePath(path);
+      setPendingImageFile(null);
+      return path;
+    }
+    return imagePath;
+  };
+
+  const websiteInvalid = companyWebsiteUrl.trim() !== "" && !isLikelyWebsiteUrl(companyWebsiteUrl);
+
   const buildPatch = (draftStep: number) => ({
     name: name || "Untitled project",
     description: description || null,
+    company_website_url: companyWebsiteUrl.trim() || null,
     client_id: organizationId || null,
     client_name: orgName,
     organization_id: organizationId || null,
@@ -112,13 +159,40 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
   // Preserve the draft flag of an existing project (don't flip a finished one back to draft).
   const ensureSaved = async (draftStep: number): Promise<string> => {
     const isDraft = existing.data ? existing.data.is_draft : true;
+    let id: string;
     if (projectId) {
       await update.mutateAsync({ id: projectId, patch: { ...buildPatch(draftStep), is_draft: isDraft }, contact_assignee_ids: teamMembers });
-      return projectId;
+      id = projectId;
+    } else {
+      const project = await create.mutateAsync({ ...buildPatch(draftStep), is_draft: true, contact_assignee_ids: teamMembers });
+      setProjectId(project.id);
+      id = project.id;
     }
-    const project = await create.mutateAsync({ ...buildPatch(draftStep), is_draft: true, contact_assignee_ids: teamMembers });
-    setProjectId(project.id);
-    return project.id;
+    await syncProjectImage(id);
+    return id;
+  };
+
+  // Queue server-side Firecrawl enrichment when a website is present and it hasn't
+  // been enriched yet, or the URL changed. Fire-and-forget: never block or fail saves.
+  const maybeQueueEnrichment = (id: string) => {
+    const website = companyWebsiteUrl.trim();
+    if (!website || websiteInvalid) return;
+    const previousWebsite = existing.data?.company_website_url ?? null;
+    const status = existing.data?.company_enrichment_status ?? "not_started";
+    const alreadyEnriched = status !== "not_started" && status !== "failed" && previousWebsite === website;
+    if (alreadyEnriched) return;
+    enrichFromWebsite
+      .mutateAsync({ project_id: id, company_website_url: website })
+      .then((r) => {
+        toast({
+          title: r.async ? "Company enrichment queued" : "Company enrichment started",
+          description: "We're reading the company website to enrich this project.",
+        });
+      })
+      .catch((e) => {
+        // Enrichment must never break project creation.
+        console.warn("[enrichment] queue failed", (e as Error).message);
+      });
   };
 
   const goToDocuments = async () => {
@@ -145,6 +219,7 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
     try {
       const id = await ensureSaved(2);
       await update.mutateAsync({ id, patch: { is_draft: false }, contact_assignee_ids: teamMembers });
+      maybeQueueEnrichment(id);
       toast({ title: "Project updated", description: name });
       navigate(`/projects/${id}`);
     } catch (e) {
@@ -156,6 +231,7 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
     try {
       const id = await ensureSaved(2);
       await update.mutateAsync({ id, patch: { is_draft: false, draft_step: 2 } });
+      maybeQueueEnrichment(id);
       toast({ title: "Project created", description: name });
       navigate(`/projects/${id}`);
     } catch (e) {
@@ -163,7 +239,24 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
     }
   };
 
-  const busy = create.isPending || update.isPending;
+  const busy = create.isPending || update.isPending || deleteProject.isPending;
+
+  const confirmDeleteDraft = async () => {
+    if (!projectId) return;
+    try {
+      await deleteProject.mutateAsync({ id: projectId, image_path: imagePath });
+      toast({ title: "Draft deleted" });
+      navigate("/projects");
+    } catch (e) {
+      toast({
+        title: "Could not delete draft",
+        description: e instanceof Error ? e.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setDeleteOpen(false);
+    }
+  };
 
   if (routeId && existing.isLoading) {
     return (
@@ -202,12 +295,42 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
         ))}
       </div>
 
-      <Card className="bg-card border-border shadow-sm">
+      <Card>
         <CardContent className="p-6 space-y-4">
           {step === 1 ? (
             <>
+              <ProjectImageField
+                projectName={name}
+                imagePath={imagePath}
+                pendingFile={pendingImageFile}
+                onImagePathChange={(path) => {
+                  setImagePath(path);
+                  if (!path) setRemoveExistingImage(true);
+                }}
+                onFileSelected={(file) => {
+                  setPendingImageFile(file);
+                  if (file) setRemoveExistingImage(false);
+                }}
+                disabled={busy}
+              />
               <TextField label="Project name" value={name} onChange={setName} required placeholder="Acme Marketing Website" />
               <TextareaField label="Project description" value={description} onChange={setDescription} placeholder="Short summary of the work and goals…" />
+
+              <div className="space-y-1">
+                <TextField
+                  label="Company website (recommended)"
+                  value={companyWebsiteUrl}
+                  onChange={setCompanyWebsiteUrl}
+                  type="url"
+                  placeholder="https://acme.com"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Optional but recommended. We read this exact site server-side to auto-enrich the company logo, description, and details.
+                </p>
+                {websiteInvalid && (
+                  <p className="text-xs text-soft-red">Enter a valid URL, e.g. https://acme.com.</p>
+                )}
+              </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <Field label="Organization">
@@ -216,8 +339,8 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
                     onChange={setOrganizationId}
                     options={orgOptions}
                     placeholder="Select an organization"
-                    footerLabel="Add new organization"
-                    onFooterClick={() => navigate("/contacts?tab=organizations&new=1")}
+                    footerLabel={isSuperAdmin ? "Add new organization" : undefined}
+                    onFooterClick={isSuperAdmin ? () => navigate("/contacts?tab=organizations&new=1") : undefined}
                   />
                 </Field>
                 <Field label="Point of Contact">
@@ -226,11 +349,16 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
                     onChange={setPointOfContactId}
                     options={contactOptions}
                     placeholder="Select a person"
-                    footerLabel="Add new person"
-                    onFooterClick={() => navigate("/contacts?tab=people&new=1")}
+                    footerLabel={isSuperAdmin ? "Add new person" : undefined}
+                    onFooterClick={isSuperAdmin ? () => navigate("/contacts?tab=people&new=1") : undefined}
                   />
                 </Field>
               </div>
+              {!isSuperAdmin && (
+                <p className="text-xs text-muted-foreground -mt-2">
+                  Need a new client or contact? Ask a super admin to add them first.
+                </p>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <Field label="Technology">
@@ -239,8 +367,8 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
                     onChange={setTechnologyId}
                     options={techOptions}
                     placeholder="Select a technology"
-                    footerLabel="Manage technologies"
-                    onFooterClick={() => navigate("/technologies")}
+                    footerLabel={isSuperAdmin ? "Manage technologies" : undefined}
+                    onFooterClick={isSuperAdmin ? () => navigate("/technologies") : undefined}
                   />
                 </Field>
                 <SelectField
@@ -297,8 +425,8 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
                     placeholder="Add people…"
                     searchPlaceholder="Search people…"
                     emptyText="No people found."
-                    footerLabel="Add new person"
-                    onFooterClick={() => navigate("/contacts?tab=people&new=1")}
+                    footerLabel={isSuperAdmin ? "Add new person" : undefined}
+                    onFooterClick={isSuperAdmin ? () => navigate("/contacts?tab=people&new=1") : undefined}
                   />
                 </Field>
               </div>
@@ -354,6 +482,45 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
           )}
         </CardContent>
       </Card>
+
+      {projectId && !isCompleted && (
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant="ghost"
+            className="text-destructive hover:text-destructive gap-2"
+            onClick={() => setDeleteOpen(true)}
+            disabled={busy}
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete draft
+          </Button>
+        </div>
+      )}
+
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete draft?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This draft and any uploaded documents will be permanently removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmDeleteDraft();
+              }}
+              disabled={busy}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {busy ? "Deleting…" : "Delete draft"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

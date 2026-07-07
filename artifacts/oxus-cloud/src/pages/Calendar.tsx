@@ -94,7 +94,7 @@ export function Calendar() {
                     </div>
                     <div className="flex flex-col gap-1.5 z-10 relative">
                       {dayEvents.map((event) => (
-                        <div key={event.id} onClick={(e) => e.stopPropagation()} className="text-xs px-2 py-1 rounded border shadow-sm truncate bg-card hover-elevate cursor-pointer flex items-center gap-1.5" style={{ borderLeftColor: event.color ?? "var(--color-chart-1)", borderLeftWidth: "3px" }}>
+                        <div key={event.id} onClick={(e) => e.stopPropagation()} className="text-xs px-2 py-1 rounded border border-card-border shadow-soft truncate bg-card hover-elevate cursor-pointer flex items-center gap-1.5" style={{ borderLeftColor: event.color ?? "var(--color-chart-1)", borderLeftWidth: "3px" }}>
                           <span className="font-semibold text-muted-foreground truncate w-8">{event.start_time}</span>
                           <span className="truncate font-medium">{event.title}</span>
                         </div>

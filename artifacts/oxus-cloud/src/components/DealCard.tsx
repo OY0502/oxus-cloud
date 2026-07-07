@@ -4,6 +4,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { MoreHorizontal, Clock, AlertCircle } from "lucide-react";
 import { formatEUR } from "@/lib/currency";
+import { cn } from "@/lib/utils";
 
 export interface DealCardData {
   id: string;
@@ -33,7 +34,7 @@ function initials(name: string): string {
 
 export function DealCard({ item, className }: DealCardProps) {
   return (
-    <Card className={`mb-4 border-border/50 bg-card/80 backdrop-blur-sm shadow-sm group hover-elevate ${className || ""}`}>
+    <Card className={cn("mb-4 border-card-border bg-card shadow-soft group hover-elevate", className || "")}>
       <CardContent className="p-4">
         <div className="flex justify-between items-start mb-3">
           <div className="flex items-center gap-2">

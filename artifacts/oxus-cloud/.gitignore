@@ -1,0 +1,4 @@
+.vercel
+.trigger
+.env.trigger*
+supabase/.temp/

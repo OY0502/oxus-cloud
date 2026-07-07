@@ -1,0 +1,15 @@
+-- ---------------------------------------------------------------------------
+-- Placeholder for a migration that was applied directly to the remote database
+-- (version 20260707113839) without a corresponding file in this repo.
+--
+-- This no-op file exists ONLY to reconcile the Supabase migration history so
+-- `supabase db push` can apply later migrations. Because 20260707113839 is
+-- already recorded in the remote migration history, `db push` skips it and does
+-- NOT execute this file against the remote database.
+--
+-- NOTE (drift): the real DDL for 20260707113839 is not captured here. On a fresh
+-- environment (e.g. `supabase db reset`) this migration is a no-op, so recover
+-- the original statements from the remote history table if a from-scratch
+-- rebuild is ever required.
+-- ---------------------------------------------------------------------------
+select 1;

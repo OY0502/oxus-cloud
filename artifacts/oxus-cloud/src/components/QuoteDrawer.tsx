@@ -56,10 +56,10 @@ export function QuoteDrawer({ quote, open, onOpenChange, onMarkWon }: QuoteDrawe
 
           <Tabs defaultValue="details">
             <TabsList className="bg-muted/50 p-1 border border-border w-full justify-start">
-              <TabsTrigger value="details" className="data-[state=active]:bg-card data-[state=active]:shadow-sm">Details</TabsTrigger>
-              <TabsTrigger value="comments" className="data-[state=active]:bg-card data-[state=active]:shadow-sm">Comments</TabsTrigger>
-              <TabsTrigger value="tasks" className="data-[state=active]:bg-card data-[state=active]:shadow-sm">Tasks</TabsTrigger>
-              <TabsTrigger value="files" className="data-[state=active]:bg-card data-[state=active]:shadow-sm">Attachments</TabsTrigger>
+              <TabsTrigger value="details">Details</TabsTrigger>
+              <TabsTrigger value="comments">Comments</TabsTrigger>
+              <TabsTrigger value="tasks">Tasks</TabsTrigger>
+              <TabsTrigger value="files">Attachments</TabsTrigger>
             </TabsList>
 
             <TabsContent value="details" className="mt-4 space-y-6 outline-none">

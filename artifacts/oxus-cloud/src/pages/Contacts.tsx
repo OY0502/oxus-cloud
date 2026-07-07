@@ -13,6 +13,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useContacts, useClients } from "@/hooks/api";
 import { CreateContactDialog, CreateClientDialog } from "@/components/forms/CreateDialogs";
 import { TableSkeleton, EmptyState, ErrorState } from "@/components/states/QueryStates";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 import type { Contact, Client } from "@/lib/types";
 import { formatDistanceToNow } from "date-fns";
 
@@ -21,6 +23,8 @@ type Tab = "people" | "organizations";
 export function Contacts() {
   const search = useSearch();
   const [, navigate] = useLocation();
+  const { isSuperAdmin } = useAuth();
+  const { toast } = useToast();
   const [tab, setTab] = useState<Tab>("people");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
@@ -34,10 +38,19 @@ export function Contacts() {
     const t = params.get("tab");
     if (t === "organizations" || t === "people") setTab(t);
     if (params.get("new") === "1") {
+      if (!isSuperAdmin) {
+        toast({
+          title: "Only super admins can do this",
+          description: "Ask a super admin to add this client or contact.",
+          variant: "destructive",
+        });
+        navigate(`/contacts?tab=${t ?? "people"}`, { replace: true });
+        return;
+      }
       if (t === "organizations") setCreateOrgOpen(true);
       else setCreatePersonOpen(true);
     }
-  }, [search]);
+  }, [search, isSuperAdmin, navigate, toast]);
 
   const contactsQuery = useContacts();
   const clientsQuery = useClients();
@@ -151,26 +164,28 @@ export function Contacts() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder={isPeople ? "Search people..." : "Search organizations..."}
-                className="pl-9 w-[250px] bg-card border-border shadow-sm"
+                className="pl-9 w-[250px] bg-card border-card-border shadow-soft"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
-            <Button
-              className="bg-primary hover:bg-primary/90 text-primary-foreground gap-2"
-              onClick={() => (isPeople ? setCreatePersonOpen(true) : setCreateOrgOpen(true))}
-            >
-              <Plus className="w-4 h-4" />
-              {isPeople ? "Add Person" : "Add Organization"}
-            </Button>
+            {isSuperAdmin && (
+              <Button
+                className="bg-primary hover:bg-primary/90 text-primary-foreground gap-2"
+                onClick={() => (isPeople ? setCreatePersonOpen(true) : setCreateOrgOpen(true))}
+              >
+                <Plus className="w-4 h-4" />
+                {isPeople ? "Add Person" : "Add Organization"}
+              </Button>
+            )}
           </div>
         }
       />
 
       <Tabs value={tab} onValueChange={(v) => { setTab(v as Tab); setSearchTerm(""); navigate(`/contacts?tab=${v}`, { replace: true }); }}>
         <TabsList className="bg-muted/50 p-1 border border-border">
-          <TabsTrigger value="people" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm"><Contact2 className="h-4 w-4" /> People</TabsTrigger>
-          <TabsTrigger value="organizations" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm"><Building2 className="h-4 w-4" /> Organizations</TabsTrigger>
+          <TabsTrigger value="people" className="gap-2"><Contact2 className="h-4 w-4" /> People</TabsTrigger>
+          <TabsTrigger value="organizations" className="gap-2"><Building2 className="h-4 w-4" /> Organizations</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -184,7 +199,7 @@ export function Contacts() {
             icon={<Contact2 />}
             title="No people yet"
             description="Add clients, leads, partners and vendors to keep every relationship in one place."
-            action={<Button onClick={() => setCreatePersonOpen(true)}><Plus className="w-4 h-4 mr-2" />Add your first person</Button>}
+            action={isSuperAdmin ? <Button onClick={() => setCreatePersonOpen(true)}><Plus className="w-4 h-4 mr-2" />Add your first person</Button> : undefined}
           />
         ) : filteredContacts.length === 0 ? (
           <EmptyState icon={<Search />} title="No matches" description={`No people match "${searchTerm}".`} />
@@ -196,7 +211,7 @@ export function Contacts() {
           icon={<Building2 />}
           title="No organizations yet"
           description="Add the companies you work with to link them to people, quotes and projects."
-          action={<Button onClick={() => setCreateOrgOpen(true)}><Plus className="w-4 h-4 mr-2" />Add your first organization</Button>}
+          action={isSuperAdmin ? <Button onClick={() => setCreateOrgOpen(true)}><Plus className="w-4 h-4 mr-2" />Add your first organization</Button> : undefined}
         />
       ) : filteredOrgs.length === 0 ? (
         <EmptyState icon={<Search />} title="No matches" description={`No organizations match "${searchTerm}".`} />
@@ -240,7 +255,7 @@ export function Contacts() {
         {selectedContact && (
           <div className="space-y-8">
             <div className="grid grid-cols-2 gap-4">
-              <Card className="bg-card shadow-sm border-border">
+              <Card>
                 <CardContent className="p-4 flex flex-col gap-1">
                   <span className="text-sm text-muted-foreground">Email Address</span>
                   <a href={`mailto:${selectedContact.email}`} className="font-medium text-foreground hover:text-logo-blue transition-colors flex items-center gap-2">
@@ -249,7 +264,7 @@ export function Contacts() {
                   </a>
                 </CardContent>
               </Card>
-              <Card className="bg-card shadow-sm border-border">
+              <Card>
                 <CardContent className="p-4 flex flex-col gap-1">
                   <span className="text-sm text-muted-foreground">Phone Number</span>
                   <a href={`tel:${selectedContact.phone}`} className="font-medium text-foreground hover:text-logo-blue transition-colors flex items-center gap-2">
@@ -258,13 +273,13 @@ export function Contacts() {
                   </a>
                 </CardContent>
               </Card>
-              <Card className="bg-card shadow-sm border-border">
+              <Card>
                 <CardContent className="p-4 flex flex-col gap-1">
                   <span className="text-sm text-muted-foreground">Relationship</span>
                   <div><StatusBadge status={selectedContact.relationship_strength} variant={getStrengthVariant(selectedContact.relationship_strength)} /></div>
                 </CardContent>
               </Card>
-              <Card className="bg-card shadow-sm border-border">
+              <Card>
                 <CardContent className="p-4 flex flex-col gap-1">
                   <span className="text-sm text-muted-foreground">Source</span>
                   <span className="font-medium">{selectedContact.source ?? "—"}</span>
@@ -307,13 +322,13 @@ export function Contacts() {
         {selectedOrg && (
           <div className="space-y-8">
             <div className="grid grid-cols-2 gap-4">
-              <Card className="bg-card shadow-sm border-border">
+              <Card>
                 <CardContent className="p-4 flex flex-col gap-1">
                   <span className="text-sm text-muted-foreground">Website</span>
                   <span className="font-medium">{selectedOrg.website ?? "—"}</span>
                 </CardContent>
               </Card>
-              <Card className="bg-card shadow-sm border-border">
+              <Card>
                 <CardContent className="p-4 flex flex-col gap-1">
                   <span className="text-sm text-muted-foreground">Industry</span>
                   <span className="font-medium">{selectedOrg.industry ?? "—"}</span>

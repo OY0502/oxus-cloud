@@ -16,6 +16,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Plus, LayoutGrid, List, CalendarDays, Briefcase } from "lucide-react";
 import { useProjects, useUpdateProject } from "@/hooks/api";
+import { PmCommandCenterSection } from "@/components/pm/PmCommandCenterSection";
+import { ProjectThumbnail } from "@/components/projects/ProjectThumbnail";
 import { TableSkeleton, EmptyState, ErrorState } from "@/components/states/QueryStates";
 import type { ProjectStatus, ProjectWithAssignees } from "@/lib/types";
 import { contactInitials } from "@/lib/contacts";
@@ -42,14 +44,17 @@ function DraftBadge() {
 
 function ProjectCard({ p }: { p: ProjectWithAssignees }) {
   return (
-    <Card className="mb-3 border-border/50 bg-card/80 shadow-sm hover-elevate">
+    <Card className="mb-3 hover-elevate">
       <CardContent className="p-4 space-y-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <h4 className="font-semibold text-sm truncate">{p.name}</h4>
-            <p className="text-xs text-muted-foreground truncate">{p.client_name ?? "—"}</p>
+        <div className="flex items-start gap-3">
+          <ProjectThumbnail name={p.name} imagePath={p.image_path} size="sm" />
+          <div className="flex items-start justify-between gap-2 flex-1 min-w-0">
+            <div className="min-w-0">
+              <h4 className="font-semibold text-sm truncate">{p.name}</h4>
+              <p className="text-xs text-muted-foreground truncate">{p.client_name ?? "—"}</p>
+            </div>
+            {p.is_draft && <DraftBadge />}
           </div>
-          {p.is_draft && <DraftBadge />}
         </div>
         <div>
           <div className="flex justify-between text-xs text-muted-foreground mb-1">
@@ -103,7 +108,7 @@ function Timeline({ projects, onSelect }: { projects: ProjectWithAssignees[]; on
   const fmt = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
   return (
-    <Card className="bg-card border-border shadow-sm">
+    <Card>
       <CardContent className="p-6 space-y-3">
         {dated.map((p) => {
           // Resolve the bar's start/end and rendering mode.
@@ -183,15 +188,22 @@ export function Projects() {
 
   const columns = [
     {
-      header: "Project Name",
-      className: "min-w-[220px]",
+      header: "",
+      className: "w-[52px]",
       cell: (item: ProjectWithAssignees) => (
-        <div className="flex flex-col">
+        <ProjectThumbnail name={item.name} imagePath={item.image_path} size="sm" />
+      ),
+    },
+    {
+      header: "Project Name",
+      className: "min-w-[200px]",
+      cell: (item: ProjectWithAssignees) => (
+        <div className="flex flex-col min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-medium text-foreground">{item.name}</span>
+            <span className="font-medium text-foreground truncate">{item.name}</span>
             {item.is_draft && <DraftBadge />}
           </div>
-          <span className="text-xs text-muted-foreground mt-0.5">{item.client_name ?? "—"}</span>
+          <span className="text-xs text-muted-foreground mt-0.5 truncate">{item.client_name ?? "—"}</span>
         </div>
       ),
     },
@@ -266,17 +278,19 @@ export function Projects() {
         actions={<Button className="gap-2" onClick={() => navigate("/projects/new")}><Plus className="h-4 w-4" /> New Project</Button>}
       />
 
+      <PmCommandCenterSection />
+
       <Tabs value={view} onValueChange={setView} className="w-full">
         <div className="flex items-center justify-between mb-4">
           <TabsList className="bg-muted/50 p-1 border border-border">
-            <TabsTrigger value="table" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm"><List className="h-4 w-4" /> Table</TabsTrigger>
-            <TabsTrigger value="board" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm"><LayoutGrid className="h-4 w-4" /> Board</TabsTrigger>
-            <TabsTrigger value="timeline" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm"><CalendarDays className="h-4 w-4" /> Timeline</TabsTrigger>
+            <TabsTrigger value="table" className="gap-2"><List className="h-4 w-4" /> Table</TabsTrigger>
+            <TabsTrigger value="board" className="gap-2"><LayoutGrid className="h-4 w-4" /> Board</TabsTrigger>
+            <TabsTrigger value="timeline" className="gap-2"><CalendarDays className="h-4 w-4" /> Timeline</TabsTrigger>
           </TabsList>
         </div>
 
         {isLoading ? (
-          <TableSkeleton columns={7} />
+          <TableSkeleton columns={8} />
         ) : isError ? (
           <ErrorState error={error} onRetry={() => refetch()} />
         ) : projects.length === 0 ? (

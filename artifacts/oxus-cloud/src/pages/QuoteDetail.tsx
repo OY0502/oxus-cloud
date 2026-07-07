@@ -69,7 +69,7 @@ export function QuoteDetail() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">
-          <Card className="bg-card border-border shadow-sm">
+          <Card>
             <CardContent className="p-6 space-y-6">
               <div className="flex items-center justify-between">
                 <StatusBadge status={quote.stage.replace("-", " ")} />
@@ -92,24 +92,24 @@ export function QuoteDetail() {
             </CardContent>
           </Card>
 
-          <Card className="bg-card border-border shadow-sm">
+          <Card>
             <CardContent className="p-6 space-y-4">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Comments</h3>
+              <h3 className="section-label">Comments</h3>
               <CommentsPanel entityType="quote" entityId={quote.id} />
             </CardContent>
           </Card>
         </div>
 
         <div className="space-y-6">
-          <Card className="bg-card border-border shadow-sm">
+          <Card>
             <CardContent className="p-6 space-y-4">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Active Tasks</h3>
+              <h3 className="section-label">Active Tasks</h3>
               <TasksPanel entityType="quote" entityId={quote.id} />
             </CardContent>
           </Card>
-          <Card className="bg-card border-border shadow-sm">
+          <Card>
             <CardContent className="p-6 space-y-4">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Attachments</h3>
+              <h3 className="section-label">Attachments</h3>
               <AttachmentsPanel entityType="quote" entityId={quote.id} />
             </CardContent>
           </Card>

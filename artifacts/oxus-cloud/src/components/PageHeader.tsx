@@ -12,7 +12,7 @@ export function PageHeader({ title, subtitle, breadcrumbs, actions }: PageHeader
     <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
       <div>
         {breadcrumbs && breadcrumbs.length > 0 && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
+          <div className="flex items-center gap-2 text-sm text-cool-slate mb-2">
             {breadcrumbs.map((bc, idx) => (
               <React.Fragment key={idx}>
                 {idx > 0 && <span>/</span>}
@@ -26,7 +26,7 @@ export function PageHeader({ title, subtitle, breadcrumbs, actions }: PageHeader
           </div>
         )}
         <h2 className="text-3xl font-bold tracking-tight text-foreground">{title}</h2>
-        {subtitle && <p className="text-muted-foreground mt-2">{subtitle}</p>}
+        {subtitle && <p className="text-cool-slate mt-2">{subtitle}</p>}
       </div>
       {actions && (
         <div className="flex items-center gap-3 shrink-0">

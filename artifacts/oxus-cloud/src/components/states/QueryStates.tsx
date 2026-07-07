@@ -10,6 +10,7 @@ import {
   EmptyDescription,
   EmptyContent,
 } from "@/components/ui/empty";
+import { cn } from "@/lib/utils";
 
 export function EmptyState({
   icon,
@@ -25,7 +26,7 @@ export function EmptyState({
   className?: string;
 }) {
   return (
-    <Empty className={`border bg-card ${className ?? ""}`}>
+    <Empty className={cn("border border-card-border bg-card shadow-soft", className)}>
       <EmptyHeader>
         {icon && <EmptyMedia variant="icon">{icon}</EmptyMedia>}
         <EmptyTitle>{title}</EmptyTitle>
@@ -66,8 +67,8 @@ export function ErrorState({
 
 export function TableSkeleton({ rows = 6, columns = 5 }: { rows?: number; columns?: number }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card shadow-soft">
-      <div className="border-b border-border bg-muted/50 p-4">
+    <div className="overflow-hidden rounded-xl border border-card-border bg-card shadow-soft">
+      <div className="border-b border-border bg-muted/30 p-4">
         <Skeleton className="h-4 w-40" />
       </div>
       <div className="divide-y divide-border">

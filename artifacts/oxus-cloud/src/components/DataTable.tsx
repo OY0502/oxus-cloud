@@ -18,12 +18,12 @@ interface DataTableProps<T> {
 
 export function DataTable<T>({ data, columns, onRowClick, className }: DataTableProps<T>) {
   return (
-    <div className={cn("bg-card rounded-xl border border-border overflow-hidden shadow-soft", className)}>
+    <div className={cn("bg-card rounded-xl border border-card-border overflow-hidden shadow-soft", className)}>
       <Table>
-        <TableHeader className="bg-muted/50">
+        <TableHeader className="bg-muted/30">
           <TableRow className="hover:bg-transparent">
             {columns.map((col, i) => (
-              <TableHead key={i} className={cn("font-semibold text-muted-foreground", col.className)}>
+              <TableHead key={i} className={cn("font-semibold", col.className)}>
                 {col.header}
               </TableHead>
             ))}
@@ -48,7 +48,7 @@ export function DataTable<T>({ data, columns, onRowClick, className }: DataTable
           ))}
           {data.length === 0 && (
             <TableRow>
-              <TableCell colSpan={columns.length} className="h-24 text-center text-muted-foreground">
+              <TableCell colSpan={columns.length} className="h-24 text-center text-cool-slate">
                 No results.
               </TableCell>
             </TableRow>

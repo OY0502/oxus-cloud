@@ -28,6 +28,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import {
   RequireAuth,
   RedirectIfAuthenticated,
+  RequireSuperAdmin,
 } from "@/components/auth/RouteGuards";
 
 const queryClient = new QueryClient();
@@ -38,6 +39,18 @@ function protectedPage(Page: React.ComponentType) {
       <AppShell>
         <Page />
       </AppShell>
+    </RequireAuth>
+  );
+}
+
+function protectedSuperAdminPage(Page: React.ComponentType) {
+  return () => (
+    <RequireAuth>
+      <RequireSuperAdmin>
+        <AppShell>
+          <Page />
+        </AppShell>
+      </RequireSuperAdmin>
     </RequireAuth>
   );
 }
@@ -61,11 +74,11 @@ function Router() {
         </RedirectIfAuthenticated>
       </Route>
       <Route path="/reset-password" component={ResetPassword} />
-      <Route path="/" component={protectedPage(Dashboard)} />
-      <Route path="/pipeline" component={protectedPage(Pipeline)} />
-      <Route path="/quotes" component={protectedPage(Quotes)} />
-      <Route path="/quotes/new" component={protectedPage(QuoteForm)} />
-      <Route path="/quotes/:id" component={protectedPage(QuoteDetail)} />
+      <Route path="/" component={protectedSuperAdminPage(Dashboard)} />
+      <Route path="/pipeline" component={protectedSuperAdminPage(Pipeline)} />
+      <Route path="/quotes" component={protectedSuperAdminPage(Quotes)} />
+      <Route path="/quotes/new" component={protectedSuperAdminPage(QuoteForm)} />
+      <Route path="/quotes/:id" component={protectedSuperAdminPage(QuoteDetail)} />
       <Route path="/projects" component={protectedPage(Projects)} />
       <Route path="/projects/new" component={protectedPage(ProjectWizard)} />
       <Route path="/projects/:id/edit" component={protectedPage(ProjectWizard)} />
@@ -73,9 +86,9 @@ function Router() {
       <Route path="/calendar" component={protectedPage(Calendar)} />
       <Route path="/team" component={protectedPage(Team)} />
       <Route path="/contacts" component={protectedPage(Contacts)} />
-      <Route path="/technologies" component={protectedPage(Technologies)} />
-      <Route path="/invoices" component={protectedPage(Invoices)} />
-      <Route path="/finance" component={protectedPage(Finance)} />
+      <Route path="/technologies" component={protectedSuperAdminPage(Technologies)} />
+      <Route path="/invoices" component={protectedSuperAdminPage(Invoices)} />
+      <Route path="/finance" component={protectedSuperAdminPage(Finance)} />
       <Route path="/settings" component={protectedPage(Settings)} />
       <Route component={NotFound} />
     </Switch>

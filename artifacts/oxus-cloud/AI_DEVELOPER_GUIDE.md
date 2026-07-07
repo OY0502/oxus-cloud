@@ -34,7 +34,9 @@ oxus-cloud/                          # pnpm monorepo root
     │   ├── hooks/api.ts             # ALL Supabase data access (React Query)
     │   ├── contexts/AuthContext.tsx
     │   └── lib/                     # Types, Supabase client, helpers
-    ├── supabase/migrations/         # Postgres schema (0001–0009)
+    ├── supabase/
+    │   ├── DATABASE_SCHEMA.md         # Full schema reference (tables, FKs, RLS)
+    │   └── migrations/                # Postgres schema (0001–0010)
     ├── .env.example
     └── vite.config.ts
 ```
@@ -281,7 +283,10 @@ calendar_events ──> event_user_attendees ──> profiles
 transactions
 activities (audit feed)
 comments, tasks, attachments (polymorphic)
+ai_project_briefs, ai_proposed_tasks (AI-generated briefs + task proposals)
 ```
+
+> **Full column-level reference:** see [`supabase/DATABASE_SCHEMA.md`](supabase/DATABASE_SCHEMA.md).
 
 ### Junction / assignment tables
 
@@ -317,7 +322,7 @@ Project types (CHECK constraint): Web App, Landing Page, IT Consulting, Bug Fixi
 - **Storage:** private `documents` bucket; same team-member check
 - **Never use `service_role` key in the browser** — only `VITE_SUPABASE_PUBLISHABLE_KEY`
 
-Migrations: `0001` schema → `0002` RLS → `0003` user assignments + delete account → `0004` unify quotes → `0005` collab tables → `0006` project drafts → `0007` storage RLS → `0008` contact/quote fields → `0009` project_contact_assignees
+Migrations: `0001` schema → `0002` RLS → `0003` user assignments + delete account → `0004` unify quotes → `0005` collab tables → `0006` project drafts → `0007` storage RLS → `0008` contact/quote fields → `0009` project_contact_assignees → `0010` AI briefs + proposed tasks
 
 ---
 
@@ -479,6 +484,7 @@ pnpm dev
 | `src/components/collab/CollabPanels.tsx` | Comments, tasks, attachments |
 | `src/lib/invoices.ts` | Invoice display helpers & types |
 | `src/lib/search.ts` | Global search page list |
+| `supabase/DATABASE_SCHEMA.md` | Human-readable schema reference |
 | `supabase/migrations/*.sql` | Schema source of truth |
 
 ---
@@ -516,6 +522,30 @@ flowchart LR
   Wizard --> Active[Active Project]
   Won --> Archived
 ```
+
+---
+
+## Project Intelligence agent debugging (ClickUp docs)
+
+When a pending `create_clickup_doc` confirmation shows an empty textarea, inspect recent runs:
+
+```sql
+select id, status, detected_intent, trigger_run_id, input_summary, result_summary, raw_response, created_at
+from project_agent_runs
+order by created_at desc
+limit 5;
+```
+
+```sql
+select id, tool_name, status, requires_confirmation, trigger_run_id, input_payload, result_payload, error_message, created_at
+from agent_tool_runs
+order by created_at desc
+limit 10;
+```
+
+Check whether `input_payload.content_markdown` is populated (canonical key). Legacy keys (`markdown_content`, `markdown`, `content`) are normalized server-side before insert.
+
+Minimum content length before a pending doc confirmation is created: **100 characters** (`CLICKUP_DOC_MIN_CONTENT_LENGTH`).
 
 ---
 
