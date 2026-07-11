@@ -130,7 +130,10 @@ export function summarizePaidRevenueRows(
   };
 }
 
-export function paidRevenueRowsToCsv(rows: Array<InvoicePaymentReconciliation & { invoices?: { number?: string; client_name?: string | null } | null }>): string {
+export function paidRevenueRowsToCsv(
+  rows: Array<InvoicePaymentReconciliation & { invoices?: { number?: string; client_name?: string | null } | null }>,
+  excludedIds?: Set<string>,
+): string {
   const header = [
     "Invoice",
     "Client",
@@ -143,6 +146,7 @@ export function paidRevenueRowsToCsv(rows: Array<InvoicePaymentReconciliation & 
     "Stripe fee EUR",
     "Net EUR",
     "Status",
+    "Excluded",
   ];
   const lines = rows.map((row) => [
     row.invoices?.number ?? "",
@@ -156,6 +160,7 @@ export function paidRevenueRowsToCsv(rows: Array<InvoicePaymentReconciliation & 
     String(minorToMajor(row.stripe_fee_eur_minor)),
     String(minorToMajor(row.net_eur_minor)),
     reconciliationStatusLabel(row),
+    excludedIds?.has(row.id) ? "yes" : "no",
   ]);
   return [header, ...lines]
     .map((cols) => cols.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
