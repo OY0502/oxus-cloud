@@ -139,7 +139,7 @@ export function CompanyDetail() {
                 {invoices.slice(0, 5).map((inv) => (
                   <div key={inv.id} className="flex justify-between text-sm py-1 border-b last:border-0">
                     <span>{inv.number}</span>
-                    <span>{formatEUR(Number(inv.total || inv.amount))}</span>
+                    <span>{formatInvoiceEurDisplay(inv).text}</span>
                   </div>
                 ))}
                 {invoices.length === 0 && <p className="text-sm text-muted-foreground">No invoices yet.</p>}
