@@ -1536,6 +1536,8 @@ export interface StripeSyncResult {
   fx_converted?: number;
   fx_cached?: number;
   fx_unavailable?: number;
+  fx_remaining?: number;
+  fx_batches?: number;
   metrics_currency?: "EUR";
 }
 

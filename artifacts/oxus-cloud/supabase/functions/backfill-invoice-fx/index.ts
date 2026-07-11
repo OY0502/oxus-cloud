@@ -32,6 +32,8 @@ Deno.serve(async (req) => {
       force: body.force === true,
       invoice_ids: Array.isArray(body.invoice_ids) ? body.invoice_ids : undefined,
       limit: typeof body.limit === "number" ? body.limit : undefined,
+      all: body.all !== false,
+      max_batches: typeof body.max_batches === "number" ? body.max_batches : undefined,
     });
 
     return json({

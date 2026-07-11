@@ -229,7 +229,7 @@ export function Invoices() {
                 syncStripe.mutate(undefined, {
                   onSuccess: (r) => toast({
                     title: "Sync latest complete",
-                    description: `${r.imported} imported, ${r.updated} updated. FX: ${r.fx_converted ?? 0} converted, ${r.fx_unavailable ?? 0} unavailable.`,
+                    description: `${r.imported} imported, ${r.updated} updated. FX: ${r.fx_converted ?? 0} converted, ${r.fx_unavailable ?? 0} unavailable${(r.fx_remaining ?? 0) > 0 ? `, ${r.fx_remaining} still pending` : ""}.`,
                   }),
                   onError: (e) => toast({ title: "Sync failed", description: e.message, variant: "destructive" }),
                 });

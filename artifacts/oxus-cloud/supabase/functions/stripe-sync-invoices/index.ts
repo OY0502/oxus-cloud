@@ -43,7 +43,7 @@ Deno.serve(async (req) => {
     });
 
     const invoicesSynced = result.imported + result.updated;
-    const fx = await backfillInvoiceFx(admin, { force: false });
+    const fx = await backfillInvoiceFx(admin, { force: false, all: true });
 
     return json({
       ...result,

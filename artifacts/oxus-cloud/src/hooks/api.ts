@@ -3770,13 +3770,41 @@ export function useStripeSyncInvoices() {
   return useMutation({
     mutationFn: async (input?: { force?: boolean; created_after?: string }) => {
       const token = await getAuthToken();
+      const headers = { Authorization: `Bearer ${token}` };
+
       const { data, error } = await supabase.functions.invoke<import("@/lib/types").StripeSyncResult>(
         "stripe-sync-invoices",
-        { body: input ?? {}, headers: { Authorization: `Bearer ${token}` } },
+        { body: input ?? {}, headers },
       );
       if (error) await throwEdgeFunctionError(error);
       if (!data) throw new Error("No sync result returned.");
-      return data;
+
+      const aggregated: import("@/lib/types").StripeSyncResult = { ...data };
+      let remaining = data.fx_remaining ?? 0;
+      const MAX_FX_PASSES = 40;
+
+      for (let pass = 0; pass < MAX_FX_PASSES && remaining > 0; pass++) {
+        const { data: fxData, error: fxError } = await supabase.functions.invoke<import("@/lib/types").StripeSyncResult>(
+          "backfill-invoice-fx",
+          { body: { all: true, limit: 50 }, headers },
+        );
+        if (fxError) await throwEdgeFunctionError(fxError);
+        if (!fxData) break;
+
+        aggregated.fx_needed = (aggregated.fx_needed ?? 0) + (fxData.fx_needed ?? 0);
+        aggregated.fx_converted = (aggregated.fx_converted ?? 0) + (fxData.fx_converted ?? 0);
+        aggregated.fx_cached = (aggregated.fx_cached ?? 0) + (fxData.fx_cached ?? 0);
+        aggregated.fx_unavailable = (aggregated.fx_unavailable ?? 0) + (fxData.fx_unavailable ?? 0);
+        aggregated.fx_batches = (aggregated.fx_batches ?? 0) + (fxData.fx_batches ?? 0);
+        aggregated.fx_remaining = fxData.fx_remaining ?? 0;
+        aggregated.metrics_currency = "EUR";
+
+        const prevRemaining = remaining;
+        remaining = aggregated.fx_remaining;
+        if (remaining >= prevRemaining && (fxData.fx_converted ?? 0) === 0) break;
+      }
+
+      return aggregated;
     },
     onSuccess: () => {
       invalidateInvoiceQueries(qc);
