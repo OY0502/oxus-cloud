@@ -1378,6 +1378,13 @@ export interface Invoice {
   tax_amount: number;
   total: number;
   amount_eur: number | null;
+  amount_due_eur: number | null;
+  amount_paid_eur: number | null;
+  subtotal_eur: number | null;
+  tax_amount_eur: number | null;
+  fx_status: string | null;
+  fx_rate_to_eur: number | null;
+  fx_rate_date: string | null;
   sync_status: string;
   last_synced_at: string | null;
   company_mapping_status: string;
@@ -1524,6 +1531,12 @@ export interface StripeSyncResult {
   companies_matched: number;
   companies_requiring_review: number;
   errors: string[];
+  invoices_synced?: number;
+  fx_needed?: number;
+  fx_converted?: number;
+  fx_cached?: number;
+  fx_unavailable?: number;
+  metrics_currency?: "EUR";
 }
 
 export interface CompanyFinancialMetrics {

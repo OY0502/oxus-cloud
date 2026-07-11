@@ -52,7 +52,8 @@ async function upsertStripeCustomerMapping(
 function invoiceChanged(existing: Record<string, unknown>, next: Record<string, unknown>): boolean {
   const keys = [
     "status", "amount", "amount_paid", "amount_due", "total", "subtotal", "tax_amount",
-    "amount_eur", "hosted_invoice_url", "external_url", "sync_status", "company_mapping_status",
+    "amount_eur", "amount_due_eur", "amount_paid_eur", "fx_status",
+    "hosted_invoice_url", "external_url", "sync_status", "company_mapping_status",
     "client_id", "due_date", "paid_date",
   ];
   return keys.some((k) => String(existing[k] ?? "") !== String(next[k] ?? ""));
@@ -103,6 +104,9 @@ export async function upsertStripeInvoice(
   const amountDue = centsToAmount(stripeInvoice.amount_due);
   const status = mapStripeInvoiceStatus(stripeInvoice.status);
 
+  const currency = (stripeInvoice.currency ?? "eur").toUpperCase();
+  const isNativeEur = currency === "EUR";
+
   const payload = {
     number: stripeInvoice.number ?? `STRIPE-${stripeInvoice.id.slice(-8)}`,
     client_id: companyId,
@@ -135,8 +139,21 @@ export async function upsertStripeInvoice(
       ? `https://dashboard.stripe.com/invoices/${stripeInvoice.id}`
       : `https://dashboard.stripe.com/test/invoices/${stripeInvoice.id}`,
     hosted_invoice_url: stripeInvoice.hosted_invoice_url ?? null,
-    currency: (stripeInvoice.currency ?? "eur").toUpperCase(),
-    amount_eur: (stripeInvoice.currency ?? "eur").toLowerCase() === "eur" ? total : null,
+    currency,
+    amount_eur: isNativeEur ? total : null,
+    amount_due_eur: isNativeEur ? amountDue : null,
+    amount_paid_eur: isNativeEur ? amountPaid : null,
+    subtotal_eur: isNativeEur ? subtotal : null,
+    tax_amount_eur: isNativeEur ? tax : null,
+    fx_status: isNativeEur ? "native_eur" : "pending",
+    fx_rate_to_eur: isNativeEur ? 1 : null,
+    fx_rate_date: isNativeEur
+      ? (stripeInvoice.status_transitions?.paid_at
+        ? new Date(stripeInvoice.status_transitions.paid_at * 1000).toISOString().slice(0, 10)
+        : stripeInvoice.created
+          ? new Date(stripeInvoice.created * 1000).toISOString().slice(0, 10)
+          : new Date().toISOString().slice(0, 10))
+      : null,
     stripe_status: stripeInvoice.status ?? null,
     sync_status: "synced",
     last_synced_at: new Date().toISOString(),

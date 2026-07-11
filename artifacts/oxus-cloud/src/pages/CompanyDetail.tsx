@@ -14,6 +14,7 @@ import {
 } from "@/hooks/api";
 import { TableSkeleton, ErrorState } from "@/components/states/QueryStates";
 import { formatEUR, formatCurrency } from "@/lib/currency";
+import { formatInvoiceEurDisplay } from "@/lib/invoiceEur";
 import {
   ArrowLeft, Building2, Briefcase, Receipt, Users, Wallet, AlertTriangle, Globe,
 } from "lucide-react";
@@ -61,8 +62,12 @@ export function CompanyDetail() {
     { id: "number", header: "Number", cell: (i: InvoiceWithItems) => i.number },
     { id: "amount_orig", header: "Amount (Orig)", cell: (i: InvoiceWithItems) => formatCurrency(Number(i.total || i.amount), i.currency) },
     { id: "amount_eur", header: "Amount (EUR)", cell: (i: InvoiceWithItems) => {
-      const eur = i.amount_eur != null ? formatEUR(Number(i.amount_eur)) : (i.currency?.toUpperCase() === "EUR" ? formatEUR(Number(i.total || i.amount)) : "Not available");
-      return <span className={eur === "Not available" ? "text-muted-foreground text-xs" : ""}>{eur}</span>;
+      const eur = formatInvoiceEurDisplay(i);
+      return (
+        <span className={eur.unavailable ? "text-muted-foreground text-xs" : ""} title={eur.tooltip}>
+          {eur.text}
+        </span>
+      );
     }},
     { id: "status", header: "Status", cell: (i: InvoiceWithItems) => <StatusBadge status={i.status} variant="neutral" /> },
     { id: "due", header: "Due", cell: (i: InvoiceWithItems) => i.due_date ?? "—" },

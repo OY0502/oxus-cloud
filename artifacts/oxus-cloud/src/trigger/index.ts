@@ -298,3 +298,19 @@ export const executeAgentWorkflowTask = task({
     return result;
   },
 });
+
+export const backfillInvoiceFxTask = task({
+  id: "backfill-invoice-fx",
+  // TODO: add schedules.task daily at 21:00 Europe/Lisbon once schedule config is wired
+  run: async (payload?: { force?: boolean; limit?: number }) => {
+    const result = await workerPost("backfill-invoice-fx", {
+      force: payload?.force ?? false,
+      limit: payload?.limit,
+    });
+    if ((result as { error?: string }).error) {
+      throw new Error(String((result as { error?: string }).error));
+    }
+    console.info("[backfill-invoice-fx] completed", result);
+    return result;
+  },
+});

@@ -46,19 +46,19 @@ import {
   isDueSoon,
   needsAttention,
   attentionRank,
-  remaining,
+  remainingEur,
   formatMoney,
   formatInvoiceAmount,
-  formatInvoiceAmountEur,
   formatDate,
   invoiceFromRow,
-  invoiceTotal,
   getAvailableInvoiceActions,
   formatProviderLabel,
   formatSyncBadge,
   formatPaymentTiming,
   type StripeInvoiceActionType,
 } from "@/lib/invoices";
+import { countMissingFxConversions, invoiceTotalEur, formatInvoiceEurDisplay } from "@/lib/invoiceEur";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Plus,
   Search,
@@ -106,9 +106,15 @@ export function Invoices() {
 
   const metrics = useMemo(() => {
     const owedStatuses: InvoiceStatus[] = ["sent", "viewed", "partial", "overdue"];
-    const outstanding = invoices.filter((i) => owedStatuses.includes(i.status)).reduce((s, i) => s + remaining(i), 0);
-    const overdue = invoices.filter((i) => i.status === "overdue").reduce((s, i) => s + remaining(i), 0);
-    const dueThisWeek = invoices.filter((i) => isDueSoon(i, 7)).reduce((s, i) => s + remaining(i), 0);
+    const outstanding = invoices
+      .filter((i) => owedStatuses.includes(i.status))
+      .reduce((s, i) => s + (remainingEur(i) ?? 0), 0);
+    const overdue = invoices
+      .filter((i) => i.status === "overdue")
+      .reduce((s, i) => s + (remainingEur(i) ?? 0), 0);
+    const dueThisWeek = invoices
+      .filter((i) => isDueSoon(i, 7))
+      .reduce((s, i) => s + (remainingEur(i) ?? 0), 0);
     const now = TODAY;
     const paidInvoices = invoices.filter((i) => i.status === "paid");
     const paidThisMonth = paidInvoices
@@ -116,16 +122,17 @@ export function Invoices() {
         const d = new Date(i.paidAt ?? i.paidDate ?? i.dueDate);
         return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
       })
-      .reduce((s, i) => s + invoiceTotal(i), 0);
+      .reduce((s, i) => s + (invoiceTotalEur(i) ?? 0), 0);
     const delays = paidInvoices.map((i) => daysBetween(new Date(i.paidAt ?? i.paidDate ?? i.dueDate), new Date(i.dueDate)));
     const avgDelay = delays.length ? Math.round(delays.reduce((a, b) => a + b, 0) / delays.length) : 0;
-    return { outstanding, overdue, dueThisWeek, paidThisMonth, avgDelay };
+    const missingFxCount = countMissingFxConversions(invoices);
+    return { outstanding, overdue, dueThisWeek, paidThisMonth, avgDelay, missingFxCount };
   }, [invoices]);
 
   const paymentTiming = useMemo(() => formatPaymentTiming(metrics.avgDelay), [metrics.avgDelay]);
 
   const attentionInvoices = useMemo(
-    () => invoices.filter(needsAttention).sort((a, b) => attentionRank(a) - attentionRank(b) || remaining(b) - remaining(a)),
+    () => invoices.filter(needsAttention).sort((a, b) => attentionRank(a) - attentionRank(b) || (remainingEur(b) ?? 0) - (remainingEur(a) ?? 0)),
     [invoices],
   );
 
@@ -222,7 +229,7 @@ export function Invoices() {
                 syncStripe.mutate(undefined, {
                   onSuccess: (r) => toast({
                     title: "Sync latest complete",
-                    description: `${r.imported} imported, ${r.updated} updated, ${r.unchanged} unchanged.`,
+                    description: `${r.imported} imported, ${r.updated} updated. FX: ${r.fx_converted ?? 0} converted, ${r.fx_unavailable ?? 0} unavailable.`,
                   }),
                   onError: (e) => toast({ title: "Sync failed", description: e.message, variant: "destructive" }),
                 });
@@ -255,6 +262,15 @@ export function Invoices() {
             <MetricCard title="Paid This Month" value={formatMoney(metrics.paidThisMonth)} valueClassName="text-success" icon={<TrendingUp className="h-5 w-5" />} />
             <MetricCard title={paymentTiming.title} value={paymentTiming.value} valueClassName={paymentTiming.valueClassName} icon={<Clock className="h-5 w-5" />} />
           </div>
+
+          {metrics.missingFxCount > 0 && (
+            <Alert>
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription>
+                Some non-EUR invoices are missing FX conversion. Totals exclude {metrics.missingFxCount} invoice{metrics.missingFxCount === 1 ? "" : "s"} until conversion is available. Run Sync latest to backfill.
+              </AlertDescription>
+            </Alert>
+          )}
 
           {attentionInvoices.length > 0 && (
             <section>
@@ -355,10 +371,13 @@ export function Invoices() {
                   className: "text-right",
                   defaultWidth: 130,
                   cell: (i: Invoice) => {
-                    const eur = formatInvoiceAmountEur(i);
+                    const eur = formatInvoiceEurDisplay(i);
                     return (
-                      <span className={cn("tabular-nums", eur === "Not available" ? "text-muted-foreground text-xs" : "font-medium")}>
-                        {eur}
+                      <span
+                        className={cn("tabular-nums", eur.unavailable ? "text-muted-foreground text-xs" : "font-medium")}
+                        title={eur.tooltip}
+                      >
+                        {eur.text}
                       </span>
                     );
                   },

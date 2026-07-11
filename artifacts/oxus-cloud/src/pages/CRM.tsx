@@ -22,6 +22,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import type { Client, Contact, Quote } from "@/lib/types";
 import { formatEUR } from "@/lib/currency";
+import { invoiceTotalEur, invoiceAmountDueEur } from "@/lib/invoiceEur";
 import { formatDistanceToNow } from "date-fns";
 
 type Tab = "companies" | "people" | "leads";
@@ -82,9 +83,9 @@ export function CRM() {
     for (const inv of invoices) {
       if (!inv.client_id) continue;
       const m = map.get(inv.client_id) ?? { revenue: 0, outstanding: 0, projects: 0 };
-      if (inv.status === "paid") m.revenue += Number(inv.total || inv.amount);
+      if (inv.status === "paid") m.revenue += invoiceTotalEur(inv) ?? 0;
       if (["sent", "viewed", "partial", "overdue"].includes(inv.status)) {
-        m.outstanding += Math.max(Number(inv.amount_due ?? inv.amount) - Number(inv.amount_paid), 0);
+        m.outstanding += invoiceAmountDueEur(inv) ?? 0;
       }
       map.set(inv.client_id, m);
     }

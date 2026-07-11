@@ -1,6 +1,7 @@
 import type { StatusVariant } from "@/components/StatusBadge";
 import type { InvoiceWithItems } from "@/lib/types";
 import { formatEUR, formatCurrency, EUR_UNAVAILABLE } from "@/lib/currency";
+import { invoiceTotalEur, invoiceAmountDueEur, invoiceAmountPaidEur, formatInvoiceEurDisplay } from "@/lib/invoiceEur";
 import { formatDistanceToNow } from "date-fns";
 
 /** Real current date for invoice calculations (do not hardcode). */
@@ -29,6 +30,10 @@ export interface Invoice {
   amountPaid: number;
   amountDue: number;
   amountEur: number | null;
+  amountDueEur: number | null;
+  amountPaidEur: number | null;
+  fxStatus: string | null;
+  fxRateDate: string | null;
   status: InvoiceStatus;
   issueDate: string;
   dueDate: string;
@@ -108,6 +113,14 @@ export function attentionRank(inv: Invoice): number {
   return 4;
 }
 
+export function remainingEur(inv: Invoice): number | null {
+  return invoiceAmountDueEur(inv);
+}
+
+export function invoiceTotalEurAmount(inv: Invoice): number | null {
+  return invoiceTotalEur(inv);
+}
+
 export function formatMoney(n: number): string {
   return formatEUR(n);
 }
@@ -117,13 +130,7 @@ export function formatInvoiceAmount(inv: Invoice): string {
 }
 
 export function formatInvoiceAmountEur(inv: Invoice): string {
-  if (inv.amountEur != null && Number.isFinite(inv.amountEur)) {
-    return formatEUR(inv.amountEur);
-  }
-  if ((inv.currency ?? "EUR").toUpperCase() === "EUR") {
-    return formatEUR(invoiceTotal(inv));
-  }
-  return EUR_UNAVAILABLE;
+  return formatInvoiceEurDisplay(inv).text;
 }
 
 export function formatDate(iso: string | null): string {
@@ -166,6 +173,10 @@ export function invoiceFromRow(r: InvoiceWithItems): Invoice {
     amountPaid: Number(r.amount_paid) || 0,
     amountDue: Number(r.amount_due) || Math.max(total - Number(r.amount_paid || 0), 0),
     amountEur: r.amount_eur != null ? Number(r.amount_eur) : null,
+    amountDueEur: r.amount_due_eur != null ? Number(r.amount_due_eur) : null,
+    amountPaidEur: r.amount_paid_eur != null ? Number(r.amount_paid_eur) : null,
+    fxStatus: r.fx_status ?? null,
+    fxRateDate: r.fx_rate_date ?? null,
     status: r.status,
     issueDate: r.issue_date,
     dueDate: r.due_date ?? r.issue_date,

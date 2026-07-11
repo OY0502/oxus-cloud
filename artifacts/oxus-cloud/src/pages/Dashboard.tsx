@@ -13,6 +13,7 @@ import { CardGridSkeleton, EmptyState } from "@/components/states/QueryStates";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatEUR } from "@/lib/currency";
+import { invoiceAmountDueEur, invoiceTotalEur } from "@/lib/invoiceEur";
 import { contactInitials } from "@/lib/contacts";
 import type { ProjectWithAssignees } from "@/lib/types";
 
@@ -32,13 +33,13 @@ export function Dashboard() {
 
   const activeProjects = projects.filter((p) => p.status === "in-progress" && !p.is_draft);
   const pendingInvoices = invoices.filter((i) => OWED_STATUSES.includes(i.status));
-  const totalPending = pendingInvoices.reduce((acc, i) => acc + (i.amount - i.amount_paid), 0);
+  const totalPending = pendingInvoices.reduce((acc, i) => acc + (invoiceAmountDueEur(i) ?? 0), 0);
   const activeProposals = quotes.filter((q) => q.stage === "proposal");
 
   const now = new Date();
   const collectedMtd = invoices
     .filter((i) => i.status === "paid" && i.paid_date && new Date(i.paid_date).getMonth() === now.getMonth() && new Date(i.paid_date).getFullYear() === now.getFullYear())
-    .reduce((acc, i) => acc + i.amount, 0);
+    .reduce((acc, i) => acc + (invoiceTotalEur(i) ?? 0), 0);
 
   const avatarUrls = (p: ProjectWithAssignees) => p.team_contacts.map(() => "");
   const avatarInitials = (p: ProjectWithAssignees) => p.team_contacts.map((c) => contactInitials(c.name));

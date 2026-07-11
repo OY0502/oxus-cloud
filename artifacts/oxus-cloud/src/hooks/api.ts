@@ -8,6 +8,10 @@ import { supabase } from "@/lib/supabase";
 import { hasRunningAgentToolRuns } from "@/lib/agentToolRunUtils";
 import { deleteProjectRecord, purgeProjectStorage } from "@/lib/projectDelete";
 import { parseEdgeFunctionError } from "@/lib/edgeFunctionErrors";
+import {
+  invoiceAmountDueEur,
+  invoiceTotalEur,
+} from "@/lib/invoiceEur";
 import type {
   Activity,
   AiProjectBrief,
@@ -3665,20 +3669,20 @@ export function useCompanyMetrics(companyId: string) {
       const paid = invoices.filter((i) => i.status === "paid");
       const open = invoices.filter((i) => ["sent", "viewed", "partial", "overdue"].includes(i.status));
 
-      const lifetime = paid.reduce((s, i) => s + Number(i.total || i.amount), 0);
+      const lifetime = paid.reduce((s, i) => s + (invoiceTotalEur(i) ?? 0), 0);
       const ytd = paid
         .filter((i) => new Date(i.paid_date ?? i.issue_date).getFullYear() === year)
-        .reduce((s, i) => s + Number(i.total || i.amount), 0);
+        .reduce((s, i) => s + (invoiceTotalEur(i) ?? 0), 0);
       const mtd = paid
         .filter((i) => {
           const d = new Date(i.paid_date ?? i.issue_date);
           return d.getFullYear() === year && d.getMonth() === month;
         })
-        .reduce((s, i) => s + Number(i.total || i.amount), 0);
-      const outstanding = open.reduce((s, i) => s + Math.max(Number(i.amount_due ?? i.amount) - Number(i.amount_paid), 0), 0);
+        .reduce((s, i) => s + (invoiceTotalEur(i) ?? 0), 0);
+      const outstanding = open.reduce((s, i) => s + (invoiceAmountDueEur(i) ?? 0), 0);
       const overdue = invoices
         .filter((i) => i.status === "overdue")
-        .reduce((s, i) => s + Math.max(Number(i.amount_due ?? i.amount) - Number(i.amount_paid), 0), 0);
+        .reduce((s, i) => s + (invoiceAmountDueEur(i) ?? 0), 0);
 
       const activeProjects = projects.filter((p) => p.status === "in-progress" || p.status === "planning").length;
       const budgets = projects.map((p) => Number(p.budget)).filter((b) => b > 0);
@@ -3814,19 +3818,19 @@ export function useInvoiceMetrics() {
       const year = now.getFullYear();
       const month = now.getMonth();
       const open = invoices.filter((i) => ["sent", "viewed", "partial", "overdue"].includes(i.status));
-      const outstanding = open.reduce((s, i) => s + Math.max(Number(i.amount_due ?? i.amount) - Number(i.amount_paid), 0), 0);
-      const overdue = invoices.filter((i) => i.status === "overdue").reduce((s, i) => s + Math.max(Number(i.amount_due ?? i.amount) - Number(i.amount_paid), 0), 0);
+      const outstanding = open.reduce((s, i) => s + (invoiceAmountDueEur(i) ?? 0), 0);
+      const overdue = invoices.filter((i) => i.status === "overdue").reduce((s, i) => s + (invoiceAmountDueEur(i) ?? 0), 0);
       const paidThisMonth = invoices
         .filter((i) => i.status === "paid")
         .filter((i) => {
           const d = new Date(i.paid_date ?? i.issue_date);
           return d.getMonth() === month && d.getFullYear() === year;
         })
-        .reduce((s, i) => s + Number(i.total || i.amount), 0);
+        .reduce((s, i) => s + (invoiceTotalEur(i) ?? 0), 0);
       const drafts = invoices.filter((i) => i.status === "draft").length;
       const invoicedYtd = invoices
         .filter((i) => new Date(i.issue_date).getFullYear() === year)
-        .reduce((s, i) => s + Number(i.total || i.amount), 0);
+        .reduce((s, i) => s + (invoiceTotalEur(i) ?? 0), 0);
       return { outstanding, overdue, paidThisMonth, drafts, invoicedYtd };
     },
     enabled: invoicesQuery.isSuccess,
@@ -3854,19 +3858,19 @@ export function useFinanceOverview() {
           const d = new Date(i.paid_date ?? i.issue_date);
           return d.getMonth() === month && d.getFullYear() === year;
         })
-        .reduce((s, i) => s + Number(i.total || i.amount), 0);
+        .reduce((s, i) => s + (invoiceTotalEur(i) ?? 0), 0);
 
       const revenueYtd = invoices
         .filter((i) => i.status === "paid" && new Date(i.paid_date ?? i.issue_date).getFullYear() === year)
-        .reduce((s, i) => s + Number(i.total || i.amount), 0);
+        .reduce((s, i) => s + (invoiceTotalEur(i) ?? 0), 0);
 
       const receivables = invoices
         .filter((i) => ["sent", "viewed", "partial", "overdue"].includes(i.status))
-        .reduce((s, i) => s + Math.max(Number(i.amount_due ?? i.amount) - Number(i.amount_paid), 0), 0);
+        .reduce((s, i) => s + (invoiceAmountDueEur(i) ?? 0), 0);
 
       const overdueReceivables = invoices
         .filter((i) => i.status === "overdue")
-        .reduce((s, i) => s + Math.max(Number(i.amount_due ?? i.amount) - Number(i.amount_paid), 0), 0);
+        .reduce((s, i) => s + (invoiceAmountDueEur(i) ?? 0), 0);
 
       const payoutsMtd = payouts
         .filter((p) => p.status === "paid" && p.payment_date)
@@ -3883,7 +3887,7 @@ export function useFinanceOverview() {
       const revenueByClient = new Map<string, number>();
       for (const inv of invoices.filter((i) => i.status === "paid")) {
         const key = inv.client_name ?? "Unknown";
-        revenueByClient.set(key, (revenueByClient.get(key) ?? 0) + Number(inv.total || inv.amount));
+        revenueByClient.set(key, (revenueByClient.get(key) ?? 0) + (invoiceTotalEur(inv) ?? 0));
       }
 
       const hasCostData = payouts.length > 0;
