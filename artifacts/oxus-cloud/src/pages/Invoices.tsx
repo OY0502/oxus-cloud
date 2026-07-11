@@ -35,7 +35,10 @@ import {
   useStripeSyncInvoices,
   useStripeInvoiceAction,
   useDismissInvoiceAttention,
+  usePaidRevenueReconciliation,
+  useReconcileStripePayments,
 } from "@/hooks/api";
+import { PaidRevenueBreakdownDialog } from "@/components/invoices/PaidRevenueBreakdownDialog";
 import { TableSkeleton, CardGridSkeleton, EmptyState, ErrorState } from "@/components/states/QueryStates";
 import {
   type Invoice,
@@ -58,6 +61,8 @@ import {
   type StripeInvoiceActionType,
 } from "@/lib/invoices";
 import { countMissingFxConversions, invoiceTotalEur, formatInvoiceEurDisplay } from "@/lib/invoiceEur";
+import { formatMinorEur } from "@/lib/paymentReconciliation";
+import { getReportingMonthKey, paidTimestampInReportingMonth } from "@/lib/reportingTimezone";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Plus,
@@ -81,11 +86,15 @@ const DESTRUCTIVE_ACTIONS = new Set<StripeInvoiceActionType>([
 ]);
 
 export function Invoices() {
+  const reportingMonth = getReportingMonthKey();
   const { data: rows = [], isLoading, isError, error, refetch } = useInvoices();
+  const { data: paidRevenue, isLoading: paidRevenueLoading, refetch: refetchPaidRevenue } = usePaidRevenueReconciliation(reportingMonth);
   const syncStripe = useStripeSyncInvoices();
+  const reconcilePayments = useReconcileStripePayments();
   const stripeAction = useStripeInvoiceAction();
   const dismissAttention = useDismissInvoiceAttention();
   const { toast } = useToast();
+  const [paidBreakdownOpen, setPaidBreakdownOpen] = useState(false);
 
   const invoices = useMemo<Invoice[]>(() => rows.map(invoiceFromRow), [rows]);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
@@ -115,19 +124,19 @@ export function Invoices() {
     const dueThisWeek = invoices
       .filter((i) => isDueSoon(i, 7))
       .reduce((s, i) => s + (remainingEur(i) ?? 0), 0);
-    const now = TODAY;
     const paidInvoices = invoices.filter((i) => i.status === "paid");
-    const paidThisMonth = paidInvoices
-      .filter((i) => {
-        const d = new Date(i.paidAt ?? i.paidDate ?? i.dueDate);
-        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-      })
+    const legacyReferencePaidThisMonth = paidInvoices
+      .filter((i) => paidTimestampInReportingMonth(i.paidAt, i.paidDate, reportingMonth))
       .reduce((s, i) => s + (invoiceTotalEur(i) ?? 0), 0);
+    const paidThisMonth = paidRevenue?.summary.hasData
+      ? paidRevenue.summary.grossEurMinor / 100
+      : legacyReferencePaidThisMonth;
+    const paidThisMonthNet = paidRevenue?.summary.hasData ? paidRevenue.summary.netEurMinor / 100 : null;
     const delays = paidInvoices.map((i) => daysBetween(new Date(i.paidAt ?? i.paidDate ?? i.dueDate), new Date(i.dueDate)));
     const avgDelay = delays.length ? Math.round(delays.reduce((a, b) => a + b, 0) / delays.length) : 0;
     const missingFxCount = countMissingFxConversions(invoices);
-    return { outstanding, overdue, dueThisWeek, paidThisMonth, avgDelay, missingFxCount };
-  }, [invoices]);
+    return { outstanding, overdue, dueThisWeek, paidThisMonth, paidThisMonthNet, legacyReferencePaidThisMonth, avgDelay, missingFxCount };
+  }, [invoices, paidRevenue, reportingMonth]);
 
   const paymentTiming = useMemo(() => formatPaymentTiming(metrics.avgDelay), [metrics.avgDelay]);
 
@@ -229,7 +238,7 @@ export function Invoices() {
                 syncStripe.mutate(undefined, {
                   onSuccess: (r) => toast({
                     title: "Sync latest complete",
-                    description: `${r.imported} imported, ${r.updated} updated. FX: ${r.fx_converted ?? 0} converted, ${r.fx_unavailable ?? 0} unavailable${(r.fx_remaining ?? 0) > 0 ? `, ${r.fx_remaining} still pending` : ""}.`,
+                    description: `${r.imported} imported, ${r.updated} updated. FX: ${r.fx_converted ?? 0} converted. Reconciled: ${r.payments_reconciled_actual ?? 0} actual, gross ${formatMinorEur(r.gross_eur_minor)}.${(r.fx_remaining ?? 0) > 0 ? ` ${r.fx_remaining} FX pending.` : ""}`,
                   }),
                   onError: (e) => toast({ title: "Sync failed", description: e.message, variant: "destructive" }),
                 });
@@ -259,7 +268,19 @@ export function Invoices() {
             <MetricCard title="Outstanding Balance" value={formatMoney(metrics.outstanding)} className="bg-primary text-primary-foreground border-primary" valueClassName="text-primary-foreground" icon={<Wallet className="h-5 w-5 text-primary-foreground/50" />} />
             <MetricCard title="Overdue Amount" value={formatMoney(metrics.overdue)} valueClassName="text-danger" icon={<AlertTriangle className="h-5 w-5" />} />
             <MetricCard title="Due This Week" value={formatMoney(metrics.dueThisWeek)} valueClassName="text-warning" icon={<CalendarClock className="h-5 w-5" />} />
-            <MetricCard title="Paid This Month" value={formatMoney(metrics.paidThisMonth)} valueClassName="text-success" icon={<TrendingUp className="h-5 w-5" />} />
+            <MetricCard
+              title="Paid This Month"
+              value={formatMoney(metrics.paidThisMonth)}
+              valueClassName="text-success"
+              icon={<TrendingUp className="h-5 w-5" />}
+              subtitle={metrics.paidThisMonthNet != null && paidRevenue?.summary.fullyReconciled
+                ? `Net received: ${formatMoney(metrics.paidThisMonthNet)}`
+                : paidRevenue?.summary.hasData
+                  ? "Click for gross/fee breakdown"
+                  : "Reference EUR — click to reconcile from Stripe"}
+              onClick={() => setPaidBreakdownOpen(true)}
+              className="transition-colors hover:border-success/40"
+            />
             <MetricCard title={paymentTiming.title} value={paymentTiming.value} valueClassName={paymentTiming.valueClassName} icon={<Clock className="h-5 w-5" />} />
           </div>
 
@@ -458,6 +479,41 @@ export function Invoices() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <PaidRevenueBreakdownDialog
+        open={paidBreakdownOpen}
+        onOpenChange={setPaidBreakdownOpen}
+        monthKey={reportingMonth}
+        rows={paidRevenue?.rows ?? []}
+        summary={paidRevenue?.summary ?? {
+          reportingMonth,
+          grossEurMinor: 0,
+          stripeFeesEurMinor: 0,
+          netEurMinor: 0,
+          referenceFxDifferenceMinor: 0,
+          paymentCount: 0,
+          reconciledActualCount: 0,
+          referenceCount: 0,
+          unresolvedCount: 0,
+          lastReconciledAt: null,
+          fullyReconciled: false,
+          hasData: false,
+        }}
+        isLoading={paidRevenueLoading}
+        isRefreshing={reconcilePayments.isPending}
+        onRefresh={() => {
+          reconcilePayments.mutate({ month: reportingMonth }, {
+            onSuccess: (r) => {
+              void refetchPaidRevenue();
+              toast({
+                title: "Reconciliation complete",
+                description: `${r.payments_reconciled_actual} Stripe actual, gross ${formatMinorEur(r.gross_eur_minor)}, net ${formatMinorEur(r.net_eur_minor)}.`,
+              });
+            },
+            onError: (e) => toast({ title: "Reconciliation failed", description: e.message, variant: "destructive" }),
+          });
+        }}
+      />
     </div>
   );
 }

@@ -5,9 +5,10 @@ import {
   internalOxusAuthErrorResponse,
 } from "../_shared/internalOxusAuth.ts";
 import { createStripeClient, isStripeConfigured } from "../_shared/stripe.ts";
-import { syncStripeInvoices } from "../_shared/stripeInvoiceSync.ts";
-import { backfillInvoiceFx } from "../_shared/invoiceFxBackfill.ts";
-import { reconcileStripeInvoicePayments } from "../_shared/stripePaymentReconcile.ts";
+import {
+  aggregateReconciliationMonth,
+  reconcileStripeInvoicePayments,
+} from "../_shared/stripePaymentReconcile.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -30,42 +31,36 @@ Deno.serve(async (req) => {
     await assertSuperAdminUser(req);
 
     if (!isStripeConfigured()) {
-      return json({ error: "Stripe is not configured. Set STRIPE_SECRET_KEY.", code: "NOT_CONFIGURED" }, 400);
+      return json({ error: "Stripe is not configured.", code: "NOT_CONFIGURED" }, 400);
     }
 
     const stripe = createStripeClient();
     if (!stripe) return json({ error: "Stripe client unavailable." }, 500);
 
-    const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
+    const body = await req.json().catch(() => ({}));
     const admin = getServiceRoleSupabase();
-    const result = await syncStripeInvoices(admin, stripe, {
+
+    const reconcile = await reconcileStripeInvoicePayments(admin, stripe, {
+      invoice_id: typeof body.invoice_id === "string" ? body.invoice_id : undefined,
+      month: typeof body.month === "string" ? body.month : undefined,
       force: body.force === true,
-      created_after: typeof body.created_after === "string" ? body.created_after : undefined,
+      limit: typeof body.limit === "number" ? body.limit : undefined,
     });
 
-    const invoicesSynced = result.imported + result.updated;
-    const fx = await backfillInvoiceFx(admin, { force: false, all: true });
-    const reconciliation = await reconcileStripeInvoicePayments(admin, stripe, {
-      limit: 200,
-    });
+    const monthSummary = await aggregateReconciliationMonth(
+      admin,
+      typeof body.month === "string" ? body.month : undefined,
+    );
 
     return json({
-      ...result,
-      invoices_synced: invoicesSynced,
-      ...fx,
-      ...reconciliation,
+      ...reconcile,
+      month_summary: monthSummary,
       metrics_currency: "EUR",
+      reporting_timezone: "Europe/Lisbon",
     });
   } catch (e) {
     if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
-    console.error("[stripe-sync-invoices]", (e as Error).message);
-
-    const admin = getServiceRoleSupabase();
-    await admin.from("stripe_integration_state").update({
-      last_sync_error: (e as Error).message,
-      updated_at: new Date().toISOString(),
-    }).neq("id", "00000000-0000-0000-0000-000000000000");
-
+    console.error("[stripe-reconcile-invoice-payments]", (e as Error).message);
     return json({ error: (e as Error).message }, 500);
   }
 });

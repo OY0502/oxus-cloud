@@ -314,3 +314,20 @@ export const backfillInvoiceFxTask = task({
     return result;
   },
 });
+
+export const reconcileStripeInvoicePaymentsTask = task({
+  id: "reconcile-stripe-invoice-payments",
+  run: async (payload?: { month?: string; invoice_id?: string; force?: boolean; limit?: number }) => {
+    const result = await workerPost("stripe-reconcile-invoice-payments", {
+      month: payload?.month,
+      invoice_id: payload?.invoice_id,
+      force: payload?.force ?? false,
+      limit: payload?.limit,
+    });
+    if ((result as { error?: string }).error) {
+      throw new Error(String((result as { error?: string }).error));
+    }
+    console.info("[reconcile-stripe-invoice-payments] completed", result);
+    return result;
+  },
+});

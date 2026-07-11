@@ -2,6 +2,7 @@ import Stripe from "npm:stripe@17.7.0";
 import { getServiceRoleSupabase } from "../_shared/clickup-auth.ts";
 import { createStripeClient, getStripeWebhookSecret } from "../_shared/stripe.ts";
 import { upsertStripeInvoice } from "../_shared/stripeInvoiceSync.ts";
+import { reconcileStripeInvoice } from "../_shared/stripePaymentReconcile.ts";
 
 const INVOICE_EVENTS = new Set([
   "invoice.created",
@@ -77,6 +78,21 @@ Deno.serve(async (req) => {
           .eq("external_id", invoice.id);
       } else {
         await upsertStripeInvoice(admin, invoice, true);
+        if (event.type === "invoice.paid" || invoice.status === "paid") {
+          const { data: dbInvoice } = await admin
+            .from("invoices")
+            .select("id, number, external_id, provider, status, currency, total, amount, amount_paid, issue_date, paid_date, paid_at, client_name")
+            .eq("provider", "stripe")
+            .eq("external_id", invoice.id)
+            .maybeSingle();
+          if (dbInvoice) {
+            try {
+              await reconcileStripeInvoice(admin, stripe, dbInvoice);
+            } catch (reconcileErr) {
+              console.warn("[stripe-webhook] payment reconciliation failed", (reconcileErr as Error).message);
+            }
+          }
+        }
       }
     }
 

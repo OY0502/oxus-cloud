@@ -12,6 +12,8 @@ import {
   invoiceAmountDueEur,
   invoiceTotalEur,
 } from "@/lib/invoiceEur";
+import { summarizePaidRevenueRows } from "@/lib/paymentReconciliation";
+import { getReportingMonthKey } from "@/lib/reportingTimezone";
 import type {
   Activity,
   AiProjectBrief,
@@ -148,6 +150,7 @@ export const qk = {
   teamMemberSummary: (personId: string) => ["team_member_summary", personId] as const,
   invoiceMetrics: ["invoice_metrics"] as const,
   financeOverview: ["finance_overview"] as const,
+  paidRevenueReconciliation: (month: string) => ["paid_revenue_reconciliation", month] as const,
   invoice: (id: string) => ["invoices", id] as const,
 };
 
@@ -3812,6 +3815,46 @@ export function useStripeSyncInvoices() {
   });
 }
 
+export function useReconcileStripePayments() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input?: { month?: string; invoice_id?: string; force?: boolean; limit?: number }) => {
+      const token = await getAuthToken();
+      const { data, error } = await supabase.functions.invoke<import("@/lib/types").StripeReconcilePaymentsResult>(
+        "stripe-reconcile-invoice-payments",
+        { body: input ?? {}, headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (error) await throwEdgeFunctionError(error);
+      if (!data) throw new Error("No reconciliation result returned.");
+      return data;
+    },
+    onSuccess: (_data, vars) => {
+      invalidateInvoiceQueries(qc);
+      qc.invalidateQueries({ queryKey: qk.paidRevenueReconciliation(vars?.month ?? getReportingMonthKey()) });
+    },
+  });
+}
+
+export function usePaidRevenueReconciliation(monthKey?: string) {
+  const month = monthKey ?? getReportingMonthKey();
+  return useQuery({
+    queryKey: qk.paidRevenueReconciliation(month),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("invoice_payment_reconciliations")
+        .select("*, invoices(number, client_name, external_id, external_url, hosted_invoice_url)")
+        .eq("reporting_month", month)
+        .order("paid_at", { ascending: false });
+      if (error) throw new Error(error.message);
+      const rows = (data ?? []) as import("@/lib/types").InvoicePaymentReconciliation[];
+      return {
+        rows,
+        summary: summarizePaidRevenueRows(rows, month),
+      };
+    },
+  });
+}
+
 export function useStripeCreateInvoice() {
   const qc = useQueryClient();
   return useMutation({
@@ -3851,7 +3894,7 @@ export function useInvoiceMetrics() {
       const paidThisMonth = invoices
         .filter((i) => i.status === "paid")
         .filter((i) => {
-          const d = new Date(i.paid_date ?? i.issue_date);
+          const d = new Date(i.paid_date ?? i.paid_at ?? i.issue_date);
           return d.getMonth() === month && d.getFullYear() === year;
         })
         .reduce((s, i) => s + (invoiceTotalEur(i) ?? 0), 0);
@@ -3958,6 +4001,7 @@ function invalidateInvoiceQueries(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: qk.invoiceMetrics });
   qc.invalidateQueries({ queryKey: qk.financeOverview });
   qc.invalidateQueries({ queryKey: qk.stripeConnection });
+  qc.invalidateQueries({ queryKey: ["paid_revenue_reconciliation"] });
 }
 
 export function useStripeInvoiceAction() {

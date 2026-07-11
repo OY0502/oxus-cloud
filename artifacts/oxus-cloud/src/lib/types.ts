@@ -1539,6 +1539,78 @@ export interface StripeSyncResult {
   fx_remaining?: number;
   fx_batches?: number;
   metrics_currency?: "EUR";
+  payments_checked?: number;
+  payments_reconciled_actual?: number;
+  payments_reconciled_reference?: number;
+  payments_paid_out_of_band?: number;
+  payments_unresolved?: number;
+  gross_eur_minor?: number;
+  stripe_fees_eur_minor?: number;
+  net_eur_minor?: number;
+  warnings?: string[];
+}
+
+export type PaymentReconciliationBasis =
+  | "stripe_actual_settlement"
+  | "native_eur"
+  | "ecb_reference"
+  | "paid_out_of_band_reference"
+  | "unavailable";
+
+export interface InvoicePaymentReconciliation {
+  id: string;
+  invoice_id: string;
+  provider: string;
+  external_invoice_payment_id: string | null;
+  external_payment_intent_id: string | null;
+  external_charge_id: string | null;
+  external_balance_transaction_id: string | null;
+  payment_type: string | null;
+  paid_at: string;
+  reporting_month: string;
+  original_currency: string;
+  original_amount_minor: number;
+  settlement_currency: string | null;
+  settlement_gross_minor: number | null;
+  stripe_fee_minor: number | null;
+  settlement_net_minor: number | null;
+  stripe_exchange_rate: number | null;
+  reference_rate_to_eur: number | null;
+  reference_rate_date: string | null;
+  reference_eur_minor: number | null;
+  gross_eur_minor: number | null;
+  stripe_fee_eur_minor: number | null;
+  net_eur_minor: number | null;
+  amount_basis: PaymentReconciliationBasis;
+  is_paid_out_of_band: boolean;
+  fee_details: Array<{ amount?: number; currency?: string; type?: string; description?: string | null }>;
+  sync_status: string;
+  sync_error: string | null;
+  metadata: Record<string, unknown>;
+  last_synced_at: string;
+  created_at: string;
+  updated_at: string;
+  invoices?: {
+    number?: string;
+    client_name?: string | null;
+    external_id?: string | null;
+    external_url?: string | null;
+    hosted_invoice_url?: string | null;
+  } | null;
+}
+
+export interface StripeReconcilePaymentsResult {
+  payments_checked: number;
+  payments_reconciled_actual: number;
+  payments_reconciled_reference: number;
+  payments_paid_out_of_band: number;
+  payments_unresolved: number;
+  gross_eur_minor: number;
+  stripe_fees_eur_minor: number;
+  net_eur_minor: number;
+  warnings: string[];
+  reporting_timezone?: string;
+  metrics_currency?: "EUR";
 }
 
 export interface CompanyFinancialMetrics {
