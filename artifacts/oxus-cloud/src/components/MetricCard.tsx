@@ -26,7 +26,7 @@ export function MetricCard({ title, value, trend, icon, chart, className, valueC
         </div>
         
         <div className="mt-2">
-          <div className={cn("text-3xl font-bold font-sans", valueClassName)}>
+          <div className={cn("kpi-value", valueClassName)}>
             {value}
           </div>
           
@@ -34,8 +34,8 @@ export function MetricCard({ title, value, trend, icon, chart, className, valueC
             <p className="text-xs mt-2 flex items-center gap-1">
               <span className={cn(
                 "font-medium", 
-                trend.positive === true ? "text-soft-green" : 
-                trend.positive === false ? "text-soft-red" : "text-cool-slate"
+                trend.positive === true ? "text-success" : 
+                trend.positive === false ? "text-danger" : "text-cool-slate"
               )}>
                 {trend.value}
               </span>

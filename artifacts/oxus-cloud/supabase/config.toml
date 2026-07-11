@@ -42,3 +42,7 @@ verify_jwt = false
 # Trigger.dev worker re-invokes this with the service role key (custom auth in body).
 [functions.enrich-project-from-website]
 verify_jwt = false
+
+# Stripe webhooks are called by Stripe servers without a user JWT.
+[functions.stripe-webhook]
+verify_jwt = false

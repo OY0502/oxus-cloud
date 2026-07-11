@@ -1,5 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getServiceRoleSupabase } from "../_shared/clickup-auth.ts";
+import {
+  assertInternalOxusAuthUser,
+  InternalOxusAuthError,
+  internalOxusAuthErrorResponse,
+} from "../_shared/internalOxusAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -49,7 +54,13 @@ Deno.serve(async (req) => {
 
     const token = authHeader.replace("Bearer ", "");
     const { data: auth, error: authErr } = await supabase.auth.getUser(token);
-    if (authErr || !auth.user) return err("Authentication required.", 401, "AUTH_REQUIRED");
+    let userId: string;
+    try {
+      userId = await assertInternalOxusAuthUser(auth.user);
+    } catch (e) {
+      if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
+      throw e;
+    }
 
     const admin = getServiceRoleSupabase();
     const { data: connection } = await admin
@@ -57,7 +68,7 @@ Deno.serve(async (req) => {
       .select(
         "status, clickup_user_id, clickup_username, clickup_email, authorized_teams, selected_team_id, selected_team_name, connected_at, last_verified_at, last_error",
       )
-      .eq("user_id", auth.user.id)
+      .eq("user_id", userId)
       .maybeSingle();
 
     if (!connection || connection.status === "revoked") {

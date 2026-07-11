@@ -94,6 +94,7 @@ export function Contacts() {
 
   const peopleColumns = [
     {
+      id: "contact",
       header: "Contact",
       cell: (item: Contact) => (
         <div className="flex items-center gap-3">
@@ -107,8 +108,9 @@ export function Contacts() {
         </div>
       ),
     },
-    { header: "Type", cell: (item: Contact) => <StatusBadge status={item.type} variant={getTypeVariant(item.type)} /> },
+    { id: "type", header: "Type", cell: (item: Contact) => <StatusBadge status={item.type} variant={getTypeVariant(item.type)} /> },
     {
+      id: "company",
       header: "Company",
       cell: (item: Contact) => (
         <div className="flex items-center gap-2">
@@ -117,14 +119,15 @@ export function Contacts() {
         </div>
       ),
     },
-    { header: "Phone", cell: (item: Contact) => <span className="text-muted-foreground">{item.phone ?? "—"}</span> },
-    { header: "Last Contact", cell: (item: Contact) => <span className="text-muted-foreground">{lastContactLabel(item.last_contact_at)}</span> },
-    { header: "Relationship", cell: (item: Contact) => <StatusBadge status={item.relationship_strength} variant={getStrengthVariant(item.relationship_strength)} /> },
-    { header: "Source", cell: (item: Contact) => <span className="text-muted-foreground">{item.source ?? "—"}</span> },
+    { id: "phone", header: "Phone", cell: (item: Contact) => <span className="text-muted-foreground">{item.phone ?? "—"}</span> },
+    { id: "last_contact", header: "Last Contact", cell: (item: Contact) => <span className="text-muted-foreground">{lastContactLabel(item.last_contact_at)}</span> },
+    { id: "relationship", header: "Relationship", cell: (item: Contact) => <StatusBadge status={item.relationship_strength} variant={getStrengthVariant(item.relationship_strength)} /> },
+    { id: "source", header: "Source", cell: (item: Contact) => <span className="text-muted-foreground">{item.source ?? "—"}</span> },
   ];
 
   const orgColumns = [
     {
+      id: "organization",
       header: "Organization",
       cell: (item: Client) => (
         <div className="flex items-center gap-3">
@@ -135,8 +138,9 @@ export function Contacts() {
         </div>
       ),
     },
-    { header: "Industry", cell: (item: Client) => <span className="text-muted-foreground">{item.industry ?? "—"}</span> },
+    { id: "industry", header: "Industry", cell: (item: Client) => <span className="text-muted-foreground">{item.industry ?? "—"}</span> },
     {
+      id: "website",
       header: "Website",
       cell: (item: Client) =>
         item.website ? (
@@ -147,7 +151,7 @@ export function Contacts() {
           <span className="text-muted-foreground">—</span>
         ),
     },
-    { header: "People", cell: (item: Client) => <span className="text-muted-foreground">{contacts.filter((c) => c.client_id === item.id).length}</span> },
+    { id: "people", header: "People", cell: (item: Client) => <span className="text-muted-foreground">{contacts.filter((c) => c.client_id === item.id).length}</span> },
   ];
 
   const isPeople = tab === "people";
@@ -204,7 +208,7 @@ export function Contacts() {
         ) : filteredContacts.length === 0 ? (
           <EmptyState icon={<Search />} title="No matches" description={`No people match "${searchTerm}".`} />
         ) : (
-          <DataTable data={filteredContacts} columns={peopleColumns} onRowClick={(item) => setSelectedContact(item)} />
+          <DataTable tableId="contacts-people" data={filteredContacts} columns={peopleColumns} onRowClick={(item) => setSelectedContact(item)} />
         )
       ) : clients.length === 0 ? (
         <EmptyState
@@ -216,7 +220,7 @@ export function Contacts() {
       ) : filteredOrgs.length === 0 ? (
         <EmptyState icon={<Search />} title="No matches" description={`No organizations match "${searchTerm}".`} />
       ) : (
-        <DataTable data={filteredOrgs} columns={orgColumns} onRowClick={(item) => setSelectedOrg(item)} />
+        <DataTable tableId="contacts-organizations" data={filteredOrgs} columns={orgColumns} onRowClick={(item) => setSelectedOrg(item)} />
       )}
 
       <CreateContactDialog open={createPersonOpen} onOpenChange={setCreatePersonOpen} />

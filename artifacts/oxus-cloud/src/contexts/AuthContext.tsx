@@ -9,6 +9,10 @@ import React, {
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { isPmRole, isSuperAdminRole, normalizeProfileRole } from "@/lib/roles";
+import {
+  resolveAccessState,
+  type AccessState,
+} from "@/lib/accessState";
 import type { Profile, ProfileRole } from "@/lib/types";
 
 interface AuthContextValue {
@@ -16,6 +20,7 @@ interface AuthContextValue {
   user: User | null;
   profile: Profile | null;
   role: ProfileRole | null;
+  accessState: AccessState;
   /** True while the initial session is being resolved. */
   initializing: boolean;
   /** True while the current user's profile is loading. */
@@ -25,6 +30,7 @@ interface AuthContextValue {
   isSuperAdmin: boolean;
   isPM: boolean;
   refreshProfile: () => Promise<void>;
+  refreshSession: () => Promise<void>;
   signInWithPassword: (email: string, password: string) => Promise<void>;
   signUp: (
     email: string,
@@ -34,6 +40,7 @@ interface AuthContextValue {
   signOut: () => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
   updatePassword: (password: string) => Promise<void>;
+  resendConfirmationEmail: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -62,6 +69,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const refreshSession = useCallback(async () => {
+    const { data, error } = await supabase.auth.refreshSession();
+    if (error) throw error;
+    setSession(data.session);
+    if (data.session?.user?.id) {
+      await loadProfile(data.session.user.id);
+    }
+  }, [loadProfile]);
+
   useEffect(() => {
     let active = true;
 
@@ -70,6 +86,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSession(data.session);
       setInitializing(false);
       if (data.session?.user?.id) {
+        setProfile(null);
         void loadProfile(data.session.user.id);
       } else {
         setProfile(null);
@@ -86,6 +103,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setIsRecovering(true);
       }
       if (nextSession?.user?.id) {
+        setProfile(null);
+        setProfileLoading(true);
         void loadProfile(nextSession.user.id);
       } else {
         setProfile(null);
@@ -102,12 +121,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AuthContextValue>(() => {
     const redirectBase = `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, "")}`;
     const role = profile ? normalizeProfileRole(profile.role) : null;
+    const user = session?.user ?? null;
+    const accessState = resolveAccessState({
+      initializing,
+      profileLoading,
+      session,
+      user,
+      profile,
+    });
 
     return {
       session,
-      user: session?.user ?? null,
+      user,
       profile,
       role,
+      accessState,
       initializing,
       profileLoading,
       isRecovering,
@@ -116,6 +144,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshProfile: async () => {
         if (session?.user?.id) await loadProfile(session.user.id);
       },
+      refreshSession,
       async signInWithPassword(email, password) {
         const { error } = await supabase.auth.signInWithPassword({
           email,
@@ -152,8 +181,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (error) throw error;
         setIsRecovering(false);
       },
+      async resendConfirmationEmail() {
+        const email = session?.user?.email;
+        if (!email) {
+          throw new Error("No email address found for the current session.");
+        }
+        const { error } = await supabase.auth.resend({
+          type: "signup",
+          email,
+          options: {
+            emailRedirectTo: `${redirectBase}/login`,
+          },
+        });
+        if (error) throw error;
+      },
     };
-  }, [session, profile, initializing, profileLoading, isRecovering, loadProfile]);
+  }, [session, profile, initializing, profileLoading, isRecovering, loadProfile, refreshSession]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

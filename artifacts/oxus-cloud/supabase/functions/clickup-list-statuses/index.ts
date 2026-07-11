@@ -10,6 +10,11 @@ import {
   clickupAuthErrorResponse,
   resolveUserClickupForProject,
 } from "../_shared/clickup-auth.ts";
+import {
+  assertInternalOxusAuthUser,
+  InternalOxusAuthError,
+  internalOxusAuthErrorResponse,
+} from "../_shared/internalOxusAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -67,7 +72,13 @@ Deno.serve(async (req) => {
 
     const token = authHeader.replace("Bearer ", "");
     const { data: auth, error: authErr } = await supabase.auth.getUser(token);
-    if (authErr || !auth.user) return err("Authentication required.", 401, "AUTH_REQUIRED");
+    let userId: string;
+    try {
+      userId = await assertInternalOxusAuthUser(auth.user);
+    } catch (e) {
+      if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
+      throw e;
+    }
 
     // Read the existing project ClickUp link (do NOT provision a space here).
     const { data: link } = await supabase
@@ -90,7 +101,7 @@ Deno.serve(async (req) => {
 
     let clickup;
     try {
-      ({ clickup } = await resolveUserClickupForProject(auth.user.id, body.project_id));
+      ({ clickup } = await resolveUserClickupForProject(userId, body.project_id));
     } catch (e) {
       if (e instanceof ClickupAuthError) return clickupAuthErrorResponse(e, corsHeaders);
       throw e;

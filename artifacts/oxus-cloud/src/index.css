@@ -56,6 +56,22 @@
   --color-deep-teal: hsl(var(--deep-teal));
   --color-amber: hsl(var(--amber));
   --color-cool-slate: hsl(var(--cool-slate));
+
+  /* Refined semantic status tokens */
+  --color-success: hsl(var(--success));
+  --color-success-foreground: hsl(var(--success-foreground));
+  --color-success-muted: hsl(var(--success-muted));
+  --color-warning: hsl(var(--warning));
+  --color-warning-foreground: hsl(var(--warning-foreground));
+  --color-warning-muted: hsl(var(--warning-muted));
+  --color-danger: hsl(var(--danger));
+  --color-danger-foreground: hsl(var(--danger-foreground));
+  --color-danger-muted: hsl(var(--danger-muted));
+  --color-info: hsl(var(--info));
+  --color-info-foreground: hsl(var(--info-foreground));
+  --color-info-muted: hsl(var(--info-muted));
+  --color-neutral-badge: hsl(var(--neutral-badge));
+  --color-neutral-badge-foreground: hsl(var(--neutral-badge-foreground));
   
   --color-chart-1: hsl(var(--chart-1));
   --color-chart-2: hsl(var(--chart-2));
@@ -136,6 +152,22 @@
   --deep-teal: 175 64% 29%;
   --amber: 26 80% 57%;
   --cool-slate: 213 18% 56%;
+
+  /* Refined semantic palette — mature SaaS finance tone */
+  --success: 152 32% 36%;
+  --success-foreground: 152 28% 24%;
+  --success-muted: 152 24% 94%;
+  --warning: 36 72% 44%;
+  --warning-foreground: 32 55% 22%;
+  --warning-muted: 40 55% 94%;
+  --danger: 0 48% 46%;
+  --danger-foreground: 0 42% 28%;
+  --danger-muted: 0 40% 95%;
+  --info: 217 42% 44%;
+  --info-foreground: 217 38% 26%;
+  --info-muted: 217 35% 94%;
+  --neutral-badge: 214 20% 94%;
+  --neutral-badge-foreground: 213 16% 42%;
   
   --chart-1: 316 70% 50%;
   --chart-2: 175 64% 29%;
@@ -229,5 +261,11 @@
   }
   .tab-trigger-underline {
     @apply rounded-none border-b-2 border-transparent bg-transparent shadow-none px-2 pb-2 pt-1 text-cool-slate hover:text-foreground data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:text-foreground;
+  }
+  .kpi-value {
+    @apply font-serif text-3xl font-bold tabular-nums tracking-tight;
+  }
+  .status-chip {
+    @apply font-medium px-2 py-0.5 tracking-wide shadow-none border;
   }
 }

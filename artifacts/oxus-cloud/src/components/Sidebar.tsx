@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/contexts/AuthContext";
 import { BrandLogo } from "@/components/BrandLogo";
-import { filterPagesForRole } from "@/lib/roles";
+import { filterPagesForRole, getDefaultHomeRoute } from "@/lib/roles";
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -35,7 +35,7 @@ const navigation = [
   { name: "Projects", href: "/projects", icon: Briefcase },
   { name: "Calendar", href: "/calendar", icon: CalendarDays },
   { name: "Team", href: "/team", icon: Users },
-  { name: "Contacts", href: "/contacts", icon: Contact2 },
+  { name: "CRM", href: "/crm", icon: Contact2 },
   { name: "Technologies", href: "/technologies", icon: Cpu },
   { name: "Invoices", href: "/invoices", icon: Receipt },
   { name: "Finance", href: "/finance", icon: LineChart },
@@ -52,6 +52,7 @@ export function Sidebar() {
   const [location] = useLocation();
   const { user, signOut, role } = useAuth();
   const visibleNavigation = filterPagesForRole(navigation, role);
+  const homeHref = getDefaultHomeRoute(role);
 
   const email = user?.email ?? "";
   const fullName =
@@ -71,7 +72,7 @@ export function Sidebar() {
   return (
     <aside className="w-64 bg-sidebar text-sidebar-foreground flex flex-col fixed inset-y-0 z-20">
       <div className="h-16 flex items-center px-6 border-b border-sidebar-border bg-sidebar">
-        <Link href="/">
+        <Link href={homeHref}>
           <BrandLogo />
         </Link>
       </div>

@@ -5,7 +5,6 @@ import { useToast } from "@/hooks/use-toast";
 import {
   useClients,
   useProfiles,
-  useTeamMembers,
   useCreateClient,
   useCreateContact,
   useCreateInvoice,
@@ -208,7 +207,6 @@ export function CreateInvoiceDialog({ open, onOpenChange }: DialogProps) {
   const { toast } = useToast();
   const create = useCreateInvoice();
   const { options: clientOptions, byId } = useClientOptions();
-  const { data: team = [] } = useTeamMembers();
   const [number, setNumber] = useState(() => suggestNumber("INV"));
   const [clientId, setClientId] = useState("");
   const [project, setProject] = useState("");
@@ -216,17 +214,10 @@ export function CreateInvoiceDialog({ open, onOpenChange }: DialogProps) {
   const [status, setStatus] = useState<"draft" | "sent" | "viewed" | "partial" | "overdue" | "paid">("draft");
   const [issueDate, setIssueDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [dueDate, setDueDate] = useState("");
-  const [ownerId, setOwnerId] = useState("");
 
-  const ownerOptions = useMemo(
-    () => [{ value: "", label: "— Unassigned —" }, ...team.map((t) => ({ value: t.id, label: t.name }))],
-    [team],
-  );
-
-  const reset = () => { setNumber(suggestNumber("INV")); setClientId(""); setProject(""); setAmount(""); setStatus("draft"); setIssueDate(new Date().toISOString().slice(0, 10)); setDueDate(""); setOwnerId(""); };
+  const reset = () => { setNumber(suggestNumber("INV")); setClientId(""); setProject(""); setAmount(""); setStatus("draft"); setIssueDate(new Date().toISOString().slice(0, 10)); setDueDate(""); };
 
   const submit = async () => {
-    const owner = team.find((t) => t.id === ownerId);
     try {
       await create.mutateAsync({
         number,
@@ -237,8 +228,6 @@ export function CreateInvoiceDialog({ open, onOpenChange }: DialogProps) {
         status,
         issue_date: issueDate,
         due_date: dueDate || null,
-        owner_id: ownerId || null,
-        owner_name: owner?.name || null,
         line_items: project && amount ? [{ description: project, amount: Number(amount) }] : [],
       });
       toast({ title: "Invoice created", description: number });
@@ -265,7 +254,6 @@ export function CreateInvoiceDialog({ open, onOpenChange }: DialogProps) {
         <SelectField label="Status" value={status} onChange={setStatus} options={[
           { value: "draft", label: "Draft" }, { value: "sent", label: "Sent" }, { value: "viewed", label: "Viewed" }, { value: "partial", label: "Partially Paid" }, { value: "overdue", label: "Overdue" }, { value: "paid", label: "Paid" },
         ]} />
-        <SelectField label="Owner" value={ownerId} onChange={setOwnerId} options={ownerOptions} />
       </div>
     </FormDialog>
   );

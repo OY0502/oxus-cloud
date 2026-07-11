@@ -37,6 +37,89 @@ export function getClickupBaseUrl(): string {
   return (Deno.env.get("CLICKUP_API_BASE_URL") ?? "https://api.clickup.com/api/v2").replace(/\/+$/, "");
 }
 
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+function isLocalhostHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
+}
+
+function isLocalRuntime(requestOrUrl?: Request | URL | string): boolean {
+  const candidates = [
+    typeof requestOrUrl === "string" ? requestOrUrl : requestOrUrl instanceof Request ? requestOrUrl.url : requestOrUrl?.toString(),
+    Deno.env.get("SUPABASE_URL")?.trim(),
+  ].filter((value): value is string => !!value);
+
+  return candidates.some((value) => {
+    try {
+      return isLocalhostHostname(new URL(value).hostname);
+    } catch {
+      return false;
+    }
+  });
+}
+
+export function resolveClickupAppBaseUrl(requestOrUrl?: Request | URL | string): string {
+  const configured = (Deno.env.get("CLICKUP_APP_URL") ?? Deno.env.get("APP_URL") ?? "").trim();
+  const localRuntime = isLocalRuntime(requestOrUrl);
+
+  if (!configured) {
+    if (localRuntime) return "http://localhost:5173";
+    throw new Error(
+      "Missing CLICKUP_APP_URL or APP_URL for production ClickUp OAuth redirects. Set the production app URL instead of falling back to localhost.",
+    );
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(configured);
+  } catch {
+    throw new Error("CLICKUP_APP_URL or APP_URL is not a valid absolute URL.");
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error("CLICKUP_APP_URL or APP_URL must use http or https.");
+  }
+
+  if (!localRuntime && isLocalhostHostname(parsed.hostname)) {
+    throw new Error(
+      "CLICKUP_APP_URL or APP_URL points to localhost in production. Set it to the public app URL, for example https://oxus.cloud.",
+    );
+  }
+
+  return trimTrailingSlash(parsed.toString());
+}
+
+export function normalizeClickupRedirectPath(
+  redirectAfter: string | null | undefined,
+  requestOrUrl?: Request | URL | string,
+  fallbackPath = "/settings/integrations",
+): string {
+  const appBaseUrl = resolveClickupAppBaseUrl(requestOrUrl);
+  const fallback = new URL(fallbackPath.startsWith("/") ? fallbackPath : `/${fallbackPath}`, appBaseUrl);
+  const value = redirectAfter?.trim();
+
+  if (!value) return `${fallback.pathname}${fallback.search}${fallback.hash}`;
+
+  if (value.startsWith("/")) {
+    const normalized = new URL(value, appBaseUrl);
+    return `${normalized.pathname}${normalized.search}${normalized.hash}`;
+  }
+
+  try {
+    const parsed = new URL(value);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return `${fallback.pathname}${fallback.search}${fallback.hash}`;
+    }
+    return `${parsed.pathname || "/"}${parsed.search}${parsed.hash}`;
+  } catch {
+    const normalized = new URL(`/${value.replace(/^\/+/, "")}`, appBaseUrl);
+    return `${normalized.pathname}${normalized.search}${normalized.hash}`;
+  }
+}
+
 export function getServiceRoleSupabase() {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim();
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim();

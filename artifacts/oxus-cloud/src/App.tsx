@@ -11,7 +11,10 @@ import { Quotes } from "@/pages/Quotes";
 import { Projects } from "@/pages/Projects";
 import { Calendar } from "@/pages/Calendar";
 import { Team } from "@/pages/Team";
-import { Contacts } from "@/pages/Contacts";
+import { CRM, Contacts } from "@/pages/CRM";
+import { CompanyDetail } from "@/pages/CompanyDetail";
+import { TeamMemberDetail } from "@/pages/TeamMemberDetail";
+import { CreateInvoicePage } from "@/pages/CreateInvoicePage";
 import { Technologies } from "@/pages/Technologies";
 import { QuoteForm } from "@/pages/QuoteForm";
 import { QuoteDetail } from "@/pages/QuoteDetail";
@@ -85,11 +88,17 @@ function Router() {
       <Route path="/projects/:id" component={protectedPage(ProjectDetail)} />
       <Route path="/calendar" component={protectedPage(Calendar)} />
       <Route path="/team" component={protectedPage(Team)} />
+      <Route path="/team/:id" component={protectedPage(TeamMemberDetail)} />
+      <Route path="/crm" component={protectedPage(CRM)} />
       <Route path="/contacts" component={protectedPage(Contacts)} />
+      <Route path="/companies/:id" component={protectedSuperAdminPage(CompanyDetail)} />
+      <Route path="/clients" component={protectedPage(CRM)} />
       <Route path="/technologies" component={protectedSuperAdminPage(Technologies)} />
       <Route path="/invoices" component={protectedSuperAdminPage(Invoices)} />
+      <Route path="/invoices/new" component={protectedSuperAdminPage(CreateInvoicePage)} />
       <Route path="/finance" component={protectedSuperAdminPage(Finance)} />
       <Route path="/settings" component={protectedPage(Settings)} />
+      <Route path="/settings/integrations" component={protectedPage(Settings)} />
       <Route component={NotFound} />
     </Switch>
   );

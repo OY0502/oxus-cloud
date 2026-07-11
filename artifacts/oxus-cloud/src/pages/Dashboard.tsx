@@ -20,12 +20,13 @@ const OWED_STATUSES = ["sent", "viewed", "partial", "overdue"];
 
 export function Dashboard() {
   const [, navigate] = useLocation();
-  const { user } = useAuth();
+  const { user, isSuperAdmin, accessState } = useAuth();
+  const queriesEnabled = isSuperAdmin && accessState === "allowed";
 
-  const { data: projects = [], isLoading: lp } = useProjects();
-  const { data: invoices = [], isLoading: li } = useInvoices();
-  const { data: quotes = [], isLoading: lq } = useQuotes();
-  const { data: activities = [], isLoading: la } = useActivities(5);
+  const { data: projects = [], isLoading: lp } = useProjects({ enabled: queriesEnabled });
+  const { data: invoices = [], isLoading: li } = useInvoices({ enabled: queriesEnabled });
+  const { data: quotes = [], isLoading: lq } = useQuotes({ enabled: queriesEnabled });
+  const { data: activities = [], isLoading: la } = useActivities(5, { enabled: queriesEnabled });
 
   const firstName = ((user?.user_metadata?.full_name as string | undefined) || user?.email?.split("@")[0] || "there").split(" ")[0];
 

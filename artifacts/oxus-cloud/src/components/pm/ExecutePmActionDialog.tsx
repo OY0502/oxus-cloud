@@ -16,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   useAiProposedTasks,
-  useClickupMembers,
+  useClickupAssignableMembers,
   useClickupTaskLinks,
   useSyncClickupMembers,
 } from "@/hooks/api";
@@ -49,7 +49,7 @@ export function ExecutePmActionDialog({
 }: Props) {
   const { data: taskLinks = [] } = useClickupTaskLinks(projectId);
   const { data: proposedTasks = [] } = useAiProposedTasks(projectId);
-  const { data: members = [] } = useClickupMembers(teamId);
+  const { data: members = [] } = useClickupAssignableMembers(projectId);
   const syncMembers = useSyncClickupMembers();
 
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
@@ -75,22 +75,22 @@ export function ExecutePmActionDialog({
   }, [open, item]);
 
   useEffect(() => {
-    if (!open || !item || !teamId || members.length > 0) return;
+    if (!open || !item || !projectId || members.length > 0) return;
     const needsMembers =
       item.action_type === "assign_clickup_tasks" || item.action_type === "create_clickup_task";
     if (!needsMembers) return;
 
-    const syncKey = `${item.id}:${teamId}`;
+    const syncKey = `${item.id}:${projectId}`;
     if (memberSyncKeyRef.current === syncKey) return;
     memberSyncKeyRef.current = syncKey;
     syncMembers.mutate({ project_id: projectId });
-  }, [open, item, teamId, members.length, projectId, syncMembers.mutate]);
+  }, [open, item, projectId, members.length, syncMembers.mutate]);
 
   const memberOptions = useMemo(
     () =>
       members.map((member) => ({
         value: member.clickup_user_id,
-        label: member.username ?? member.email ?? member.clickup_user_id,
+        label: member.name ?? member.email ?? member.clickup_user_id,
         sublabel: member.email ?? undefined,
       })),
     [members],
@@ -192,9 +192,12 @@ export function ExecutePmActionDialog({
                   options={memberOptions}
                   placeholder="Select assignees…"
                   searchPlaceholder="Search members…"
-                  emptyText="No ClickUp members cached yet."
+                  emptyText="No assignable ClickUp members found for this project Space/List. Share the ClickUp Space with teammates, then refresh members."
                   disabled={busy || syncMembers.isPending}
                 />
+                <p className="text-xs text-muted-foreground">
+                  Only members with access to the connected ClickUp Space/List are shown.
+                </p>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-2">
@@ -253,9 +256,12 @@ export function ExecutePmActionDialog({
                   options={memberOptions}
                   placeholder="Select assignees…"
                   searchPlaceholder="Search members…"
-                  emptyText="No ClickUp members cached yet."
+                  emptyText="No assignable ClickUp members found for this project Space/List. Share the ClickUp Space with teammates, then refresh members."
                   disabled={busy}
                 />
+                <p className="text-xs text-muted-foreground">
+                  Only members with access to the connected ClickUp Space/List are shown.
+                </p>
               </div>
               <div className="grid gap-3 sm:grid-cols-2 pt-2">
                 <div className="space-y-2">

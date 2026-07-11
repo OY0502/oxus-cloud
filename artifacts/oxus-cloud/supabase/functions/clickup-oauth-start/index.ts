@@ -1,5 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { getServiceRoleSupabase } from "../_shared/clickup-auth.ts";
+import { getServiceRoleSupabase, normalizeClickupRedirectPath, resolveClickupAppBaseUrl } from "../_shared/clickup-auth.ts";
+import {
+  assertInternalOxusAuthUser,
+  InternalOxusAuthError,
+  internalOxusAuthErrorResponse,
+} from "../_shared/internalOxusAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -66,6 +71,12 @@ Deno.serve(async (req) => {
     const anonKey = getAnonKey();
     if (!supabaseUrl || !anonKey) return err("Missing Supabase environment.", 500, "CONFIG_ERROR");
 
+    try {
+      resolveClickupAppBaseUrl(req);
+    } catch (e) {
+      return err("ClickUp OAuth app URL is not configured on the server.", 500, "CONFIG_ERROR", (e as Error).message);
+    }
+
     let body: { redirect_after?: string } = {};
     try {
       body = await req.json();
@@ -80,18 +91,25 @@ Deno.serve(async (req) => {
 
     const token = authHeader.replace("Bearer ", "");
     const { data: auth, error: authErr } = await supabase.auth.getUser(token);
-    if (authErr || !auth.user) return err("Authentication required.", 401, "AUTH_REQUIRED");
+    let userId: string;
+    try {
+      userId = await assertInternalOxusAuthUser(auth.user);
+    } catch (e) {
+      if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
+      throw e;
+    }
 
     const state = randomState();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-    const redirectAfter = typeof body.redirect_after === "string" && body.redirect_after.trim()
-      ? body.redirect_after.trim()
-      : "/settings";
+    const redirectAfter = normalizeClickupRedirectPath(
+      typeof body.redirect_after === "string" ? body.redirect_after : undefined,
+      req,
+    );
 
     const admin = getServiceRoleSupabase();
     const { error: insertErr } = await admin.from("clickup_oauth_states").insert({
       state,
-      user_id: auth.user.id,
+      user_id: userId,
       redirect_after: redirectAfter,
       expires_at: expiresAt,
       status: "pending",

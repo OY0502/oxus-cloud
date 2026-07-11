@@ -1,5 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getServiceRoleSupabase } from "../_shared/clickup-auth.ts";
+import {
+  assertInternalOxusAuthUser,
+  InternalOxusAuthError,
+  internalOxusAuthErrorResponse,
+} from "../_shared/internalOxusAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -57,13 +62,19 @@ Deno.serve(async (req) => {
 
     const token = authHeader.replace("Bearer ", "");
     const { data: auth, error: authErr } = await supabase.auth.getUser(token);
-    if (authErr || !auth.user) return err("Authentication required.", 401, "AUTH_REQUIRED");
+    let userId: string;
+    try {
+      userId = await assertInternalOxusAuthUser(auth.user);
+    } catch (e) {
+      if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
+      throw e;
+    }
 
     const admin = getServiceRoleSupabase();
     const { error: deleteErr } = await admin
       .from("user_clickup_connections")
       .delete()
-      .eq("user_id", auth.user.id);
+      .eq("user_id", userId);
     if (deleteErr) return err("Failed to disconnect ClickUp.", 500, "DB_ERROR", deleteErr.message);
 
     return json({ success: true });

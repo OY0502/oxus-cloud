@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { useClickupListStatuses, useClickupMembers, useSyncClickupMembers } from "@/hooks/api";
+import { useClickupAssignableMembers, useClickupListStatuses, useSyncClickupMembers } from "@/hooks/api";
 import type { AiProposedTask, AiProposedTaskPriority } from "@/lib/types";
 
 type Props = {
@@ -51,7 +51,7 @@ export function CreateClickupTaskDialog({
   onConfirm,
   busy,
 }: Props) {
-  const { data: members = [], isLoading: membersLoading } = useClickupMembers(teamId);
+  const { data: members = [], isLoading: membersLoading } = useClickupAssignableMembers(projectId);
   const syncMembers = useSyncClickupMembers();
   const statusesQuery = useClickupListStatuses(projectId, open);
   const [title, setTitle] = useState("");
@@ -92,16 +92,16 @@ export function CreateClickupTaskDialog({
   }, [open, status, defaultStatus]);
 
   useEffect(() => {
-    if (open && teamId && members.length === 0 && !membersLoading && !syncMembers.isPending) {
+    if (open && projectId && members.length === 0 && !membersLoading && !syncMembers.isPending) {
       syncMembers.mutate({ project_id: projectId });
     }
-  }, [open, teamId, members.length, membersLoading, syncMembers, projectId]);
+  }, [open, projectId, members.length, membersLoading, syncMembers]);
 
   const memberOptions = useMemo(
     () =>
       members.map((member) => ({
         value: member.clickup_user_id,
-        label: member.username ?? member.email ?? member.clickup_user_id,
+        label: member.name ?? member.email ?? member.clickup_user_id,
         sublabel: member.email ?? undefined,
       })),
     [members],
@@ -241,9 +241,12 @@ export function CreateClickupTaskDialog({
               options={memberOptions}
               placeholder={membersLoading || syncMembers.isPending ? "Loading members…" : "Select ClickUp assignees…"}
               searchPlaceholder="Search members…"
-              emptyText="No ClickUp members cached yet."
+              emptyText="No assignable ClickUp members found for this project Space/List. Share the ClickUp Space with teammates, then refresh members."
               disabled={membersLoading || syncMembers.isPending || busy}
             />
+            <p className="text-xs text-muted-foreground">
+              Only members with access to the connected ClickUp Space/List are shown.
+            </p>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">

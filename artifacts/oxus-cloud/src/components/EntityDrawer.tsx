@@ -12,33 +12,36 @@ interface EntityDrawerProps {
   className?: string;
 }
 
-export function EntityDrawer({ 
-  open, 
-  onOpenChange, 
-  title, 
-  description, 
+export function EntityDrawer({
+  open,
+  onOpenChange,
+  title,
+  description,
   headerActions,
   children,
-  className 
+  className,
 }: EntityDrawerProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className={cn("sm:max-w-xl w-[90vw] overflow-y-auto bg-background/95 backdrop-blur-xl border-l-border/50", className)}>
-        <SheetHeader className="pb-6 border-b border-border/50">
-          <div className="flex justify-between items-start gap-4 pr-10">
-            <div>
-              <SheetTitle className="text-2xl font-serif">{title}</SheetTitle>
-              {description && <SheetDescription className="mt-1.5">{description}</SheetDescription>}
-            </div>
+      <SheetContent
+        className={cn(
+          "flex w-[92vw] flex-col gap-0 border-l-border/50 bg-background/95 p-0 backdrop-blur-xl sm:max-w-2xl",
+          className,
+        )}
+      >
+        <SheetHeader className="shrink-0 space-y-0 border-b border-border/50 px-6 pb-4 pt-6 pr-14">
+          <div className="space-y-3">
+            <SheetTitle className="text-xl font-serif leading-tight">{title}</SheetTitle>
+            {description && <SheetDescription className="mt-0">{description}</SheetDescription>}
             {headerActions && (
-              <div className="shrink-0 flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 pt-1">
                 {headerActions}
               </div>
             )}
           </div>
         </SheetHeader>
-        
-        <div className="mt-6">
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           {children}
         </div>
       </SheetContent>

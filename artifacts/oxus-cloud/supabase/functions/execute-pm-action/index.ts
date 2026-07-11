@@ -11,6 +11,11 @@ import {
   loadOxusActorProfile,
   resolveUserClickupForProject,
 } from "../_shared/clickup-auth.ts";
+import {
+  assertInternalOxusAuthUser,
+  InternalOxusAuthError,
+  internalOxusAuthErrorResponse,
+} from "../_shared/internalOxusAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -147,7 +152,13 @@ Deno.serve(async (req) => {
 
     const token = authHeader.replace("Bearer ", "");
     const { data: auth, error: authErr } = await supabase.auth.getUser(token);
-    if (authErr || !auth.user) return err("Authentication required.", 401, "AUTH_REQUIRED");
+    let userId: string;
+    try {
+      userId = await assertInternalOxusAuthUser(auth.user);
+    } catch (e) {
+      if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
+      throw e;
+    }
 
     const { data: actionItem, error: itemErr } = await supabase
       .from("project_pm_action_items")
@@ -179,7 +190,7 @@ Deno.serve(async (req) => {
     let clickupConnectionUsername: string | null = null;
     if (needsClickup) {
       try {
-        const resolved = await resolveUserClickupForProject(auth.user.id, projectId);
+        const resolved = await resolveUserClickupForProject(userId, projectId);
         clickup = resolved.clickup;
         clickupConnectionUsername = resolved.connection.clickup_username ?? null;
       } catch (e) {
@@ -188,7 +199,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    const oxusActor = await loadOxusActorProfile(auth.user.id);
+    const oxusActor = await loadOxusActorProfile(userId);
     const actorName = oxusActor.full_name ?? clickupConnectionUsername;
     const actorEmail = oxusActor.email;
 
@@ -213,7 +224,7 @@ Deno.serve(async (req) => {
         resultPayload,
         status: "succeeded",
         clickupTaskIds: [],
-        createdBy: auth.user.id,
+        createdBy: userId,
       });
       await markActionItem(supabase, actionItem.id, {
         execution_status: "succeeded",
@@ -249,7 +260,7 @@ Deno.serve(async (req) => {
         resultPayload,
         status: "succeeded",
         clickupTaskIds: uniqueTaskIds,
-        createdBy: auth.user.id,
+        createdBy: userId,
       });
 
       await markActionItem(supabase, actionItem.id, {
@@ -289,7 +300,7 @@ Deno.serve(async (req) => {
           blocker_resource: resource,
           blocked_actor_name: actor,
           resolution_note: resolutionNote || null,
-          oxus_user_id: auth.user.id,
+          oxus_user_id: userId,
           clickup_username: clickupConnectionUsername,
         },
       });
@@ -376,7 +387,7 @@ Deno.serve(async (req) => {
         status,
         errorMessage: errors.length ? errors.join("; ") : null,
         clickupTaskIds,
-        createdBy: auth.user.id,
+        createdBy: userId,
       });
 
       if (status === "failed") {
@@ -450,7 +461,7 @@ Deno.serve(async (req) => {
             }.`,
             actorName,
             actorEmail,
-            rawPayload: { action_item_id: actionItem.id, assignee_ids: assigneeIds, execution_payload: executionPayload, oxus_user_id: auth.user.id, clickup_username: clickupConnectionUsername },
+            rawPayload: { action_item_id: actionItem.id, assignee_ids: assigneeIds, execution_payload: executionPayload, oxus_user_id: userId, clickup_username: clickupConnectionUsername },
           });
           results.push({ task_id: taskId, updated });
         } catch (e) {
@@ -468,7 +479,7 @@ Deno.serve(async (req) => {
         status,
         errorMessage: errors.length ? errors.join("; ") : null,
         clickupTaskIds: taskIds,
-        createdBy: auth.user.id,
+        createdBy: userId,
       });
 
       if (status === "failed") {
@@ -509,7 +520,7 @@ Deno.serve(async (req) => {
             eventSummary: `${actorName ?? "PM"} set due date ${dueDate} on "${link?.clickup_task_name ?? taskId}".`,
             actorName,
             actorEmail,
-            rawPayload: { action_item_id: actionItem.id, due_date: dueDate, execution_payload: executionPayload, oxus_user_id: auth.user.id, clickup_username: clickupConnectionUsername },
+            rawPayload: { action_item_id: actionItem.id, due_date: dueDate, execution_payload: executionPayload, oxus_user_id: userId, clickup_username: clickupConnectionUsername },
           });
           results.push({ task_id: taskId, updated });
         } catch (e) {
@@ -527,7 +538,7 @@ Deno.serve(async (req) => {
         status,
         errorMessage: errors.length ? errors.join("; ") : null,
         clickupTaskIds: taskIds,
-        createdBy: auth.user.id,
+        createdBy: userId,
       });
 
       if (status === "failed") {
@@ -570,7 +581,7 @@ Deno.serve(async (req) => {
             eventSummary: `${actorName ?? "PM"} posted a ClickUp comment on "${link?.clickup_task_name ?? taskId}".`,
             actorName,
             actorEmail,
-            rawPayload: { action_item_id: actionItem.id, comment_text: commentText, oxus_user_id: auth.user.id, clickup_username: clickupConnectionUsername },
+            rawPayload: { action_item_id: actionItem.id, comment_text: commentText, oxus_user_id: userId, clickup_username: clickupConnectionUsername },
           });
           results.push({ task_id: taskId, comment });
         } catch (e) {
@@ -588,7 +599,7 @@ Deno.serve(async (req) => {
         status,
         errorMessage: errors.length ? errors.join("; ") : null,
         clickupTaskIds: taskIds,
-        createdBy: auth.user.id,
+        createdBy: userId,
       });
 
       if (status === "failed") {

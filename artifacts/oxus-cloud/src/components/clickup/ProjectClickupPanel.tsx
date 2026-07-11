@@ -199,6 +199,40 @@ export function ProjectClickupPanel({ projectId }: Props) {
                     <p>Last manual sync: {metadataValue(meta, "last_manual_sync_at") ?? "—"}</p>
                     <p>Last manual sync imported: {metadataValue(meta, "last_manual_sync_imported_count") ?? "—"} comments</p>
                     <p>Needs comment fetch: {metadataValue(meta, "needs_comment_fetch") ?? "false"}</p>
+                    <p>Workspace member count: {diagnostics?.workspaceMemberCount ?? "—"}</p>
+                    <p>Project assignable member count: {diagnostics?.assignableMemberCount ?? "—"}</p>
+                    <p>Hidden workspace members: {diagnostics?.hiddenWorkspaceMemberCount ?? "—"}</p>
+                    <p>
+                      Linked Space:{" "}
+                      {diagnostics?.assignableMembersSync?.linked_space_name ??
+                        link.space_name ??
+                        diagnostics?.assignableMembersSync?.linked_space_id ??
+                        link.clickup_space_id ??
+                        "—"}
+                    </p>
+                    <p>
+                      Linked Folder:{" "}
+                      {diagnostics?.assignableMembersSync?.linked_folder_name ??
+                        link.folder_name ??
+                        diagnostics?.assignableMembersSync?.linked_folder_id ??
+                        link.clickup_folder_id ??
+                        "—"}
+                    </p>
+                    <p>
+                      Linked List:{" "}
+                      {diagnostics?.assignableMembersSync?.linked_list_name ??
+                        link.list_name ??
+                        diagnostics?.assignableMembersSync?.linked_list_id ??
+                        link.clickup_list_id ??
+                        "—"}
+                    </p>
+                    <p>
+                      Assignable member sync source:{" "}
+                      {diagnostics?.assignableMembersSync?.sync_source ?? "—"}
+                      {diagnostics?.assignableMembersSync?.confidence
+                        ? ` (${diagnostics.assignableMembersSync.confidence} confidence)`
+                        : ""}
+                    </p>
                     {diagnostics?.lastWebhookEvent && (
                       <p>
                         Latest stored webhook: {diagnostics.lastWebhookEvent.event_type} on task {diagnostics.lastWebhookEvent.clickup_task_id}{" "}

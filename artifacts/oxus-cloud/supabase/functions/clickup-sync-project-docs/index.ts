@@ -7,7 +7,11 @@ import {
   triggerDevTask,
 } from "../_shared/agent/triggerDev.ts";
 import { isServiceRoleRequest } from "../_shared/serviceRoleAuth.ts";
-import { getAuthenticatedUser } from "../_shared/slack-auth.ts";
+import {
+  assertInternalOxusUser,
+  InternalOxusAuthError,
+  internalOxusAuthErrorResponse,
+} from "../_shared/internalOxusAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -50,8 +54,13 @@ Deno.serve(async (req) => {
 
     let userId = body.user_id?.trim();
     if (!serviceRole) {
-      const auth = await getAuthenticatedUser(req.headers.get("Authorization"));
-      if (!auth) return err("Authentication required.", 401, "AUTH_REQUIRED");
+      let auth;
+      try {
+        auth = await assertInternalOxusUser(req);
+      } catch (e) {
+        if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
+        throw e;
+      }
       userId = auth.userId;
     } else if (!userId) {
       return err("user_id is required for service-role invocations.", 400, "INVALID_INPUT");

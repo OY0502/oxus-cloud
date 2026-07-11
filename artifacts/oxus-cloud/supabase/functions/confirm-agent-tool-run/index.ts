@@ -3,7 +3,11 @@ import { executeConfirmedToolRun } from "../_shared/agent/orchestration.ts";
 import { mergeAndValidateClickupDocPayload } from "../_shared/agent/clickupDocTool.ts";
 import { isConfirmableAgentToolRun, isStaleAgentToolRun } from "../_shared/agent/toolRunUtils.ts";
 import { isTriggerDevConfigured, triggerDevTask } from "../_shared/agent/triggerDev.ts";
-import { getAuthenticatedUser } from "../_shared/slack-auth.ts";
+import {
+  assertInternalOxusUser,
+  InternalOxusAuthError,
+  internalOxusAuthErrorResponse,
+} from "../_shared/internalOxusAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -43,8 +47,13 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return err("Method not allowed.", 405, "INVALID_INPUT");
 
   try {
-    const auth = await getAuthenticatedUser(req.headers.get("Authorization"));
-    if (!auth) return err("Authentication required.", 401, "AUTH_REQUIRED");
+    let auth;
+    try {
+      auth = await assertInternalOxusUser(req);
+    } catch (e) {
+      if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
+      throw e;
+    }
 
     let body: { tool_run_id?: string; input_payload_overrides?: Record<string, unknown>; cancel?: boolean } = {};
     try {

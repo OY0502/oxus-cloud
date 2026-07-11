@@ -1,12 +1,15 @@
-import { getClickupBaseUrl, getServiceRoleSupabase } from "../_shared/clickup-auth.ts";
+import {
+  getClickupBaseUrl,
+  getServiceRoleSupabase,
+  normalizeClickupRedirectPath,
+  resolveClickupAppBaseUrl,
+} from "../_shared/clickup-auth.ts";
 import { encryptClickupToken, hasClickupTokenEncryptionKey } from "../_shared/clickupTokenCrypto.ts";
+import { assertInternalOxusUserId, InternalOxusAuthError } from "../_shared/internalOxusAuth.ts";
 
-function appUrl(): string {
-  return (Deno.env.get("CLICKUP_APP_URL") ?? "http://localhost:5173").replace(/\/+$/, "");
-}
-
-function buildAppUrl(path: string): string {
-  return `${appUrl()}${path.startsWith("/") ? path : `/${path}`}`;
+function buildAppUrl(path: string, request: Request): string {
+  const appBaseUrl = resolveClickupAppBaseUrl(request);
+  return `${appBaseUrl}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 function escapeHtml(value: string): string {
@@ -18,8 +21,8 @@ function escapeHtml(value: string): string {
 }
 
 /** Primary redirect — browsers follow this reliably after ClickUp OAuth. */
-function redirectTo(path: string): Response {
-  const location = buildAppUrl(path);
+function redirectTo(path: string, request: Request): Response {
+  const location = buildAppUrl(path, request);
   return new Response(null, {
     status: 302,
     headers: {
@@ -30,8 +33,8 @@ function redirectTo(path: string): Response {
 }
 
 /** HTML fallback with properly escaped URLs (unescaped & breaks meta refresh). */
-function redirectHtml(path: string, title: string): Response {
-  const location = buildAppUrl(path);
+function redirectHtml(path: string, title: string, request: Request): Response {
+  const location = buildAppUrl(path, request);
   const safeLocation = escapeHtml(location);
   const safeTitle = escapeHtml(title);
   const html = `<!DOCTYPE html>
@@ -59,22 +62,25 @@ function redirectHtml(path: string, title: string): Response {
   });
 }
 
-function redirectError(message: string, redirectAfter?: string | null): Response {
-  const path = appendClickupQuery(redirectAfter?.trim() || "/settings", "error", message);
-  return redirectTo(path);
+function redirectError(request: Request, message: string, redirectAfter?: string | null): Response {
+  const path = appendClickupQuery(request, redirectAfter?.trim() || "/settings/integrations", "error", message);
+  return redirectTo(path, request);
 }
 
-function redirectSuccess(redirectAfter?: string | null): Response {
-  const path = appendClickupQuery(redirectAfter?.trim() || "/settings", "connected");
-  return redirectTo(path);
+function redirectSuccess(request: Request, redirectAfter?: string | null): Response {
+  const path = appendClickupQuery(request, redirectAfter?.trim() || "/settings/integrations", "connected");
+  return redirectTo(path, request);
 }
 
 function appendClickupQuery(
+  request: Request,
   path: string,
   status: "connected" | "error",
   message?: string,
 ): string {
-  const url = new URL(path.startsWith("/") ? path : `/${path}`, appUrl());
+  const appBaseUrl = resolveClickupAppBaseUrl(request);
+  const normalizedPath = normalizeClickupRedirectPath(path, request);
+  const url = new URL(normalizedPath, appBaseUrl);
   url.searchParams.set("clickup", status);
   if (status === "error" && message) {
     url.searchParams.set("message", message.slice(0, 500));
@@ -147,13 +153,14 @@ async function hasActiveConnection(admin: ReturnType<typeof getServiceRoleSupaba
 
 Deno.serve(async (req) => {
   try {
+    resolveClickupAppBaseUrl(req);
     const url = new URL(req.url);
     const code = url.searchParams.get("code")?.trim();
     const state = url.searchParams.get("state")?.trim();
-    if (!code || !state) return redirectError("Missing OAuth code or state.");
+    if (!code || !state) return redirectError(req, "Missing OAuth code or state.");
 
     if (!hasClickupTokenEncryptionKey()) {
-      return redirectError("ClickUp token encryption is not configured on the server.");
+      return redirectError(req, "ClickUp token encryption is not configured on the server.");
     }
 
     const admin = getServiceRoleSupabase();
@@ -162,13 +169,14 @@ Deno.serve(async (req) => {
       .select("*")
       .eq("state", state)
       .maybeSingle();
-    if (stateErr || !oauthState) return redirectError("Invalid OAuth state.");
+    if (stateErr || !oauthState) return redirectError(req, "Invalid OAuth state.");
 
     if (oauthState.status !== "pending") {
       if (await hasActiveConnection(admin, oauthState.user_id)) {
-        return redirectSuccess(oauthState.redirect_after as string | null);
+        return redirectSuccess(req, oauthState.redirect_after as string | null);
       }
       return redirectError(
+        req,
         "OAuth session was already used. Please connect ClickUp again from Settings.",
         oauthState.redirect_after as string | null,
       );
@@ -176,7 +184,16 @@ Deno.serve(async (req) => {
 
     if (new Date(oauthState.expires_at).getTime() < Date.now()) {
       await admin.from("clickup_oauth_states").update({ status: "expired" }).eq("id", oauthState.id);
-      return redirectError("OAuth session expired. Please try again.", oauthState.redirect_after as string | null);
+      return redirectError(req, "OAuth session expired. Please try again.", oauthState.redirect_after as string | null);
+    }
+
+    try {
+      await assertInternalOxusUserId(oauthState.user_id, admin);
+    } catch (e) {
+      const message = e instanceof InternalOxusAuthError
+        ? e.message
+        : "Authentication required.";
+      return redirectError(req, message, oauthState.redirect_after as string | null);
     }
 
     let accessToken: string;
@@ -184,7 +201,7 @@ Deno.serve(async (req) => {
       accessToken = await exchangeCodeForToken(code);
     } catch (e) {
       await admin.from("clickup_oauth_states").update({ status: "failed", used_at: new Date().toISOString() }).eq("id", oauthState.id);
-      return redirectError((e as Error).message, oauthState.redirect_after as string | null);
+      return redirectError(req, (e as Error).message, oauthState.redirect_after as string | null);
     }
 
     let teams: Array<{ id: string; name: string; color?: string | null }> = [];
@@ -206,11 +223,11 @@ Deno.serve(async (req) => {
       }
     } catch (e) {
       await admin.from("clickup_oauth_states").update({ status: "failed", used_at: new Date().toISOString() }).eq("id", oauthState.id);
-      return redirectError((e as Error).message, oauthState.redirect_after as string | null);
+      return redirectError(req, (e as Error).message, oauthState.redirect_after as string | null);
     }
 
     if (teams.length === 0) {
-      return redirectError("No authorized ClickUp workspaces were returned.", oauthState.redirect_after as string | null);
+      return redirectError(req, "No authorized ClickUp workspaces were returned.", oauthState.redirect_after as string | null);
     }
 
     const envTeamId = Deno.env.get("CLICKUP_TEAM_ID")?.trim();
@@ -241,13 +258,24 @@ Deno.serve(async (req) => {
     );
     if (upsertErr) {
       await admin.from("clickup_oauth_states").update({ status: "failed", used_at: now }).eq("id", oauthState.id);
-      return redirectError(`Failed to save ClickUp connection: ${upsertErr.message}`, oauthState.redirect_after as string | null);
+      return redirectError(req, `Failed to save ClickUp connection: ${upsertErr.message}`, oauthState.redirect_after as string | null);
     }
 
     await admin.from("clickup_oauth_states").update({ status: "used", used_at: now }).eq("id", oauthState.id);
-    return redirectSuccess(oauthState.redirect_after as string | null);
+    return redirectSuccess(req, oauthState.redirect_after as string | null);
   } catch (e) {
     console.error("[clickup-oauth-callback]", (e as Error).message, (e as Error).stack);
-    return redirectError((e as Error).message || "Unexpected OAuth error.");
+    const message = (e as Error).message || "Unexpected OAuth error.";
+    try {
+      return redirectHtml("/settings/integrations?clickup=error", message, req);
+    } catch {
+      return new Response(message, {
+        status: 500,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
   }
 });

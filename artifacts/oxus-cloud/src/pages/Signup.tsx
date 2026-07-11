@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Link, useLocation } from "wouter";
+import { Link } from "wouter";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -14,9 +14,12 @@ import {
 import { cn } from "@/lib/utils";
 import { BrandLogo } from "@/components/BrandLogo";
 import { isValidEmail } from "@/lib/validation";
+import {
+  INTERNAL_ACCESS_MESSAGE,
+  isAllowedInternalEmail,
+} from "@/lib/internalAuth";
 
 export function Signup() {
-  const [, setLocation] = useLocation();
   const { signUp } = useAuth();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -30,7 +33,8 @@ export function Signup() {
   const passwordValid = isPasswordValid(password);
   const passwordsMatch = password.length > 0 && password === confirm;
   const emailValid = isValidEmail(email);
-  const canSubmit = emailValid && passwordValid && passwordsMatch && !loading;
+  const emailAllowed = emailValid && isAllowedInternalEmail(email);
+  const canSubmit = emailAllowed && passwordValid && passwordsMatch && !loading;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,6 +42,10 @@ export function Signup() {
 
     if (!emailValid) {
       setError("Please enter a valid email address.");
+      return;
+    }
+    if (!isAllowedInternalEmail(email)) {
+      setError(INTERNAL_ACCESS_MESSAGE);
       return;
     }
     if (!passwordValid) {
@@ -60,7 +68,7 @@ export function Signup() {
         setConfirmationSent(true);
         setLoading(false);
       } else {
-        setLocation("/");
+        setLoading(false);
       }
     } catch (err) {
       setError(
@@ -97,8 +105,8 @@ export function Signup() {
         </div>
 
         <div className="z-10 max-w-md">
-          <h1 className="text-4xl font-serif font-bold text-white mb-4">Start your agency's next chapter.</h1>
-          <p className="text-sidebar-foreground/80 text-lg">Join top agencies using OXUS Cloud to streamline their operations.</p>
+          <h1 className="text-4xl font-serif font-bold text-white mb-4">OXUS Cloud</h1>
+          <p className="text-sidebar-foreground/80 text-lg">Internal workspace for the OXUS team.</p>
         </div>
       </div>
       
@@ -128,7 +136,7 @@ export function Signup() {
             <>
               <div className="mb-8">
                 <h2 className="text-3xl font-bold tracking-tight text-foreground">Create account</h2>
-                <p className="text-muted-foreground mt-2">Sign up for your workspace today.</p>
+                <p className="text-muted-foreground mt-2">{INTERNAL_ACCESS_MESSAGE}</p>
               </div>
 
               {error && (
@@ -157,7 +165,7 @@ export function Signup() {
                     id="email"
                     type="email"
                     autoComplete="email"
-                    placeholder="alex@oxus.cloud"
+                    placeholder="you@oxus.agency"
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
@@ -165,6 +173,9 @@ export function Signup() {
                   />
                   {email.length > 0 && !emailValid && (
                     <p className="text-xs text-destructive">Enter a valid email address.</p>
+                  )}
+                  {email.length > 0 && emailValid && !emailAllowed && (
+                    <p className="text-xs text-destructive">{INTERNAL_ACCESS_MESSAGE}</p>
                   )}
                 </div>
                 <div className="space-y-2">

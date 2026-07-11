@@ -5,7 +5,24 @@ import type { Json } from "./database.types";
 
 export type QuoteStage = "new-lead" | "scoping" | "proposal" | "won" | "archived";
 export type Urgency = "low" | "normal" | "high";
-export type ContactType = "client" | "contractor" | "agent";
+export type CompanyType = "internal" | "client" | "prospect" | "partner" | "vendor" | "inactive";
+export const COMPANY_TYPES: CompanyType[] = ["client", "prospect", "partner", "vendor", "internal", "inactive"];
+
+export type CompanyPersonRelationship =
+  | "employee"
+  | "contractor"
+  | "client_contact"
+  | "decision_maker"
+  | "billing_contact"
+  | "technical_contact"
+  | "lead"
+  | "partner"
+  | "vendor_contact";
+
+export type InvoiceProvider = "stripe" | "wise" | "manual" | "other";
+export type PayoutProvider = "manual" | "wise" | "bank_transfer" | "stripe" | "other";
+export type RateType = "hourly" | "daily" | "monthly" | "fixed_project";
+export type ContactType = "client" | "contractor" | "agent" | "lead" | "partner" | "vendor";
 export const CONTACT_TYPES: ContactType[] = ["client", "contractor", "agent"];
 export type RelationshipStrength = "strong" | "medium" | "weak" | "new";
 export type EmploymentType = "employee" | "contractor";
@@ -390,8 +407,29 @@ export interface Client {
   website: string | null;
   industry: string | null;
   notes: string | null;
+  company_type: CompanyType;
+  logo_url: string | null;
+  description: string | null;
+  status: string;
+  billing_email: string | null;
+  billing_address: Json;
+  metadata: Json;
   created_at: string;
   updated_at: string;
+}
+
+/** Alias for Client — same underlying `clients` table. */
+export type Company = Client;
+
+export interface CompanyPerson {
+  id: string;
+  company_id: string;
+  person_id: string;
+  relationship_type: CompanyPersonRelationship;
+  is_primary: boolean;
+  notes: string | null;
+  metadata: Json;
+  created_at: string;
 }
 
 export interface Contact {
@@ -406,6 +444,13 @@ export interface Contact {
   source: string | null;
   notes: string | null;
   last_contact_at: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  linkedin_url: string | null;
+  avatar_url: string | null;
+  person_status: string;
+  metadata: Json;
+  profile_id: string | null;
   // Contractor / team fields (used when type === "contractor")
   job_title: string | null;
   hourly_rate: number | null;
@@ -416,6 +461,9 @@ export interface Contact {
   created_at: string;
   updated_at: string;
 }
+
+/** Alias for Contact — same underlying `contacts` table. */
+export type Person = Contact;
 
 export interface TeamMember {
   id: string;
@@ -442,12 +490,15 @@ export interface TeamMemberWithStats extends TeamMember {
 
 export type ProfileRole = "super_admin" | "pm";
 
+export type ProfileAccessStatus = "active" | "pending" | "blocked";
+
 export interface Profile {
   id: string;
   full_name: string | null;
   email: string | null;
   avatar_url: string | null;
   role: ProfileRole;
+  access_status: ProfileAccessStatus;
   created_at: string;
   updated_at: string;
 }
@@ -863,6 +914,39 @@ export interface ClickupMember {
   updated_at: string;
 }
 
+export interface ProjectClickupAssignableMember {
+  id: string;
+  project_id: string;
+  clickup_user_id: string;
+  team_id: string | null;
+  space_id: string | null;
+  folder_id: string | null;
+  list_id: string | null;
+  name: string | null;
+  email: string | null;
+  role: string | null;
+  is_assignable: boolean;
+  reason: string | null;
+  metadata: Json;
+  last_synced_at: string;
+  created_at: string;
+}
+
+export type ClickupAssignableMembersSyncDiagnostics = {
+  workspace_member_count: number;
+  assignable_member_count: number;
+  hidden_workspace_member_count: number;
+  sync_source: string;
+  confidence?: string;
+  linked_space_id?: string | null;
+  linked_space_name?: string | null;
+  linked_folder_id?: string | null;
+  linked_folder_name?: string | null;
+  linked_list_id?: string | null;
+  linked_list_name?: string | null;
+  last_synced_at?: string;
+};
+
 export type ClickupAuthorizedTeam = {
   id: string;
   name: string;
@@ -1259,6 +1343,9 @@ export interface LineItem {
   id: string;
   description: string;
   amount: number;
+  quantity: number;
+  unit_amount: number | null;
+  line_total: number | null;
   position: number;
 }
 
@@ -1271,6 +1358,7 @@ export interface Invoice {
   project: string | null;
   amount: number;
   amount_paid: number;
+  amount_due: number;
   status: InvoiceStatus;
   issue_date: string;
   due_date: string | null;
@@ -1280,6 +1368,23 @@ export interface Invoice {
   owner_name: string | null;
   last_reminder_at: string | null;
   stripe_status: string | null;
+  provider: InvoiceProvider;
+  external_id: string | null;
+  external_customer_id: string | null;
+  external_url: string | null;
+  hosted_invoice_url: string | null;
+  currency: string;
+  subtotal: number;
+  tax_amount: number;
+  total: number;
+  amount_eur: number | null;
+  sync_status: string;
+  last_synced_at: string | null;
+  company_mapping_status: string;
+  attention_dismissed_at: string | null;
+  attention_dismissed_by: string | null;
+  attention_dismiss_reason: string | null;
+  paid_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1339,4 +1444,103 @@ export interface Activity {
   entity_id: string | null;
   contact_id: string | null;
   created_at: string;
+}
+
+export interface TeamMemberRate {
+  id: string;
+  person_id: string;
+  rate_type: RateType;
+  amount: number;
+  currency: string;
+  effective_from: string;
+  effective_to: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface Payout {
+  id: string;
+  person_id: string;
+  project_id: string | null;
+  amount: number;
+  currency: string;
+  payment_date: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  provider: PayoutProvider;
+  external_id: string | null;
+  external_url: string | null;
+  status: string;
+  notes: string | null;
+  metadata: Json;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Expense {
+  id: string;
+  description: string;
+  amount: number;
+  currency: string;
+  category: string;
+  expense_date: string;
+  provider: string;
+  external_id: string | null;
+  project_id: string | null;
+  metadata: Json;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StripeConnectionStatus {
+  configured: boolean;
+  connected: boolean;
+  account: {
+    id: string | null;
+    business_name: string | null;
+    country: string | null;
+    default_currency: string | null;
+    email: string | null;
+  } | null;
+  last_successful_sync_at: string | null;
+  last_sync_error: string | null;
+  webhook_configured?: boolean;
+  webhook_last_received_at: string | null;
+}
+
+export type StripeInvoiceActionType =
+  | "finalize"
+  | "send"
+  | "mark_paid_out_of_band"
+  | "void"
+  | "mark_uncollectible"
+  | "delete_draft";
+
+export interface StripeSyncResult {
+  checked: number;
+  imported: number;
+  updated: number;
+  unchanged: number;
+  companies_matched: number;
+  companies_requiring_review: number;
+  errors: string[];
+}
+
+export interface CompanyFinancialMetrics {
+  lifetime_revenue: number;
+  revenue_ytd: number;
+  revenue_mtd: number;
+  outstanding: number;
+  overdue: number;
+  active_projects: number;
+  avg_project_value: number;
+}
+
+export interface TeamMemberFinancialSummary {
+  paid_mtd: number;
+  paid_ytd: number;
+  pending: number;
+  last_payment_date: string | null;
+  current_rate: TeamMemberRate | null;
+  active_projects: number;
 }

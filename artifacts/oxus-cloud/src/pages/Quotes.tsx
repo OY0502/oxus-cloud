@@ -50,6 +50,7 @@ export function Quotes() {
 
   const columns = [
     {
+      id: "quote",
       header: "Quote",
       cell: (item: any) => (
         <div>
@@ -59,6 +60,7 @@ export function Quotes() {
       ),
     },
     {
+      id: "org_contact",
       header: "Organization & Contact",
       cell: (item: any) => (
         <div className="flex items-center gap-3">
@@ -70,8 +72,9 @@ export function Quotes() {
         </div>
       ),
     },
-    { header: "Budget", cell: (item: any) => <div className="font-medium font-sans">{formatEUR(item.budget)}</div> },
+    { id: "budget", header: "Budget", cell: (item: any) => <div className="font-medium">{formatEUR(item.budget)}</div> },
     {
+      id: "assigned",
       header: "Assigned to",
       cell: (item: any) =>
         item.assigned_user ? (
@@ -83,7 +86,7 @@ export function Quotes() {
           <span className="text-sm text-muted-foreground">Unassigned</span>
         ),
     },
-    { header: "Stage", cell: (item: any) => <StatusBadge status={STAGE_LABELS[item.stage] ?? item.stage} /> },
+    { id: "stage", header: "Stage", cell: (item: any) => <StatusBadge status={STAGE_LABELS[item.stage] ?? item.stage} /> },
   ];
 
   const handleMarkWon = (quote: any) => {
@@ -148,7 +151,7 @@ export function Quotes() {
       ) : filtered.length === 0 ? (
         <EmptyState icon={<Search />} title="No matches" description="No quotes match your current filters." />
       ) : (
-        <DataTable data={filtered} columns={columns} onRowClick={(q) => setSelected(q)} />
+        <DataTable tableId="quotes" data={filtered} columns={columns} onRowClick={(q) => setSelected(q)} />
       )}
 
       <QuoteDrawer quote={selected} open={!!selected} onOpenChange={(o) => !o && setSelected(null)} onMarkWon={handleMarkWon} />

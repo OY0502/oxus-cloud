@@ -4,7 +4,11 @@ import { executeCreateClickupDocFromToolRun } from "../_shared/agent/executeTool
 
 import { mergeAndValidateClickupDocPayload } from "../_shared/agent/clickupDocTool.ts";
 
-import { getAuthenticatedUser } from "../_shared/slack-auth.ts";
+import {
+  assertInternalOxusUser,
+  InternalOxusAuthError,
+  internalOxusAuthErrorResponse,
+} from "../_shared/internalOxusAuth.ts";
 import { isServiceRoleRequest } from "../_shared/serviceRoleAuth.ts";
 
 const corsHeaders = {
@@ -94,11 +98,13 @@ Deno.serve(async (req) => {
 
 
     if (!(await isServiceRoleRequest(req))) {
-
-      const auth = await getAuthenticatedUser(req.headers.get("Authorization"));
-
-      if (!auth) return err("Authentication required.", 401, "AUTH_REQUIRED");
-
+      let auth;
+      try {
+        auth = await assertInternalOxusUser(req);
+      } catch (e) {
+        if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
+        throw e;
+      }
       userId = auth.userId;
 
     } else if (!userId) {

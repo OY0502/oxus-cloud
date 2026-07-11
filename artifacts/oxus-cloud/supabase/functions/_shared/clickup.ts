@@ -583,6 +583,33 @@ export async function validateCachedAssigneeIds(
   return assigneeIds.filter((id) => allowed.has(id));
 }
 
+export async function validateProjectAssignableAssigneeIds(
+  supabase: any,
+  projectId: string,
+  assigneeIds: string[],
+): Promise<string[]> {
+  if (assigneeIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("project_clickup_assignable_members")
+    .select("clickup_user_id")
+    .eq("project_id", projectId)
+    .eq("is_assignable", true)
+    .in("clickup_user_id", assigneeIds);
+  if (error) throw new Error(error.message);
+
+  const allowed = new Set((data ?? []).map((row: { clickup_user_id: string }) => row.clickup_user_id));
+  const invalid = assigneeIds.filter((id) => !allowed.has(id));
+  if (invalid.length > 0) {
+    throw new ClickupAssigneeValidationError(CLICKUP_ASSIGNEE_ACCESS_ERROR);
+  }
+  return assigneeIds;
+}
+
+export function isClickupAssigneeApiError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return lower.includes("assignee") || lower.includes("not a member") || lower.includes("does not have access");
+}
+
 export async function updateClickupTask(
   clickup: { apiToken: string; baseUrl: string },
   taskId: string,
@@ -682,43 +709,162 @@ function normalizeMember(raw: any): NormalizedClickupMember | null {
   };
 }
 
-export async function fetchClickupMembers(
-  clickup: { apiToken: string; teamId: string; baseUrl: string },
-  listId?: string | null,
-): Promise<{ members: NormalizedClickupMember[]; source: "team" | "list" | "mixed" }> {
-  const byId = new Map<string, NormalizedClickupMember>();
+export type ClickupAssignableSyncSource =
+  | "list_assignable_users"
+  | "space_sharing"
+  | "folder_access"
+  | "fallback";
 
+export type ClickupAssignableFetchResult = {
+  members: NormalizedClickupMember[];
+  source: ClickupAssignableSyncSource;
+  confidence: "high" | "medium" | "low";
+};
+
+function membersFromPayload(payload: unknown): NormalizedClickupMember[] {
+  const rows = Array.isArray(payload) ? payload : [];
+  return rows
+    .map((member) => normalizeMember(member))
+    .filter((member): member is NormalizedClickupMember => member !== null);
+}
+
+export async function fetchClickupTeamMembers(
+  clickup: { apiToken: string; teamId: string; baseUrl: string },
+): Promise<NormalizedClickupMember[]> {
   try {
     const teamResp = await clickupFetch(clickup, `/team/${clickup.teamId}`);
     const teamMembers = teamResp?.team?.members ?? teamResp?.members ?? [];
-    if (Array.isArray(teamMembers)) {
-      for (const member of teamMembers) {
-        const normalized = normalizeMember(member);
-        if (normalized) byId.set(normalized.clickup_user_id, normalized);
-      }
-    }
+    return membersFromPayload(teamMembers);
   } catch (err) {
-    console.warn("[fetchClickupMembers] team members fetch failed:", (err as Error).message);
+    console.warn("[fetchClickupTeamMembers] team members fetch failed:", (err as Error).message);
+    return [];
   }
+}
 
-  if (listId) {
+/** Workspace-wide member cache (team scope only — not project assignable scope). */
+export async function fetchClickupMembers(
+  clickup: { apiToken: string; teamId: string; baseUrl: string },
+  _listId?: string | null,
+): Promise<{ members: NormalizedClickupMember[]; source: "team" }> {
+  const members = await fetchClickupTeamMembers(clickup);
+  return { members, source: "team" };
+}
+
+export async function fetchClickupAssignableMembersForTarget(
+  clickup: { apiToken: string; teamId: string; baseUrl: string },
+  target: { listId?: string | null; spaceId?: string | null; folderId?: string | null },
+): Promise<ClickupAssignableFetchResult> {
+  if (target.listId) {
     try {
-      const listResp = await clickupFetch(clickup, `/list/${listId}/member`);
-      const listMembers = listResp?.members ?? [];
-      if (Array.isArray(listMembers)) {
-        for (const member of listMembers) {
-          const normalized = normalizeMember(member);
-          if (normalized) byId.set(normalized.clickup_user_id, normalized);
-        }
+      const listResp = await clickupFetch(clickup, `/list/${target.listId}/member`);
+      const members = membersFromPayload(listResp?.members ?? []);
+      if (members.length > 0) {
+        return { members, source: "list_assignable_users", confidence: "high" };
       }
     } catch (err) {
-      console.warn("[fetchClickupMembers] list members fetch failed:", (err as Error).message);
+      console.warn("[fetchClickupAssignableMembersForTarget] list members fetch failed:", (err as Error).message);
     }
   }
 
-  const members = Array.from(byId.values());
-  const source = members.length === 0 ? "team" : listId && byId.size > 0 ? "mixed" : "team";
-  return { members, source };
+  if (target.spaceId) {
+    try {
+      const spaceResp = await clickupFetch(clickup, `/space/${target.spaceId}/member`);
+      const members = membersFromPayload(spaceResp?.members ?? []);
+      if (members.length > 0) {
+        return { members, source: "space_sharing", confidence: "medium" };
+      }
+    } catch (err) {
+      console.warn("[fetchClickupAssignableMembersForTarget] space members fetch failed:", (err as Error).message);
+    }
+  }
+
+  if (target.folderId) {
+    try {
+      const folderResp = await clickupFetch(clickup, `/folder/${target.folderId}/member`);
+      const members = membersFromPayload(folderResp?.members ?? []);
+      if (members.length > 0) {
+        return { members, source: "folder_access", confidence: "medium" };
+      }
+    } catch (err) {
+      console.warn("[fetchClickupAssignableMembersForTarget] folder members fetch failed:", (err as Error).message);
+    }
+  }
+
+  return { members: [], source: "fallback", confidence: "low" };
+}
+
+export class ClickupAssigneeValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ClickupAssigneeValidationError";
+  }
+}
+
+export const CLICKUP_ASSIGNEE_ACCESS_ERROR =
+  "This user does not have access to the connected ClickUp Space/List. Share the Space with them in ClickUp, then refresh members.";
+
+export async function upsertProjectClickupAssignableMembers(
+  supabase: any,
+  projectId: string,
+  scope: {
+    teamId: string;
+    spaceId?: string | null;
+    folderId?: string | null;
+    listId?: string | null;
+  },
+  fetched: ClickupAssignableFetchResult,
+): Promise<number> {
+  const now = new Date().toISOString();
+  const rows = fetched.members.map((member) => ({
+    project_id: projectId,
+    clickup_user_id: member.clickup_user_id,
+    team_id: scope.teamId,
+    space_id: scope.spaceId ?? null,
+    folder_id: scope.folderId ?? null,
+    list_id: scope.listId ?? null,
+    name: member.username,
+    email: member.email,
+    role: member.role,
+    is_assignable: true,
+    reason: null,
+    metadata: {
+      sync_source: fetched.source,
+      confidence: fetched.confidence,
+      raw_member: member.raw_member,
+    },
+    last_synced_at: now,
+  }));
+
+  if (rows.length > 0) {
+    const { error } = await supabase
+      .from("project_clickup_assignable_members")
+      .upsert(rows, { onConflict: "project_id,clickup_user_id" });
+    if (error) throw new Error(error.message);
+  }
+
+  const activeIds = new Set(rows.map((row) => row.clickup_user_id));
+  const { data: existing } = await supabase
+    .from("project_clickup_assignable_members")
+    .select("id, clickup_user_id")
+    .eq("project_id", projectId)
+    .eq("is_assignable", true);
+
+  const staleIds = (existing ?? [])
+    .filter((row: { clickup_user_id: string }) => !activeIds.has(row.clickup_user_id))
+    .map((row: { id: string }) => row.id);
+
+  if (staleIds.length > 0) {
+    await supabase
+      .from("project_clickup_assignable_members")
+      .update({
+        is_assignable: false,
+        reason: "No longer returned by ClickUp Space/List member sync.",
+        last_synced_at: now,
+      })
+      .in("id", staleIds);
+  }
+
+  return rows.length;
 }
 
 export async function upsertClickupMembers(

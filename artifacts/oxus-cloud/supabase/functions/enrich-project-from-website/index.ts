@@ -1,5 +1,4 @@
 import { getServiceRoleSupabase } from "../_shared/clickup-auth.ts";
-import { getAuthenticatedUser } from "../_shared/slack-auth.ts";
 import { isServiceRoleRequest } from "../_shared/serviceRoleAuth.ts";
 import {
   getTriggerKeyEnvironment,
@@ -64,8 +63,13 @@ Deno.serve(async (req) => {
     let userId = body.user_id?.trim();
 
     if (!serviceRole) {
-      const auth = await getAuthenticatedUser(req.headers.get("Authorization"));
-      if (!auth) return err("Authentication required.", 401, "AUTH_REQUIRED");
+      let auth;
+      try {
+        auth = await assertInternalOxusUser(req);
+      } catch (e) {
+        if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
+        throw e;
+      }
       userId = auth.userId;
 
       // Project access check via the caller's RLS-scoped client.

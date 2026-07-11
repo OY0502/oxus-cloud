@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Link, useLocation, useSearch } from "wouter";
+import { Link } from "wouter";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -8,26 +8,37 @@ import { AlertCircle } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { BrandLogo } from "@/components/BrandLogo";
 import { isValidEmail } from "@/lib/validation";
+import {
+  INTERNAL_ACCESS_MESSAGE,
+  isAllowedInternalEmail,
+} from "@/lib/internalAuth";
 
 export function Login() {
-  const [, setLocation] = useLocation();
-  const search = useSearch();
   const { signInWithPassword } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const emailValid = isValidEmail(email);
+  const emailAllowed = emailValid && isAllowedInternalEmail(email);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    if (!emailValid) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+    if (!isAllowedInternalEmail(email)) {
+      setError(INTERNAL_ACCESS_MESSAGE);
+      return;
+    }
+
     setLoading(true);
     try {
       await signInWithPassword(email, password);
-      const params = new URLSearchParams(search);
-      const next = params.get("next");
-      setLocation(next ? decodeURIComponent(next) : "/");
+      // RedirectIfAuthenticated handles role-aware navigation after profile loads.
     } catch (err) {
       setError(
         err instanceof Error
@@ -40,9 +51,13 @@ export function Login() {
 
   return (
     <div className="min-h-screen flex bg-background">
-      <div className="hidden lg:flex lg:w-1/2 bg-sidebar relative overflow-hidden flex-col justify-between p-12">
-        <div className="absolute inset-0 bg-gradient-to-br from-logo-blue/20 to-transparent pointer-events-none" />
-        <div className="absolute top-0 right-0 p-32 opacity-20 pointer-events-none">
+      <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden flex-col justify-between p-12">
+        <div className="absolute inset-0 bg-gradient-to-br from-sidebar via-[hsl(215,42%,16%)] to-[hsl(213,28%,24%)]" />
+        <div className="absolute inset-0 bg-gradient-to-tr from-logo-blue/25 via-transparent to-periwinkle/15 pointer-events-none" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_75%_55%_at_15%_95%,hsl(var(--logo-blue)/0.2),transparent)] pointer-events-none" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_55%_45%_at_88%_12%,hsl(var(--periwinkle)/0.16),transparent)] pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-t from-sidebar/50 via-transparent to-transparent pointer-events-none" />
+        <div className="absolute top-0 right-0 p-32 opacity-25 pointer-events-none">
           <svg width="400" height="400" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
             <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="2" className="text-logo-blue" />
             <circle cx="50" cy="50" r="30" stroke="currentColor" strokeWidth="2" className="text-logo-blue" />
@@ -67,7 +82,7 @@ export function Login() {
 
           <div className="mb-8">
             <h2 className="text-3xl font-bold tracking-tight text-foreground">Welcome back</h2>
-            <p className="text-muted-foreground mt-2">Enter your credentials to access your workspace.</p>
+            <p className="text-muted-foreground mt-2">{INTERNAL_ACCESS_MESSAGE}</p>
           </div>
 
           {error && (
@@ -84,7 +99,7 @@ export function Login() {
                 id="email"
                 type="email"
                 autoComplete="email"
-                placeholder="alex@oxus.cloud"
+                placeholder="you@oxus.agency"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -92,6 +107,9 @@ export function Login() {
               />
               {email.length > 0 && !emailValid && (
                 <p className="text-xs text-destructive">Enter a valid email address.</p>
+              )}
+              {email.length > 0 && emailValid && !emailAllowed && (
+                <p className="text-xs text-destructive">{INTERNAL_ACCESS_MESSAGE}</p>
               )}
             </div>
             <div className="space-y-2">
@@ -109,7 +127,7 @@ export function Login() {
                 className="bg-background h-12"
               />
             </div>
-            <Button type="submit" className="w-full h-12 text-md bg-primary text-primary-foreground hover:bg-primary/90" disabled={loading || !emailValid}>
+            <Button type="submit" className="w-full h-12 text-md bg-primary text-primary-foreground hover:bg-primary/90" disabled={loading || !emailAllowed}>
               {loading ? "Signing in..." : "Sign In"}
             </Button>
           </form>

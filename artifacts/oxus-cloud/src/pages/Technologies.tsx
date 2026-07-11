@@ -125,6 +125,7 @@ export function Technologies() {
 
   const columns = [
     {
+      id: "technology",
       header: "Technology",
       cell: (item: Technology) => (
         <div className="flex items-center gap-3">
@@ -134,7 +135,9 @@ export function Technologies() {
       ),
     },
     {
+      id: "actions",
       header: "",
+      resizable: false,
       className: "w-[110px] text-right",
       cell: (item: Technology) => (
         <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
@@ -172,7 +175,7 @@ export function Technologies() {
       ) : filtered.length === 0 ? (
         <EmptyState icon={<Cpu />} title="No matches" description={`No technologies match "${searchTerm}".`} />
       ) : (
-        <DataTable data={filtered} columns={columns} onRowClick={(item) => openEdit(item)} />
+        <DataTable tableId="technologies" data={filtered} columns={columns} onRowClick={(item) => openEdit(item)} />
       )}
 
       <TechDialog open={dialogOpen} onOpenChange={setDialogOpen} initial={editing} />

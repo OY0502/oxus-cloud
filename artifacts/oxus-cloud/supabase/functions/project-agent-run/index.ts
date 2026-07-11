@@ -6,7 +6,11 @@ import {
 } from "../_shared/agent/triggerDev.ts";
 import { isLangfuseEnabled } from "../_shared/agent/langfuse.ts";
 import type { AgentMode } from "../_shared/agent/types.ts";
-import { getAuthenticatedUser } from "../_shared/slack-auth.ts";
+import {
+  assertInternalOxusUser,
+  InternalOxusAuthError,
+  internalOxusAuthErrorResponse,
+} from "../_shared/internalOxusAuth.ts";
 
 const TASK_ID = "project-agent-run";
 
@@ -32,8 +36,13 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return err("Method not allowed.", 405, "INVALID_INPUT");
 
   try {
-    const auth = await getAuthenticatedUser(req.headers.get("Authorization"));
-    if (!auth) return err("Authentication required.", 401, "AUTH_REQUIRED");
+    let auth;
+    try {
+      auth = await assertInternalOxusUser(req);
+    } catch (e) {
+      if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
+      throw e;
+    }
 
     let body: {
       project_id?: string;

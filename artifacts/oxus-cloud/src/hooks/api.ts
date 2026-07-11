@@ -17,6 +17,8 @@ import type {
   CalendarEventWithAttendees,
   Client,
   ClickupMember,
+  ProjectClickupAssignableMember,
+  ClickupAssignableMembersSyncDiagnostics,
   ClickupTaskLink,
   Comment,
   Contact,
@@ -108,6 +110,7 @@ export const qk = {
     ["project_timeline_events", projectId, filters ?? {}] as const,
   clickupTaskLinks: (projectId: string) => ["clickup_task_links", projectId] as const,
   clickupMembers: (teamId: string) => ["clickup_members", teamId] as const,
+  clickupAssignableMembers: (projectId: string) => ["clickup_assignable_members", projectId] as const,
   clickupListStatuses: (projectId: string) => ["clickup_list_statuses", projectId] as const,
   projectAiStatusReports: (projectId: string) => ["project_ai_status_reports", projectId] as const,
   projectPmActionItems: (projectId: string) => ["project_pm_action_items", projectId] as const,
@@ -132,6 +135,16 @@ export const qk = {
     ["slack_pipeline_diagnostics", projectId, linkId ?? "all"] as const,
   pmRecentSlackSignals: ["pm_recent_slack_signals"] as const,
   projectExecutionNotes: (projectId: string) => ["project_execution_notes", projectId] as const,
+  companyPeople: (companyId?: string) => ["company_people", companyId ?? "all"] as const,
+  teamMemberRates: (personId: string) => ["team_member_rates", personId] as const,
+  payouts: (personId?: string) => ["payouts", personId ?? "all"] as const,
+  expenses: ["expenses"] as const,
+  stripeConnection: ["stripe_connection"] as const,
+  companyMetrics: (companyId: string) => ["company_metrics", companyId] as const,
+  teamMemberSummary: (personId: string) => ["team_member_summary", personId] as const,
+  invoiceMetrics: ["invoice_metrics"] as const,
+  financeOverview: ["finance_overview"] as const,
+  invoice: (id: string) => ["invoices", id] as const,
 };
 
 function unwrap<T>(data: T | null, error: { message: string } | null): T {
@@ -422,9 +435,10 @@ export function useDeleteTechnology() {
 const QUOTE_SELECT =
   "*, organization:clients!organization_id(*), point_of_contact:contacts!point_of_contact_id(*), technology:technologies!technology_id(*), assigned_user:profiles!assigned_user_id(*)";
 
-export function useQuotes(): UseQueryResult<QuoteWithRefs[]> {
+export function useQuotes(options?: { enabled?: boolean }): UseQueryResult<QuoteWithRefs[]> {
   return useQuery({
     queryKey: qk.quotes,
+    enabled: options?.enabled ?? true,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("quotes")
@@ -630,9 +644,10 @@ function mapProject(p: any): ProjectWithAssignees {
   };
 }
 
-export function useProjects(): UseQueryResult<ProjectWithAssignees[]> {
+export function useProjects(options?: { enabled?: boolean }): UseQueryResult<ProjectWithAssignees[]> {
   return useQuery({
     queryKey: qk.projects,
+    enabled: options?.enabled ?? true,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("projects")
@@ -1716,9 +1731,10 @@ export function useDeleteProjectExecutionNote() {
 // --------------------------------------------------------------------------
 // Invoices (with line items)
 // --------------------------------------------------------------------------
-export function useInvoices(): UseQueryResult<InvoiceWithItems[]> {
+export function useInvoices(options?: { enabled?: boolean }): UseQueryResult<InvoiceWithItems[]> {
   return useQuery({
     queryKey: qk.invoices,
+    enabled: options?.enabled ?? true,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("invoices")
@@ -1883,9 +1899,13 @@ export function useCreateTransaction() {
 // --------------------------------------------------------------------------
 // Activities
 // --------------------------------------------------------------------------
-export function useActivities(limit = 8): UseQueryResult<Activity[]> {
+export function useActivities(
+  limit = 8,
+  options?: { enabled?: boolean },
+): UseQueryResult<Activity[]> {
   return useQuery({
     queryKey: [...qk.activities, limit],
+    enabled: options?.enabled ?? true,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("activities")
@@ -2721,6 +2741,24 @@ export function useClickupMembers(teamId: string | undefined): UseQueryResult<Cl
   });
 }
 
+export function useClickupAssignableMembers(
+  projectId: string | undefined,
+): UseQueryResult<ProjectClickupAssignableMember[]> {
+  return useQuery({
+    queryKey: qk.clickupAssignableMembers(projectId ?? ""),
+    enabled: !!projectId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("project_clickup_assignable_members")
+        .select("*")
+        .eq("project_id", projectId!)
+        .eq("is_assignable", true)
+        .order("name");
+      return unwrap<ProjectClickupAssignableMember[]>(data, error);
+    },
+  });
+}
+
 export interface ClickupListStatusOption {
   status: string;
   type?: string;
@@ -2774,7 +2812,15 @@ export function useSyncClickupMembers() {
   return useMutation({
     mutationFn: async (input: { project_id?: string; force?: boolean }) => {
       const token = await getAuthToken();
-      const { data, error } = await supabase.functions.invoke<{ members: ClickupMember[]; synced_count: number }>(
+      const { data, error } = await supabase.functions.invoke<{
+        members: ClickupMember[];
+        assignable_members: ProjectClickupAssignableMember[];
+        synced_count: number;
+        assignable_synced_count: number;
+        source: string;
+        assignable_source: string;
+        diagnostics: ClickupAssignableMembersSyncDiagnostics | null;
+      }>(
         "clickup-sync-members",
         { body: input, headers: { Authorization: `Bearer ${token}` } },
       );
@@ -2782,9 +2828,13 @@ export function useSyncClickupMembers() {
       if (!data) throw new Error("No member sync result returned.");
       return data;
     },
-    onSuccess: (data) => {
+    onSuccess: (data, input) => {
       const teamId = data.members[0]?.clickup_team_id;
       if (teamId) qc.invalidateQueries({ queryKey: qk.clickupMembers(teamId) });
+      if (input.project_id) {
+        qc.invalidateQueries({ queryKey: qk.clickupAssignableMembers(input.project_id) });
+        qc.invalidateQueries({ queryKey: qk.projectClickupLink(input.project_id) });
+      }
     },
   });
 }
@@ -2880,6 +2930,10 @@ export type ClickupDiagnostics = {
     created_at: string;
     processing_error: string | null;
   } | null;
+  workspaceMemberCount: number;
+  assignableMemberCount: number;
+  hiddenWorkspaceMemberCount: number;
+  assignableMembersSync: ClickupAssignableMembersSyncDiagnostics | null;
 };
 
 export function useClickupDiagnostics(projectId: string): UseQueryResult<ClickupDiagnostics> {
@@ -2887,6 +2941,40 @@ export function useClickupDiagnostics(projectId: string): UseQueryResult<Clickup
     queryKey: [...qk.projectClickupLink(projectId), "diagnostics"],
     enabled: !!projectId,
     queryFn: async () => {
+      const { data: link } = await supabase
+        .from("project_clickup_links")
+        .select("metadata, clickup_team_id")
+        .eq("project_id", projectId)
+        .maybeSingle();
+
+      const teamId = link?.clickup_team_id ?? null;
+      let workspaceMemberCount = 0;
+      if (teamId) {
+        const { count } = await supabase
+          .from("clickup_members")
+          .select("id", { count: "exact", head: true })
+          .eq("clickup_team_id", teamId)
+          .eq("is_active", true);
+        workspaceMemberCount = count ?? 0;
+      }
+
+      const { count: assignableMemberCount } = await supabase
+        .from("project_clickup_assignable_members")
+        .select("id", { count: "exact", head: true })
+        .eq("project_id", projectId)
+        .eq("is_assignable", true);
+
+      const metadata =
+        link?.metadata && typeof link.metadata === "object" && !Array.isArray(link.metadata)
+          ? (link.metadata as Record<string, unknown>)
+          : null;
+      const assignableMembersSync =
+        metadata?.assignable_members_sync &&
+        typeof metadata.assignable_members_sync === "object" &&
+        !Array.isArray(metadata.assignable_members_sync)
+          ? (metadata.assignable_members_sync as ClickupAssignableMembersSyncDiagnostics)
+          : null;
+
       const { data: taskLinks } = await supabase
         .from("clickup_task_links")
         .select("clickup_task_id")
@@ -2915,7 +3003,15 @@ export function useClickupDiagnostics(projectId: string): UseQueryResult<Clickup
         lastWebhookEvent = webhook;
       }
 
-      return { lastTimelineEvent: (lastTimelineEvent ?? null) as ProjectClickupTimelineEvent | null, lastWebhookEvent };
+      const assignableCount = assignableMemberCount ?? 0;
+      return {
+        lastTimelineEvent: (lastTimelineEvent ?? null) as ProjectClickupTimelineEvent | null,
+        lastWebhookEvent,
+        workspaceMemberCount,
+        assignableMemberCount: assignableCount,
+        hiddenWorkspaceMemberCount: Math.max(0, workspaceMemberCount - assignableCount),
+        assignableMembersSync,
+      };
     },
   });
 }
@@ -3431,3 +3527,481 @@ export function useGeneratePmDailyPlan() {
 
 // Remove unused import warning suppression
 export type { TaskPriority };
+
+// --------------------------------------------------------------------------
+// CRM — company_people relationships
+// --------------------------------------------------------------------------
+export function useCompanyPeople(companyId?: string) {
+  return useQuery({
+    queryKey: qk.companyPeople(companyId),
+    queryFn: async () => {
+      let query = supabase.from("company_people").select("*, contacts(*)");
+      if (companyId) query = query.eq("company_id", companyId);
+      const { data, error } = await query.order("created_at", { ascending: false });
+      if (error) throw new Error(error.message);
+      return (data ?? []) as Array<import("@/lib/types").CompanyPerson & { contacts: import("@/lib/types").Contact | null }>;
+    },
+  });
+}
+
+export function useCreateCompanyPerson() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      company_id: string;
+      person_id: string;
+      relationship_type: import("@/lib/types").CompanyPersonRelationship;
+      is_primary?: boolean;
+      notes?: string | null;
+    }) => {
+      const { data, error } = await supabase.from("company_people").insert(input).select().single();
+      if (error) throw new Error(error.message);
+      return data;
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: qk.companyPeople(vars.company_id) });
+      qc.invalidateQueries({ queryKey: qk.companyPeople() });
+      qc.invalidateQueries({ queryKey: qk.contacts });
+    },
+  });
+}
+
+// --------------------------------------------------------------------------
+// Team member rates
+// --------------------------------------------------------------------------
+export function useTeamMemberRates(personId: string) {
+  return useQuery({
+    queryKey: qk.teamMemberRates(personId),
+    enabled: !!personId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("team_member_rates")
+        .select("*")
+        .eq("person_id", personId)
+        .order("effective_from", { ascending: false });
+      if (error) throw new Error(error.message);
+      return (data ?? []) as import("@/lib/types").TeamMemberRate[];
+    },
+  });
+}
+
+export function useCreateTeamMemberRate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      person_id: string;
+      rate_type: import("@/lib/types").RateType;
+      amount: number;
+      currency?: string;
+      effective_from: string;
+      effective_to?: string | null;
+      notes?: string | null;
+    }) => {
+      const { data, error } = await supabase.from("team_member_rates").insert(input).select().single();
+      if (error) throw new Error(error.message);
+      return data;
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: qk.teamMemberRates(vars.person_id) });
+      qc.invalidateQueries({ queryKey: qk.teamMemberSummary(vars.person_id) });
+    },
+  });
+}
+
+// --------------------------------------------------------------------------
+// Payouts
+// --------------------------------------------------------------------------
+export function usePayouts(personId?: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: qk.payouts(personId),
+    enabled: options?.enabled ?? true,
+    queryFn: async () => {
+      let query = supabase.from("payouts").select("*").order("payment_date", { ascending: false });
+      if (personId) query = query.eq("person_id", personId);
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      return (data ?? []) as import("@/lib/types").Payout[];
+    },
+  });
+}
+
+export function useCreatePayout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: Omit<import("@/lib/types").Payout, "id" | "created_at" | "updated_at" | "metadata"> & { metadata?: Record<string, unknown> }) => {
+      const { data, error } = await supabase.from("payouts").insert(input).select().single();
+      if (error) throw new Error(error.message);
+      return data;
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: qk.payouts(vars.person_id) });
+      qc.invalidateQueries({ queryKey: qk.payouts() });
+      qc.invalidateQueries({ queryKey: qk.financeOverview });
+      qc.invalidateQueries({ queryKey: qk.teamMemberSummary(vars.person_id) });
+    },
+  });
+}
+
+// --------------------------------------------------------------------------
+// Company financial metrics (computed client-side from invoices/projects)
+// --------------------------------------------------------------------------
+export function useCompanyMetrics(companyId: string) {
+  const invoicesQuery = useInvoices({ enabled: !!companyId });
+  const projectsQuery = useProjects();
+
+  return useQuery({
+    queryKey: qk.companyMetrics(companyId),
+    enabled: !!companyId,
+    queryFn: async () => {
+      const invoices = (invoicesQuery.data ?? []).filter((i) => i.client_id === companyId);
+      const projects = (projectsQuery.data ?? []).filter(
+        (p) => p.organization_id === companyId || p.client_id === companyId,
+      );
+
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth();
+
+      const paid = invoices.filter((i) => i.status === "paid");
+      const open = invoices.filter((i) => ["sent", "viewed", "partial", "overdue"].includes(i.status));
+
+      const lifetime = paid.reduce((s, i) => s + Number(i.total || i.amount), 0);
+      const ytd = paid
+        .filter((i) => new Date(i.paid_date ?? i.issue_date).getFullYear() === year)
+        .reduce((s, i) => s + Number(i.total || i.amount), 0);
+      const mtd = paid
+        .filter((i) => {
+          const d = new Date(i.paid_date ?? i.issue_date);
+          return d.getFullYear() === year && d.getMonth() === month;
+        })
+        .reduce((s, i) => s + Number(i.total || i.amount), 0);
+      const outstanding = open.reduce((s, i) => s + Math.max(Number(i.amount_due ?? i.amount) - Number(i.amount_paid), 0), 0);
+      const overdue = invoices
+        .filter((i) => i.status === "overdue")
+        .reduce((s, i) => s + Math.max(Number(i.amount_due ?? i.amount) - Number(i.amount_paid), 0), 0);
+
+      const activeProjects = projects.filter((p) => p.status === "in-progress" || p.status === "planning").length;
+      const budgets = projects.map((p) => Number(p.budget)).filter((b) => b > 0);
+      const avgProjectValue = budgets.length ? budgets.reduce((a, b) => a + b, 0) / budgets.length : 0;
+
+      return {
+        lifetime_revenue: lifetime,
+        revenue_ytd: ytd,
+        revenue_mtd: mtd,
+        outstanding,
+        overdue,
+        active_projects: activeProjects,
+        avg_project_value: avgProjectValue,
+      } satisfies import("@/lib/types").CompanyFinancialMetrics;
+    },
+  });
+}
+
+export function useTeamMemberSummary(personId: string) {
+  const ratesQuery = useTeamMemberRates(personId);
+  const payoutsQuery = usePayouts(personId);
+  const projectsQuery = useProjects();
+  const companyPeopleQuery = useCompanyPeople();
+
+  return useQuery({
+    queryKey: qk.teamMemberSummary(personId),
+    enabled: !!personId,
+    queryFn: async () => {
+      const rates = ratesQuery.data ?? [];
+      const payouts = payoutsQuery.data ?? [];
+      const today = new Date().toISOString().slice(0, 10);
+      const currentRate = rates.find((r) => r.effective_from <= today && (!r.effective_to || r.effective_to >= today)) ?? rates[0] ?? null;
+
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      const paid = payouts.filter((p) => p.status === "paid");
+      const paidMtd = paid
+        .filter((p) => p.payment_date && new Date(p.payment_date).getMonth() === month && new Date(p.payment_date).getFullYear() === year)
+        .reduce((s, p) => s + Number(p.amount), 0);
+      const paidYtd = paid
+        .filter((p) => p.payment_date && new Date(p.payment_date).getFullYear() === year)
+        .reduce((s, p) => s + Number(p.amount), 0);
+      const pending = payouts.filter((p) => p.status === "pending").reduce((s, p) => s + Number(p.amount), 0);
+      const lastPayment = paid.sort((a, b) => (b.payment_date ?? "").localeCompare(a.payment_date ?? ""))[0]?.payment_date ?? null;
+
+      const rels = companyPeopleQuery.data ?? [];
+      const isTeam = rels.some((r) => r.person_id === personId && ["employee", "contractor"].includes(r.relationship_type));
+      const projects = projectsQuery.data ?? [];
+      const activeProjects = isTeam ? projects.filter((p) => p.status === "in-progress").length : 0;
+
+      return {
+        paid_mtd: paidMtd,
+        paid_ytd: paidYtd,
+        pending,
+        last_payment_date: lastPayment,
+        current_rate: currentRate,
+        active_projects: activeProjects,
+      } satisfies import("@/lib/types").TeamMemberFinancialSummary;
+    },
+  });
+}
+
+// --------------------------------------------------------------------------
+// Stripe integration
+// --------------------------------------------------------------------------
+export function useStripeConnectionStatus(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: qk.stripeConnection,
+    enabled: options?.enabled ?? true,
+    queryFn: async () => {
+      const token = await getAuthToken();
+      const { data, error } = await supabase.functions.invoke<import("@/lib/types").StripeConnectionStatus>(
+        "stripe-connection-status",
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (error) await throwEdgeFunctionError(error);
+      return data ?? { configured: false, connected: false, account: null, last_successful_sync_at: null, last_sync_error: null, webhook_last_received_at: null };
+    },
+  });
+}
+
+export function useStripeSyncInvoices() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input?: { force?: boolean; created_after?: string }) => {
+      const token = await getAuthToken();
+      const { data, error } = await supabase.functions.invoke<import("@/lib/types").StripeSyncResult>(
+        "stripe-sync-invoices",
+        { body: input ?? {}, headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (error) await throwEdgeFunctionError(error);
+      if (!data) throw new Error("No sync result returned.");
+      return data;
+    },
+    onSuccess: () => {
+      invalidateInvoiceQueries(qc);
+    },
+  });
+}
+
+export function useStripeCreateInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      company_id: string;
+      project_id?: string;
+      currency: string;
+      due_date?: string;
+      memo?: string;
+      line_items: Array<{ description: string; quantity: number; unit_amount: number }>;
+      action: "save_draft" | "finalize" | "finalize_and_send";
+    }) => {
+      const token = await getAuthToken();
+      const { data, error } = await supabase.functions.invoke("stripe-create-invoice", {
+        body: input,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (error) await throwEdgeFunctionError(error);
+      return data as { ok: boolean; invoice: Invoice | null; hosted_invoice_url: string | null };
+    },
+    onSuccess: () => invalidateInvoiceQueries(qc),
+  });
+}
+
+export function useInvoiceMetrics() {
+  const invoicesQuery = useInvoices();
+  return useQuery({
+    queryKey: qk.invoiceMetrics,
+    queryFn: async () => {
+      const invoices = invoicesQuery.data ?? [];
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      const open = invoices.filter((i) => ["sent", "viewed", "partial", "overdue"].includes(i.status));
+      const outstanding = open.reduce((s, i) => s + Math.max(Number(i.amount_due ?? i.amount) - Number(i.amount_paid), 0), 0);
+      const overdue = invoices.filter((i) => i.status === "overdue").reduce((s, i) => s + Math.max(Number(i.amount_due ?? i.amount) - Number(i.amount_paid), 0), 0);
+      const paidThisMonth = invoices
+        .filter((i) => i.status === "paid")
+        .filter((i) => {
+          const d = new Date(i.paid_date ?? i.issue_date);
+          return d.getMonth() === month && d.getFullYear() === year;
+        })
+        .reduce((s, i) => s + Number(i.total || i.amount), 0);
+      const drafts = invoices.filter((i) => i.status === "draft").length;
+      const invoicedYtd = invoices
+        .filter((i) => new Date(i.issue_date).getFullYear() === year)
+        .reduce((s, i) => s + Number(i.total || i.amount), 0);
+      return { outstanding, overdue, paidThisMonth, drafts, invoicedYtd };
+    },
+    enabled: invoicesQuery.isSuccess,
+  });
+}
+
+export function useFinanceOverview() {
+  const invoicesQuery = useInvoices();
+  const payoutsQuery = usePayouts();
+  const projectsQuery = useProjects();
+
+  return useQuery({
+    queryKey: qk.financeOverview,
+    queryFn: async () => {
+      const invoices = invoicesQuery.data ?? [];
+      const payouts = payoutsQuery.data ?? [];
+      const projects = projectsQuery.data ?? [];
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth();
+
+      const revenueMtd = invoices
+        .filter((i) => i.status === "paid")
+        .filter((i) => {
+          const d = new Date(i.paid_date ?? i.issue_date);
+          return d.getMonth() === month && d.getFullYear() === year;
+        })
+        .reduce((s, i) => s + Number(i.total || i.amount), 0);
+
+      const revenueYtd = invoices
+        .filter((i) => i.status === "paid" && new Date(i.paid_date ?? i.issue_date).getFullYear() === year)
+        .reduce((s, i) => s + Number(i.total || i.amount), 0);
+
+      const receivables = invoices
+        .filter((i) => ["sent", "viewed", "partial", "overdue"].includes(i.status))
+        .reduce((s, i) => s + Math.max(Number(i.amount_due ?? i.amount) - Number(i.amount_paid), 0), 0);
+
+      const overdueReceivables = invoices
+        .filter((i) => i.status === "overdue")
+        .reduce((s, i) => s + Math.max(Number(i.amount_due ?? i.amount) - Number(i.amount_paid), 0), 0);
+
+      const payoutsMtd = payouts
+        .filter((p) => p.status === "paid" && p.payment_date)
+        .filter((p) => {
+          const d = new Date(p.payment_date!);
+          return d.getMonth() === month && d.getFullYear() === year;
+        })
+        .reduce((s, p) => s + Number(p.amount), 0);
+
+      const payoutsYtd = payouts
+        .filter((p) => p.status === "paid" && p.payment_date && new Date(p.payment_date).getFullYear() === year)
+        .reduce((s, p) => s + Number(p.amount), 0);
+
+      const revenueByClient = new Map<string, number>();
+      for (const inv of invoices.filter((i) => i.status === "paid")) {
+        const key = inv.client_name ?? "Unknown";
+        revenueByClient.set(key, (revenueByClient.get(key) ?? 0) + Number(inv.total || inv.amount));
+      }
+
+      const hasCostData = payouts.length > 0;
+      const grossMargin = hasCostData ? revenueYtd - payoutsYtd : null;
+
+      return {
+        revenue_mtd: revenueMtd,
+        revenue_ytd: revenueYtd,
+        receivables,
+        overdue_receivables: overdueReceivables,
+        payouts_mtd: payoutsMtd,
+        payouts_ytd: payoutsYtd,
+        gross_margin: grossMargin,
+        has_cost_data: hasCostData,
+        revenue_by_client: Array.from(revenueByClient.entries()).map(([name, amount]) => ({ name, amount })),
+        active_projects: projects.filter((p) => p.status === "in-progress").length,
+      };
+    },
+    enabled: invoicesQuery.isSuccess && payoutsQuery.isSuccess && projectsQuery.isSuccess,
+  });
+}
+
+export function useExpenses() {
+  return useQuery({
+    queryKey: qk.expenses,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("expenses").select("*").order("expense_date", { ascending: false });
+      if (error) throw new Error(error.message);
+      return (data ?? []) as import("@/lib/types").Expense[];
+    },
+  });
+}
+
+/** Companies alias */
+export const useCompanies = useClients;
+export const usePeople = useContacts;
+
+function invalidateInvoiceQueries(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: qk.invoices });
+  qc.invalidateQueries({ queryKey: qk.invoiceMetrics });
+  qc.invalidateQueries({ queryKey: qk.financeOverview });
+  qc.invalidateQueries({ queryKey: qk.stripeConnection });
+}
+
+export function useStripeInvoiceAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { invoice_id: string; action: import("@/lib/types").StripeInvoiceActionType }) => {
+      const token = await getAuthToken();
+      const { data, error } = await supabase.functions.invoke<{
+        ok: boolean;
+        invoice: InvoiceWithItems;
+        already_done?: boolean;
+        message?: string;
+        error?: string;
+      }>("stripe-invoice-action", {
+        body: input,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (error) await throwEdgeFunctionError(error);
+      if (data && "error" in data && data.error) throw new Error(data.error);
+      return data!;
+    },
+    onSuccess: () => invalidateInvoiceQueries(qc),
+  });
+}
+
+export function useUpdateInvoiceProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { invoice_id: string; project_id: string | null }) => {
+      const token = await getAuthToken();
+      const { data, error } = await supabase.functions.invoke<{
+        ok: boolean;
+        invoice: InvoiceWithItems;
+        stripe_metadata_warning?: string;
+      }>("stripe-invoice-action", {
+        body: input,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (error) await throwEdgeFunctionError(error);
+      return data!;
+    },
+    onSuccess: () => {
+      invalidateInvoiceQueries(qc);
+      qc.invalidateQueries({ queryKey: qk.projects });
+    },
+  });
+}
+
+export function useDismissInvoiceAttention() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { invoice_id: string; reason?: string | null }) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Authentication required.");
+      const { error } = await supabase.from("invoices").update({
+        attention_dismissed_at: new Date().toISOString(),
+        attention_dismissed_by: user.id,
+        attention_dismiss_reason: input.reason ?? null,
+      }).eq("id", input.invoice_id);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => invalidateInvoiceQueries(qc),
+  });
+}
+
+export function useRestoreInvoiceAttention() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (invoice_id: string) => {
+      const { error } = await supabase.from("invoices").update({
+        attention_dismissed_at: null,
+        attention_dismissed_by: null,
+        attention_dismiss_reason: null,
+      }).eq("id", invoice_id);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => invalidateInvoiceQueries(qc),
+  });
+}

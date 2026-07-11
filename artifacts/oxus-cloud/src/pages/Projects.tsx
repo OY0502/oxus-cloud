@@ -188,6 +188,7 @@ export function Projects() {
 
   const columns = [
     {
+      id: "thumb",
       header: "",
       className: "w-[52px]",
       cell: (item: ProjectWithAssignees) => (
@@ -195,6 +196,7 @@ export function Projects() {
       ),
     },
     {
+      id: "name",
       header: "Project Name",
       className: "min-w-[200px]",
       cell: (item: ProjectWithAssignees) => (
@@ -207,18 +209,21 @@ export function Projects() {
         </div>
       ),
     },
-    { header: "Status", cell: (item: ProjectWithAssignees) => <StatusBadge status={item.status.replace("-", " ")} /> },
+    { id: "status", header: "Status", cell: (item: ProjectWithAssignees) => <StatusBadge status={item.status.replace("-", " ")} /> },
     {
+      id: "priority",
       header: "Priority",
       cell: (item: ProjectWithAssignees) => (
         <Badge variant={item.priority === "high" ? "destructive" : item.priority === "medium" ? "secondary" : "outline"} className="capitalize">{item.priority}</Badge>
       ),
     },
     {
+      id: "assignees",
       header: "Assignees",
       cell: (item: ProjectWithAssignees) => (item.team_contacts.length ? <AvatarStack urls={avatarUrls(item)} fallbacks={avatarInitials(item)} size="sm" /> : <span className="text-xs text-muted-foreground">Unassigned</span>),
     },
     {
+      id: "timeline",
       header: "Timeline",
       className: "w-[250px]",
       cell: (item: ProjectWithAssignees) => (
@@ -232,8 +237,8 @@ export function Projects() {
         </div>
       ),
     },
-    { header: "Budget", cell: (item: ProjectWithAssignees) => <span className="font-medium">{formatEUR(item.budget)}</span> },
-    { header: "Health", cell: (item: ProjectWithAssignees) => <ProjectHealthBadge health={item.health} /> },
+    { id: "budget", header: "Budget", cell: (item: ProjectWithAssignees) => <span className="font-medium">{formatEUR(item.budget)}</span> },
+    { id: "health", header: "Health", cell: (item: ProjectWithAssignees) => <ProjectHealthBadge health={item.health} /> },
   ];
 
   const handleDragOver = (event: any) => {
@@ -303,7 +308,7 @@ export function Projects() {
         ) : (
           <>
             <TabsContent value="table" className="m-0 border-none p-0 outline-none">
-              <DataTable data={projects} columns={columns} onRowClick={openProject} />
+              <DataTable tableId="projects-list" data={projects} columns={columns} onRowClick={openProject} />
             </TabsContent>
 
             <TabsContent value="board" className="m-0 border-none p-0 outline-none">

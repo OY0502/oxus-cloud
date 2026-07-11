@@ -1,5 +1,10 @@
 import { getServiceRoleSupabase } from "../_shared/clickup-auth.ts";
-import { getAuthenticatedUser, requireSuperAdmin } from "../_shared/slack-auth.ts";
+import { requireSuperAdmin } from "../_shared/slack-auth.ts";
+import {
+  assertInternalOxusUser,
+  InternalOxusAuthError,
+  internalOxusAuthErrorResponse,
+} from "../_shared/internalOxusAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -40,8 +45,13 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return err("Method not allowed.", 405, "INVALID_INPUT");
 
   try {
-    const auth = await getAuthenticatedUser(req.headers.get("Authorization"));
-    if (!auth) return err("Authentication required.", 401, "AUTH_REQUIRED");
+    let auth;
+    try {
+      auth = await assertInternalOxusUser(req);
+    } catch (e) {
+      if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
+      throw e;
+    }
 
     const isAdmin = await requireSuperAdmin(auth.userId);
     if (!isAdmin) return err("Only super admins can connect the Slack workspace.", 403, "FORBIDDEN");

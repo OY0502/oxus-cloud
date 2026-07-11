@@ -17,30 +17,21 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, Check, Link2, ShieldAlert, Slack, Unlink, X } from "lucide-react";
+import { AlertCircle, Check, Link2, ShieldAlert, Slack, Unlink, X, CreditCard, RefreshCw } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   useClickupMyConnection,
   useDeleteOwnAccount,
   useDisconnectClickup,
   useDisconnectSlack,
-  useProfiles,
-  useSetProfileRole,
   useSlackWorkspaces,
   useStartClickupOAuth,
   useStartSlackOAuth,
   useUpdateProfile,
+  useStripeConnectionStatus,
+  useStripeSyncInvoices,
 } from "@/hooks/api";
 import { useClickupOAuthHandler } from "@/hooks/useClickupOAuthHandler";
-import { normalizeProfileRole, roleLabel } from "@/lib/roles";
-import type { ProfileRole } from "@/lib/types";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import {
   passwordRules,
@@ -50,10 +41,8 @@ import {
 import { cn } from "@/lib/utils";
 
 export function Settings() {
-  const { user, updatePassword, signOut, isSuperAdmin, refreshProfile } = useAuth();
-  const { data: profiles = [] } = useProfiles();
+  const { user, updatePassword, signOut, isSuperAdmin } = useAuth();
   const updateProfile = useUpdateProfile();
-  const setProfileRole = useSetProfileRole();
   const deleteAccount = useDeleteOwnAccount();
   const { data: clickupStatus, refetch: refetchClickup } = useClickupMyConnection();
   const startClickupOAuth = useStartClickupOAuth();
@@ -61,6 +50,8 @@ export function Settings() {
   const { data: slackWorkspaces = [], refetch: refetchSlack } = useSlackWorkspaces();
   const startSlackOAuth = useStartSlackOAuth();
   const disconnectSlack = useDisconnectSlack();
+  const { data: stripeStatus, refetch: refetchStripe } = useStripeConnectionStatus({ enabled: isSuperAdmin });
+  const syncStripe = useStripeSyncInvoices();
   const { startConnect } = useClickupOAuthHandler();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -76,7 +67,6 @@ export function Settings() {
 
   const activeSlackWorkspace = slackWorkspaces.find((w) => w.status === "active") ?? null;
 
-  const myProfile = profiles.find((p) => p.id === user?.id);
   const [fullName, setFullName] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
 
@@ -131,22 +121,6 @@ export function Settings() {
     }
   };
 
-  const handleRoleChange = async (userId: string, role: ProfileRole) => {
-    try {
-      await setProfileRole.mutateAsync({ user_id: userId, role });
-      if (userId === user?.id) await refreshProfile();
-      toast({ title: "Role updated", description: `${roleLabel(role)} role saved.` });
-    } catch (err) {
-      toast({
-        title: "Could not update role",
-        description: err instanceof Error ? err.message : "Please try again.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const superAdminCount = profiles.filter((p) => normalizeProfileRole(p.role) === "super_admin").length;
-
   const handleDisconnectClickup = async () => {
     try {
       await disconnectClickup.mutateAsync();
@@ -190,11 +164,10 @@ export function Settings() {
 
   useEffect(() => {
     const name =
-      myProfile?.full_name?.trim() ||
       (user?.user_metadata?.full_name as string | undefined)?.trim() ||
       "";
     setFullName(name);
-  }, [myProfile, user]);
+  }, [user]);
 
   const strength = useMemo(() => getPasswordStrength(newPassword), [newPassword]);
   const passwordValid = isPasswordValid(newPassword);
@@ -530,54 +503,74 @@ export function Settings() {
       </Card>
 
       {isSuperAdmin && (
-        <Card>
+        <Card id="stripe-integration">
           <CardHeader>
-            <CardTitle>User roles</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <CreditCard className="h-5 w-5" />
+              Stripe
+            </CardTitle>
             <CardDescription>
-              Manage workspace access. Role changes are applied securely on the server.
+              Server-side Stripe integration for invoicing and payment sync. Secrets are never exposed to the browser.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
-            {profiles.map((profile) => {
-              const role = normalizeProfileRole(profile.role);
-              const isSelf = profile.id === user?.id;
-              const isLastSuperAdmin = role === "super_admin" && superAdminCount <= 1;
-              return (
-                <div
-                  key={profile.id}
-                  className="flex flex-col gap-3 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="min-w-0">
-                    <p className="font-medium truncate">{profile.full_name ?? profile.email ?? "User"}</p>
-                    <p className="text-xs text-muted-foreground truncate">{profile.email ?? "—"}</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Joined {new Date(profile.created_at).toLocaleDateString()}
-                      {isSelf ? " · you" : ""}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Select
-                      value={role}
-                      disabled={setProfileRole.isPending || isLastSuperAdmin}
-                      onValueChange={(value) => void handleRoleChange(profile.id, value as ProfileRole)}
-                    >
-                      <SelectTrigger className="w-[160px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="pm">PM</SelectItem>
-                        <SelectItem value="super_admin">Super admin</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+          <CardContent className="space-y-4 text-sm">
+            {!stripeStatus?.configured ? (
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  Stripe is not configured. Set <code className="text-xs">STRIPE_SECRET_KEY</code> and{" "}
+                  <code className="text-xs">STRIPE_WEBHOOK_SECRET</code> in Supabase Edge Function secrets.
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <p className="text-muted-foreground text-xs">Account</p>
+                  <p className="font-medium">{stripeStatus.account?.business_name ?? stripeStatus.account?.email ?? "Connected"}</p>
                 </div>
-              );
-            })}
-            {superAdminCount <= 1 && (
-              <p className="text-xs text-muted-foreground">
-                The last super admin cannot be demoted. Promote another user first.
-              </p>
+                <div>
+                  <p className="text-muted-foreground text-xs">Default currency</p>
+                  <p>{stripeStatus.account?.default_currency?.toUpperCase() ?? "—"}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Last sync</p>
+                  <p>{stripeStatus.last_successful_sync_at ? new Date(stripeStatus.last_successful_sync_at).toLocaleString() : "Never"}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Webhook</p>
+                  <p>{stripeStatus.webhook_configured ? "Configured" : "Secret missing"}</p>
+                  {stripeStatus.webhook_last_received_at && (
+                    <p className="text-xs text-muted-foreground">Last event: {new Date(stripeStatus.webhook_last_received_at).toLocaleString()}</p>
+                  )}
+                </div>
+              </div>
             )}
+            {stripeStatus?.last_sync_error && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{stripeStatus.last_sync_error}</AlertDescription>
+              </Alert>
+            )}
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                disabled={!stripeStatus?.configured || syncStripe.isPending}
+                onClick={() => {
+                  syncStripe.mutate(undefined, {
+                    onSuccess: (r) => {
+                      void refetchStripe();
+                      toast({ title: "Sync complete", description: `${r.imported} imported, ${r.updated} updated.` });
+                    },
+                    onError: (e) => toast({ title: "Sync failed", description: e.message, variant: "destructive" }),
+                  });
+                }}
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${syncStripe.isPending ? "animate-spin" : ""}`} />
+                Sync latest
+              </Button>
+              <p className="text-xs text-muted-foreground">Pull the latest invoice and payment changes from Stripe.</p>
+              <Button variant="ghost" onClick={() => void refetchStripe()}>Refresh status</Button>
+            </div>
           </CardContent>
         </Card>
       )}

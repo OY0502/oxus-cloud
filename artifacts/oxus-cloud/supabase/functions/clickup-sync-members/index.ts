@@ -1,13 +1,20 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import {
+  fetchClickupAssignableMembersForTarget,
   fetchClickupMembers,
   upsertClickupMembers,
+  upsertProjectClickupAssignableMembers,
 } from "../_shared/clickup.ts";
 import {
   ClickupAuthError,
   clickupAuthErrorResponse,
   resolveUserClickupForProject,
 } from "../_shared/clickup-auth.ts";
+import {
+  assertInternalOxusAuthUser,
+  InternalOxusAuthError,
+  internalOxusAuthErrorResponse,
+} from "../_shared/internalOxusAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -64,33 +71,123 @@ Deno.serve(async (req) => {
 
     const token = authHeader.replace("Bearer ", "");
     const { data: auth, error: authErr } = await supabase.auth.getUser(token);
-    if (authErr || !auth.user) return err("Authentication required.", 401, "AUTH_REQUIRED");
+    let userId: string;
+    try {
+      userId = await assertInternalOxusAuthUser(auth.user);
+    } catch (e) {
+      if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
+      throw e;
+    }
 
     let clickup;
     try {
-      ({ clickup } = await resolveUserClickupForProject(auth.user.id, body.project_id));
+      ({ clickup } = await resolveUserClickupForProject(userId, body.project_id));
     } catch (e) {
       if (e instanceof ClickupAuthError) return clickupAuthErrorResponse(e, corsHeaders);
       throw e;
     }
 
-    let listId: string | null = null;
+    let projectLink: {
+      clickup_list_id: string | null;
+      clickup_team_id: string;
+      clickup_space_id: string | null;
+      clickup_folder_id: string | null;
+      space_name: string | null;
+      folder_name: string | null;
+      list_name: string | null;
+      metadata: Record<string, unknown> | null;
+    } | null = null;
+
     if (body.project_id) {
       const { data: link } = await supabase
         .from("project_clickup_links")
-        .select("clickup_list_id, clickup_team_id")
+        .select(
+          "clickup_list_id, clickup_team_id, clickup_space_id, clickup_folder_id, space_name, folder_name, list_name, metadata",
+        )
         .eq("project_id", body.project_id)
         .maybeSingle();
-      listId = link?.clickup_list_id ?? null;
+      projectLink = link ?? null;
     }
 
-    const { members: fetched, source } = await fetchClickupMembers(clickup, listId);
-    if (fetched.length === 0) {
-      return err("No ClickUp members were returned from the API.", 502, "CLICKUP_ERROR", `source=${source}`);
+    const { members: workspaceMembers, source: workspaceSource } = await fetchClickupMembers(clickup);
+    if (workspaceMembers.length === 0) {
+      return err("No ClickUp workspace members were returned from the API.", 502, "CLICKUP_ERROR", `source=${workspaceSource}`);
     }
 
-    const deactivateMissing = body.force === true && source !== "list";
-    const syncedCount = await upsertClickupMembers(supabase, clickup.teamId, fetched, deactivateMissing);
+    const workspaceSyncedCount = await upsertClickupMembers(
+      supabase,
+      clickup.teamId,
+      workspaceMembers,
+      body.force === true,
+    );
+
+    let assignableSyncedCount = 0;
+    let assignableSource = "fallback";
+    let assignableConfidence: "high" | "medium" | "low" = "low";
+    let assignableMembers: Array<Record<string, unknown>> = [];
+
+    if (body.project_id && projectLink) {
+      const assignableResult = await fetchClickupAssignableMembersForTarget(clickup, {
+        listId: projectLink.clickup_list_id,
+        spaceId: projectLink.clickup_space_id,
+        folderId: projectLink.clickup_folder_id,
+      });
+      assignableSource = assignableResult.source;
+      assignableConfidence = assignableResult.confidence;
+
+      assignableSyncedCount = await upsertProjectClickupAssignableMembers(
+        supabase,
+        body.project_id,
+        {
+          teamId: clickup.teamId,
+          spaceId: projectLink.clickup_space_id,
+          folderId: projectLink.clickup_folder_id,
+          listId: projectLink.clickup_list_id,
+        },
+        assignableResult,
+      );
+
+      const { data: assignableRows, error: assignableLoadErr } = await supabase
+        .from("project_clickup_assignable_members")
+        .select("*")
+        .eq("project_id", body.project_id)
+        .eq("is_assignable", true)
+        .order("name");
+      if (assignableLoadErr) {
+        return err("Assignable members synced but failed to load cache.", 500, "DB_ERROR", assignableLoadErr.message);
+      }
+      assignableMembers = assignableRows ?? [];
+
+      const diagnostics = {
+        workspace_member_count: workspaceMembers.length,
+        assignable_member_count: assignableMembers.length,
+        hidden_workspace_member_count: Math.max(0, workspaceMembers.length - assignableMembers.length),
+        sync_source: assignableSource,
+        confidence: assignableConfidence,
+        linked_space_id: projectLink.clickup_space_id,
+        linked_space_name: projectLink.space_name,
+        linked_folder_id: projectLink.clickup_folder_id,
+        linked_folder_name: projectLink.folder_name,
+        linked_list_id: projectLink.clickup_list_id,
+        linked_list_name: projectLink.list_name,
+        last_synced_at: new Date().toISOString(),
+      };
+
+      const existingMetadata =
+        projectLink.metadata && typeof projectLink.metadata === "object" && !Array.isArray(projectLink.metadata)
+          ? projectLink.metadata
+          : {};
+
+      await supabase
+        .from("project_clickup_links")
+        .update({
+          metadata: {
+            ...existingMetadata,
+            assignable_members_sync: diagnostics,
+          },
+        })
+        .eq("project_id", body.project_id);
+    }
 
     const { data: cached, error: loadErr } = await supabase
       .from("clickup_members")
@@ -98,12 +195,30 @@ Deno.serve(async (req) => {
       .eq("clickup_team_id", clickup.teamId)
       .eq("is_active", true)
       .order("username");
-    if (loadErr) return err("Members synced but failed to load cache.", 500, "DB_ERROR", loadErr.message);
+    if (loadErr) return err("Members synced but failed to load workspace cache.", 500, "DB_ERROR", loadErr.message);
 
     return json({
       members: cached ?? [],
-      synced_count: syncedCount,
-      source,
+      assignable_members: assignableMembers,
+      synced_count: workspaceSyncedCount,
+      assignable_synced_count: assignableSyncedCount,
+      source: workspaceSource,
+      assignable_source: assignableSource,
+      diagnostics: body.project_id && projectLink
+        ? {
+            workspace_member_count: workspaceMembers.length,
+            assignable_member_count: assignableMembers.length,
+            hidden_workspace_member_count: Math.max(0, workspaceMembers.length - assignableMembers.length),
+            sync_source: assignableSource,
+            confidence: assignableConfidence,
+            linked_space_id: projectLink.clickup_space_id,
+            linked_space_name: projectLink.space_name,
+            linked_folder_id: projectLink.clickup_folder_id,
+            linked_folder_name: projectLink.folder_name,
+            linked_list_id: projectLink.clickup_list_id,
+            linked_list_name: projectLink.list_name,
+          }
+        : null,
     });
   } catch (e) {
     console.error("[UNEXPECTED_ERROR]", (e as Error).message);

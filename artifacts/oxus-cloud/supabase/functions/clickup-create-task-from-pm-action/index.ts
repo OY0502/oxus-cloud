@@ -8,13 +8,21 @@ import {
   minutesToClickupTimeEstimate,
   oxusPriorityToClickup,
   pickDefaultStatus,
-  validateCachedAssigneeIds,
+  ClickupAssigneeValidationError,
+  CLICKUP_ASSIGNEE_ACCESS_ERROR,
+  isClickupAssigneeApiError,
+  validateProjectAssignableAssigneeIds,
 } from "../_shared/clickup.ts";
 import {
   ClickupAuthError,
   clickupAuthErrorResponse,
   resolveUserClickupForProject,
 } from "../_shared/clickup-auth.ts";
+import {
+  assertInternalOxusAuthUser,
+  InternalOxusAuthError,
+  internalOxusAuthErrorResponse,
+} from "../_shared/internalOxusAuth.ts";
 import { buildPmActionClickupMarkdown } from "../_shared/pmActionClickupDescription.ts";
 
 const corsHeaders = {
@@ -90,7 +98,13 @@ Deno.serve(async (req) => {
 
     const token = authHeader.replace("Bearer ", "");
     const { data: auth, error: authErr } = await supabase.auth.getUser(token);
-    if (authErr || !auth.user) return err("Authentication required.", 401, "AUTH_REQUIRED");
+    let userId: string;
+    try {
+      userId = await assertInternalOxusAuthUser(auth.user);
+    } catch (e) {
+      if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
+      throw e;
+    }
 
     const { data: pmAction, error: actionErr } = await supabase
       .from("project_pm_action_items")
@@ -110,7 +124,7 @@ Deno.serve(async (req) => {
 
     let clickup;
     try {
-      ({ clickup } = await resolveUserClickupForProject(auth.user.id, projectId));
+      ({ clickup } = await resolveUserClickupForProject(userId, projectId));
     } catch (e) {
       if (e instanceof ClickupAuthError) return clickupAuthErrorResponse(e, corsHeaders);
       throw e;
@@ -175,7 +189,15 @@ Deno.serve(async (req) => {
     const requestedStatus = typeof body.status === "string" ? body.status.trim() : "";
     const timeEstimateMs = minutesToClickupTimeEstimate(body.time_estimate_minutes);
     const warnings: string[] = [];
-    const validatedAssigneeIds = await validateCachedAssigneeIds(supabase, clickup.teamId, assigneeIds);
+    let validatedAssigneeIds: string[];
+    try {
+      validatedAssigneeIds = await validateProjectAssignableAssigneeIds(supabase, projectId, assigneeIds);
+    } catch (e) {
+      if (e instanceof ClickupAssigneeValidationError) {
+        return err(e.message, 400, "ASSIGNEE_NOT_ASSIGNABLE");
+      }
+      throw e;
+    }
 
     await supabase
       .from("project_pm_action_items")
@@ -202,7 +224,7 @@ Deno.serve(async (req) => {
         clickup,
         projectId,
         projectName: (project as { name: string }).name,
-        createdBy: auth.user.id,
+        createdBy: userId,
         webhookEndpoint,
         webhookSecret,
       });
@@ -275,8 +297,12 @@ Deno.serve(async (req) => {
         body: JSON.stringify(taskBody),
       }) as Record<string, unknown>;
     } catch (e) {
-      await recordSyncError((e as Error).message);
-      return err("Failed to create task in ClickUp.", 502, "CLICKUP_ERROR", (e as Error).message);
+      const message = (e as Error).message;
+      await recordSyncError(message);
+      if (isClickupAssigneeApiError(message)) {
+        return err(CLICKUP_ASSIGNEE_ACCESS_ERROR, 400, "ASSIGNEE_NOT_ASSIGNABLE", message);
+      }
+      return err("Failed to create task in ClickUp.", 502, "CLICKUP_ERROR", message);
     }
 
     const clickupTaskId = String(clickupTask.id);
@@ -305,7 +331,7 @@ Deno.serve(async (req) => {
         clickup_priority: priority,
         last_snapshot: clickupTask,
         last_synced_at: now,
-        created_by: auth.user.id,
+        created_by: userId,
       })
       .select()
       .single();
