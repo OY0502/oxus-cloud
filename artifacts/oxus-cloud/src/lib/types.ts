@@ -449,6 +449,7 @@ export interface Contact {
   linkedin_url: string | null;
   avatar_url: string | null;
   person_status: string;
+  deactivated_at: string | null;
   metadata: Json;
   profile_id: string | null;
   // Contractor / team fields (used when type === "contractor")
@@ -1361,7 +1362,9 @@ export interface Invoice {
   amount_due: number;
   status: InvoiceStatus;
   issue_date: string;
+  issued_at: string | null;
   due_date: string | null;
+  due_at: string | null;
   paid_date: string | null;
   payment_method: string | null;
   owner_id: string | null;
@@ -1442,6 +1445,8 @@ export interface Transaction {
   updated_at: string;
 }
 
+export type ActivityVisibility = "team" | "admin_only";
+
 export interface Activity {
   id: string;
   kind: ActivityKind;
@@ -1450,19 +1455,73 @@ export interface Activity {
   entity_type: string | null;
   entity_id: string | null;
   contact_id: string | null;
+  visibility?: ActivityVisibility;
   created_at: string;
 }
+
+export type TeamMemberRateStatus = "active" | "scheduled" | "expired";
+export type TeamMemberRateMatchType =
+  | "project_work_type"
+  | "project"
+  | "work_type"
+  | "default"
+  | "none";
+export type SupportedCurrency = "EUR" | "USD";
 
 export interface TeamMemberRate {
   id: string;
   person_id: string;
+  name: string | null;
+  description: string | null;
   rate_type: RateType;
   amount: number;
-  currency: string;
+  currency: SupportedCurrency | string;
+  project_id: string | null;
+  work_type: string | null;
+  is_default: boolean;
   effective_from: string;
   effective_to: string | null;
+  status: TeamMemberRateStatus;
   notes: string | null;
   created_at: string;
+  projects?: Pick<Project, "id" | "name"> | null;
+}
+
+export interface ResolveTeamMemberRateResult {
+  rate: TeamMemberRate | null;
+  match_type: TeamMemberRateMatchType;
+  alternatives: TeamMemberRate[];
+  warning?: string;
+}
+
+export interface TeamMemberRateInput {
+  person_id: string;
+  name: string;
+  description?: string | null;
+  rate_type: RateType;
+  amount: number;
+  currency?: SupportedCurrency | string;
+  project_id?: string | null;
+  work_type?: string | null;
+  is_default?: boolean;
+  effective_from: string;
+  effective_to?: string | null;
+  notes?: string | null;
+}
+
+export interface CurrencyBreakdownLine {
+  currency: string;
+  native_amount: number;
+  amount_eur: number | null;
+  fx_rate_to_eur: number | null;
+  fx_rate_date: string | null;
+  count: number;
+}
+
+export interface EurReportingAggregate {
+  total_eur: number | null;
+  breakdown: CurrencyBreakdownLine[];
+  has_unconverted: boolean;
 }
 
 export interface Payout {
@@ -1471,6 +1530,12 @@ export interface Payout {
   project_id: string | null;
   amount: number;
   currency: string;
+  amount_eur: number | null;
+  fx_status: string | null;
+  fx_rate_to_eur: number | null;
+  fx_rate_date: string | null;
+  fx_source: string | null;
+  rate_id: string | null;
   payment_date: string | null;
   period_start: string | null;
   period_end: string | null;
@@ -1623,11 +1688,152 @@ export interface CompanyFinancialMetrics {
   avg_project_value: number;
 }
 
+export type ContractorInvoiceStatus =
+  | "received"
+  | "approved"
+  | "partially_paid"
+  | "paid"
+  | "disputed"
+  | "cancelled";
+
+export type ContractorInvoiceSource = "manual" | "uploaded_file" | "wise" | "email" | "other";
+
+export interface ContractorInvoice {
+  id: string;
+  person_id: string;
+  project_id: string | null;
+  invoice_number: string | null;
+  invoice_date: string;
+  due_date: string | null;
+  currency: string;
+  subtotal: number;
+  tax_amount: number;
+  total: number;
+  total_eur: number | null;
+  fx_status: string | null;
+  fx_rate_to_eur: number | null;
+  fx_rate_date: string | null;
+  fx_source: string | null;
+  status: ContractorInvoiceStatus;
+  source: ContractorInvoiceSource;
+  external_id: string | null;
+  external_url: string | null;
+  file_path: string | null;
+  description: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  paid_amount: number;
+  paid_at: string | null;
+  metadata: Json;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  projects?: Pick<Project, "id" | "name"> | null;
+}
+
+export interface ContractorInvoicePayment {
+  id: string;
+  contractor_invoice_id: string;
+  payout_id: string;
+  allocated_amount: number;
+  created_at: string;
+  contractor_invoices?: Pick<ContractorInvoice, "id" | "invoice_number" | "total" | "currency"> | null;
+}
+
+export interface ContractorInvoiceSummary {
+  outstanding: number;
+  due_this_month: number;
+  paid_ytd: number;
+  invoice_count: number;
+}
+
+export interface PayoutWithAllocations extends Payout {
+  contractor_invoice_payments?: ContractorInvoicePayment[];
+}
+
 export interface TeamMemberFinancialSummary {
   paid_mtd: number;
   paid_ytd: number;
+  lifetime_paid: number;
   pending: number;
   last_payment_date: string | null;
   current_rate: TeamMemberRate | null;
+  default_rate: TeamMemberRate | null;
+  active_rate_count: number;
+  paid_mtd_eur: EurReportingAggregate | null;
+  paid_ytd_eur: EurReportingAggregate | null;
+  outstanding_invoices_eur: EurReportingAggregate | null;
   active_projects: number;
+  active_project_names: string[];
+  outstanding_invoices?: number;
+  available_capacity?: string | null;
+}
+
+export interface ProjectContactAssignment {
+  project_id: string;
+  contact_id: string;
+  role_on_project: string | null;
+  allocation_percent: number | null;
+  weekly_hours: number | null;
+  start_date: string | null;
+  end_date: string | null;
+  is_active: boolean;
+  notes: string | null;
+  rate_id: string | null;
+  rate_snapshot_amount: number | null;
+  rate_snapshot_currency: string | null;
+  rate_snapshot_at: string | null;
+  metadata: Json;
+  created_at: string;
+  updated_at: string;
+  projects?: Pick<Project, "id" | "name" | "status"> | null;
+  team_member_rates?: TeamMemberRate | null;
+}
+
+export interface TeamRosterRow {
+  person: Contact;
+  current_rate: TeamMemberRate | null;
+  active_projects: Pick<Project, "id" | "name">[];
+  paid_mtd: number;
+  paid_ytd: number;
+  last_payment_date: string | null;
+}
+
+export interface TeamKpiSummary {
+  active_team: number;
+  employees: number;
+  contractors: number;
+  available_capacity: number | null;
+  paid_this_month: number | null;
+  active_assignments: number;
+  has_payout_data: boolean;
+  has_capacity_data: boolean;
+}
+
+export interface TeamMemberDependencySummary {
+  project_assignments: number;
+  payouts: number;
+  payout_total: number;
+  contractor_invoices: number;
+  rate_records: number;
+  company_relationships: number;
+  activities: number;
+  deals: number;
+  has_workspace_access: boolean;
+  auth_user_id: string | null;
+}
+
+export interface TeamMemberDeleteCheck {
+  person: {
+    id: string;
+    name: string;
+    email: string | null;
+    engagement: string;
+    person_status: string;
+  };
+  can_delete: boolean;
+  blockers: string[];
+  summary: TeamMemberDependencySummary;
+  will_delete: string[];
+  will_preserve: string[];
 }

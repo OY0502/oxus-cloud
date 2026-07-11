@@ -1,362 +1,451 @@
-import React, { useMemo, useState } from "react";
-import { Link } from "wouter";
-import { PageHeader } from "@/components/PageHeader";
-import { DataTable } from "@/components/DataTable";
-import { StatusBadge } from "@/components/StatusBadge";
-import { EntityDrawer } from "@/components/EntityDrawer";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { MapPin, Mail, Phone, Plus, Shield, Users } from "lucide-react";
-import { motion } from "framer-motion";
-import { useContacts, useCompanyPeople, usePayouts, useProfiles, useSetProfileRole } from "@/hooks/api";
-import { CreateContactDialog } from "@/components/forms/CreateDialogs";
-import { TableSkeleton, EmptyState, ErrorState } from "@/components/states/QueryStates";
-import { useAuth } from "@/contexts/AuthContext";
-import { formatEUR } from "@/lib/currency";
-import { normalizeProfileRole, roleLabel } from "@/lib/roles";
-import { useToast } from "@/hooks/use-toast";
-import type { Contact, ProfileRole } from "@/lib/types";
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
-  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
-}
-
-export function Team() {
-  const [selectedMember, setSelectedMember] = useState<Contact | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [filter, setFilter] = useState<"all" | "employee" | "contractor" | "inactive">("all");
-  const [section, setSection] = useState<"roster" | "access">("roster");
-  const { user, isSuperAdmin, refreshProfile } = useAuth();
-  const { toast } = useToast();
-  const { data: profiles = [] } = useProfiles();
-  const setProfileRole = useSetProfileRole();
-  const { data: contacts = [], isLoading, isError, error, refetch } = useContacts();
-  const { data: companyPeople = [] } = useCompanyPeople();
-  const { data: allPayouts = [] } = usePayouts(undefined, { enabled: isSuperAdmin });
-
-  const teamPersonIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const rel of companyPeople) {
-      if (rel.relationship_type === "employee" || rel.relationship_type === "contractor") {
-        ids.add(rel.person_id);
-      }
-    }
-    for (const c of contacts) {
-      if (c.type === "contractor" || c.type === "agent") ids.add(c.id);
-    }
-    return ids;
-  }, [companyPeople, contacts]);
-
-  const team = useMemo(() => {
-    return contacts.filter((c) => teamPersonIds.has(c.id)).filter((c) => {
-      if (filter === "inactive") return c.person_status === "inactive";
-      if (filter === "employee") return c.employment_type === "employee";
-      if (filter === "contractor") return c.employment_type === "contractor" || c.type === "contractor";
-      return c.person_status !== "inactive";
-    });
-  }, [contacts, teamPersonIds, filter]);
-
-  const payoutSummaryByPerson = useMemo(() => {
-    const map = new Map<string, { mtd: number; ytd: number }>();
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
-    for (const p of allPayouts.filter((x) => x.status === "paid")) {
-      if (!p.payment_date) continue;
-      const d = new Date(p.payment_date);
-      const cur = map.get(p.person_id) ?? { mtd: 0, ytd: 0 };
-      if (d.getFullYear() === year) cur.ytd += Number(p.amount);
-      if (d.getFullYear() === year && d.getMonth() === month) cur.mtd += Number(p.amount);
-      map.set(p.person_id, cur);
-    }
-    return map;
-  }, [allPayouts]);
-
-  const availabilityVariant = (a: string | null): "success" | "warning" | "danger" | "neutral" => {
-    if (a === "full") return "success";
-    if (a === "partial") return "warning";
-    if (a === "busy") return "danger";
-    return "neutral";
-  };
-
-  const superAdminCount = useMemo(
-    () => profiles.filter((p) => normalizeProfileRole(p.role) === "super_admin").length,
-    [profiles],
-  );
-
-  const handleRoleChange = async (userId: string, role: ProfileRole) => {
-    try {
-      await setProfileRole.mutateAsync({ user_id: userId, role });
-      if (userId === user?.id) await refreshProfile();
-      toast({ title: "Role updated", description: `${roleLabel(role)} role saved.` });
-    } catch (err) {
-      toast({
-        title: "Could not update role",
-        description: err instanceof Error ? err.message : "Please try again.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const columns = [
-    {
-      id: "member",
-      header: "Member",
-      className: "min-w-[220px]",
-      cell: (member: Contact) => (
-        <Link href={`/team/${member.id}`} className="flex items-center gap-3 hover:underline">
-          <Avatar className="w-10 h-10 border-2 border-background shadow-sm">
-            <AvatarFallback className="bg-primary/10 text-primary font-semibold">{initials(member.name)}</AvatarFallback>
-          </Avatar>
-          <div>
-            <div className="font-semibold text-foreground">{member.name}</div>
-            <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-              <MapPin className="w-3 h-3" />
-              {member.location ?? "—"}
-            </div>
-          </div>
-        </Link>
-      ),
-    },
-    { id: "role", header: "Role", cell: (member: Contact) => <span className="font-medium text-muted-foreground">{member.job_title ?? "—"}</span> },
-    {
-      id: "stack",
-      header: "Stack",
-      cell: (member: Contact) => (
-        <div className="flex flex-wrap gap-1.5">
-          {member.stack.slice(0, 2).map((tech, i) => (
-            <Badge key={i} variant="outline" className="bg-muted/50 font-normal">{tech}</Badge>
-          ))}
-          {member.stack.length > 2 && <Badge variant="outline" className="bg-muted/50 font-normal">+{member.stack.length - 2}</Badge>}
-        </div>
-      ),
-    },
-    {
-      id: "rate",
-      header: "Rate",
-      cell: (member: Contact) =>
-        member.hourly_rate != null ? (
-          <div className="font-medium">{formatEUR(member.hourly_rate)}<span className="text-muted-foreground text-xs font-normal">/hr</span></div>
-        ) : <span className="text-muted-foreground">—</span>,
-    },
-    {
-      id: "availability",
-      header: "Availability",
-      cell: (member: Contact) => <StatusBadge status={member.availability ?? "—"} variant={availabilityVariant(member.availability)} />,
-    },
-    {
-      id: "engagement",
-      header: "Engagement",
-      cell: (member: Contact) => <span className="capitalize text-muted-foreground">{member.employment_type ?? member.type}</span>,
-    },
-    ...(isSuperAdmin ? [{
-      id: "paid_mtd",
-      header: "Paid MTD",
-      cell: (member: Contact) => formatEUR(payoutSummaryByPerson.get(member.id)?.mtd ?? 0),
-    }] : []),
-  ];
-
-  return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-      <PageHeader
-        title="Team"
-        subtitle="Workforce dashboard — employees and contractors from the shared people model."
-        breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Team" }]}
-        actions={
-          isSuperAdmin ? (
-            <Button className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-soft gap-2" onClick={() => setCreateOpen(true)}>
-              <Plus className="w-4 h-4" /> Add member
-            </Button>
-          ) : undefined
-        }
-      />
-
-      {isSuperAdmin && (
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant={section === "roster" ? "default" : "outline"} onClick={() => setSection("roster")}>
-            <Users className="w-4 h-4 mr-2" /> Roster
-          </Button>
-          <Button size="sm" variant={section === "access" ? "default" : "outline"} onClick={() => setSection("access")}>
-            <Shield className="w-4 h-4 mr-2" /> Workspace access
-          </Button>
-        </div>
-      )}
-
-      {section === "access" && isSuperAdmin ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Workspace access</CardTitle>
-            <CardDescription>
-              Manage OXUS login roles for workspace members. Changes are applied securely on the server and audited.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {profiles.map((profile) => {
-              const role = normalizeProfileRole(profile.role);
-              const isSelf = profile.id === user?.id;
-              const isLastSuperAdmin = role === "super_admin" && superAdminCount <= 1;
-              return (
-                <div
-                  key={profile.id}
-                  className="flex flex-col gap-3 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="min-w-0">
-                    <p className="font-medium truncate">{profile.full_name ?? profile.email ?? "User"}</p>
-                    <p className="text-xs text-muted-foreground truncate">{profile.email ?? "—"}</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Joined {new Date(profile.created_at).toLocaleDateString()}
-                      {isSelf ? " · you" : ""}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Select
-                      value={role}
-                      disabled={setProfileRole.isPending || isLastSuperAdmin}
-                      onValueChange={(value) => void handleRoleChange(profile.id, value as ProfileRole)}
-                    >
-                      <SelectTrigger className="w-[160px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="pm">PM</SelectItem>
-                        <SelectItem value="super_admin">Super admin</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              );
-            })}
-            {superAdminCount <= 1 && (
-              <p className="text-xs text-muted-foreground">
-                The last super admin cannot be demoted. Promote another user first.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      ) : (
-        <>
-      <div className="flex flex-wrap gap-2">
-        {(["all", "employee", "contractor", "inactive"] as const).map((f) => (
-          <Button key={f} size="sm" variant={filter === f ? "default" : "outline"} onClick={() => setFilter(f)}>
-            {f === "all" ? "All" : f.charAt(0).toUpperCase() + f.slice(1)}
-          </Button>
-        ))}
-      </div>
-
-      {isLoading ? (
-        <TableSkeleton columns={6} />
-      ) : isError ? (
-        <ErrorState error={error} onRetry={() => refetch()} />
-      ) : team.length === 0 ? (
-        <EmptyState
-          icon={<Users />}
-          title="No contractors yet"
-          description="Add a contact of type “Contractor” to build your roster and track availability and rates."
-          action={isSuperAdmin ? <Button onClick={() => setCreateOpen(true)}><Plus className="w-4 h-4 mr-2" />Add your first contractor</Button> : undefined}
-        />
-      ) : (
-        <DataTable tableId="team-contractors" data={team} columns={columns} onRowClick={setSelectedMember} />
-      )}
-        </>
-      )}
-
-      <CreateContactDialog open={createOpen} onOpenChange={setCreateOpen} defaultType="contractor" />
-
-      <EntityDrawer
-        open={!!selectedMember}
-        onOpenChange={(open) => !open && setSelectedMember(null)}
-        title={
-          <div className="flex items-center gap-3">
-            <Avatar className="w-12 h-12 border-2 border-background shadow-sm">
-              <AvatarFallback className="bg-primary/10 text-primary font-semibold">{selectedMember ? initials(selectedMember.name) : "?"}</AvatarFallback>
-            </Avatar>
-            <div>
-              <div>{selectedMember?.name}</div>
-              <div className="text-sm text-muted-foreground font-sans font-normal flex items-center gap-2 mt-1">
-                <span className="capitalize">{selectedMember?.employment_type ?? "contractor"}</span>
-                <span>•</span>
-                <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{selectedMember?.location ?? "—"}</span>
-              </div>
-            </div>
-          </div>
-        }
-        headerActions={
-          <>
-            <Button variant="outline" size="icon" asChild>
-              <a href={selectedMember?.email ? `mailto:${selectedMember.email}` : undefined}><Mail className="w-4 h-4" /></a>
-            </Button>
-            <Button variant="outline" size="icon" asChild>
-              <a href={selectedMember?.phone ? `tel:${selectedMember.phone}` : undefined}><Phone className="w-4 h-4" /></a>
-            </Button>
-          </>
-        }
-      >
-        {selectedMember && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-4">
-              <Card className="shadow-none border-border/50 bg-muted/20">
-                <CardContent className="p-4">
-                  <div className="text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider">Role</div>
-                  <div className="font-semibold text-lg">{selectedMember.job_title ?? "—"}</div>
-                </CardContent>
-              </Card>
-              <Card className="shadow-none border-border/50 bg-muted/20">
-                <CardContent className="p-4">
-                  <div className="text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider">Hourly Rate</div>
-                  <div className="font-semibold text-lg">{selectedMember.hourly_rate != null ? <>{formatEUR(selectedMember.hourly_rate)}<span className="text-sm font-normal text-muted-foreground">/hr</span></> : "—"}</div>
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <Card className="shadow-none border-border/50 bg-muted/20">
-                <CardContent className="p-4">
-                  <div className="text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider">Availability</div>
-                  <div className="font-semibold text-lg capitalize">{selectedMember.availability ?? "—"}</div>
-                </CardContent>
-              </Card>
-              <Card className="shadow-none border-border/50 bg-muted/20">
-                <CardContent className="p-4">
-                  <div className="text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider">Company</div>
-                  <div className="font-semibold text-lg">{selectedMember.company ?? "—"}</div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {selectedMember.stack.length > 0 && (
-              <Card className="shadow-none border-border/50">
-                <CardHeader className="pb-3 px-5 pt-5"><CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Tech Stack</CardTitle></CardHeader>
-                <CardContent className="px-5 pb-5">
-                  <div className="flex flex-wrap gap-2">
-                    {selectedMember.stack.map((tech, i) => (
-                      <Badge key={i} variant="secondary" className="bg-muted px-3 py-1 font-medium">{tech}</Badge>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {selectedMember.notes && (
-              <Card className="shadow-none border-border/50 bg-amber-50/50 dark:bg-amber-950/10">
-                <CardHeader className="pb-2 px-5 pt-5"><CardTitle className="text-sm font-medium text-amber-800 dark:text-amber-500 uppercase tracking-wider">Notes</CardTitle></CardHeader>
-                <CardContent className="px-5 pb-5 text-sm text-amber-900 dark:text-amber-400/90 leading-relaxed">{selectedMember.notes}</CardContent>
-              </Card>
-            )}
-          </div>
-        )}
-      </EntityDrawer>
-    </motion.div>
-  );
-}
+import React, { useMemo, useState } from "react";
+import { Link } from "wouter";
+import { PageHeader } from "@/components/PageHeader";
+import { DataTable } from "@/components/DataTable";
+import { StatusBadge } from "@/components/StatusBadge";
+import { MetricCard } from "@/components/MetricCard";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Search, Plus, Users, MoreHorizontal, Briefcase, Wallet, ExternalLink } from "lucide-react";
+import { motion } from "framer-motion";
+import { useProjects, useTeamKpis, useTeamRoster, useCompanyPeople } from "@/hooks/api";
+import { TableSkeleton, EmptyState, ErrorState } from "@/components/states/QueryStates";
+import { useAuth } from "@/contexts/AuthContext";
+import { formatEUR } from "@/lib/currency";
+import {
+  deactivatedAtLabel,
+  filterTeamRoster,
+  formatRate,
+  isPersonInactive,
+  personInitials,
+  personStatusVariant,
+  projectNamesCell,
+  rosterAvailabilityLabel,
+  rosterAvailabilityVariant,
+  rosterEngagementLabel,
+  type EngagementFilter,
+  type AvailabilityFilter,
+} from "@/lib/team";
+import type { Contact, TeamRosterRow } from "@/lib/types";
+import { TeamMemberDrawer, type TeamDrawerTab } from "@/components/team/TeamMemberDrawer";
+import { AddTeamMemberDrawer } from "@/components/team/AddTeamMemberDrawer";
+import { WorkspaceAccessTable } from "@/components/team/WorkspaceAccessTable";
+import { teamActionBtn, teamIcon, teamTableRowClass } from "@/components/team/teamUi";
+import { fromSelectValue, toSelectValue } from "@/components/forms/FormKit";
+import { cn } from "@/lib/utils";
+
+export function Team() {
+  const { isSuperAdmin } = useAuth();
+  const [section, setSection] = useState<"roster" | "access">("roster");
+  const [engagementFilter, setEngagementFilter] = useState<EngagementFilter>("all");
+  const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>("all");
+  const [projectFilter, setProjectFilter] = useState("");
+  const [search, setSearch] = useState("");
+  const [selectedMember, setSelectedMember] = useState<Contact | null>(null);
+  const [drawerTab, setDrawerTab] = useState<TeamDrawerTab>("overview");
+  const [addOpen, setAddOpen] = useState(false);
+
+  const rosterQuery = useTeamRoster({ includeFinancials: isSuperAdmin });
+  const kpisQuery = useTeamKpis({ includeFinancials: isSuperAdmin });
+  const projectsQuery = useProjects();
+  const { data: companyPeople = [] } = useCompanyPeople();
+
+  const teamPersonIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const row of rosterQuery.data ?? []) ids.add(row.person.id);
+    return ids;
+  }, [rosterQuery.data]);
+
+  const rosterMap = useMemo(() => {
+    const map = new Map<string, TeamRosterRow>();
+    for (const row of rosterQuery.data ?? []) map.set(row.person.id, row);
+    return map;
+  }, [rosterQuery.data]);
+
+  const drawerPerson = useMemo(() => {
+    if (!selectedMember) return null;
+    return rosterMap.get(selectedMember.id)?.person ?? selectedMember;
+  }, [selectedMember, rosterMap]);
+
+  const filteredTeam = useMemo(() => {
+    const contacts = (rosterQuery.data ?? []).map((r) => r.person);
+    return filterTeamRoster(
+      contacts,
+      teamPersonIds,
+      engagementFilter,
+      availabilityFilter,
+      projectFilter || null,
+      search,
+      projectsQuery.data ?? [],
+    );
+  }, [
+    rosterQuery.data,
+    teamPersonIds,
+    engagementFilter,
+    availabilityFilter,
+    projectFilter,
+    search,
+    projectsQuery.data,
+  ]);
+
+  const openDrawer = (member: Contact, tab: TeamDrawerTab = "overview") => {
+    setDrawerTab(tab);
+    setSelectedMember(member);
+  };
+
+  const columns = [
+    {
+      id: "member",
+      header: "Member",
+      className: "min-w-[220px]",
+      defaultWidth: 240,
+      cell: (member: Contact) => {
+        const inactive = isPersonInactive(member);
+        const deactivated = deactivatedAtLabel(member);
+        return (
+          <div className="flex items-center gap-3">
+            <Avatar
+              className={cn(
+                "h-9 w-9 border border-border",
+                inactive && "grayscale opacity-70",
+              )}
+            >
+              <AvatarFallback
+                className={cn(
+                  "text-xs font-semibold",
+                  inactive ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary",
+                )}
+              >
+                {personInitials(member.name)}
+              </AvatarFallback>
+            </Avatar>
+            <div className="min-w-0">
+              <button
+                type="button"
+                className={cn(
+                  "block max-w-[180px] truncate text-left text-sm hover:underline",
+                  inactive ? "font-medium text-muted-foreground" : "font-semibold text-foreground",
+                )}
+                onClick={(e) => { e.stopPropagation(); openDrawer(member); }}
+              >
+                {member.name}
+              </button>
+              <div className="truncate text-xs text-muted-foreground">
+                {member.email ?? member.job_title ?? "—"}
+              </div>
+              {inactive && deactivated && (
+                <div className="truncate text-xs text-muted-foreground/90">Deactivated {deactivated}</div>
+              )}
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      id: "role",
+      header: "Role",
+      cell: (member: Contact) => (
+        <span className="text-sm text-muted-foreground">{member.job_title ?? "—"}</span>
+      ),
+    },
+    {
+      id: "engagement",
+      header: "Engagement",
+      cell: (member: Contact) => (
+        <span className="text-sm text-muted-foreground">
+          {rosterEngagementLabel(member, companyPeople)}
+        </span>
+      ),
+    },
+    ...(isSuperAdmin
+      ? [{
+          id: "rate",
+          header: "Current rate",
+          cell: (member: Contact) => {
+            const rate = rosterMap.get(member.id)?.current_rate;
+            const inactive = isPersonInactive(member);
+            return rate ? (
+              <span className={cn(
+                "font-serif text-sm font-semibold tabular-nums",
+                inactive && "text-muted-foreground",
+              )}>
+                {formatRate(rate)}
+              </span>
+            ) : (
+              <span className="text-sm text-muted-foreground">—</span>
+            );
+          },
+        }]
+      : []),
+    {
+      id: "status",
+      header: "Status",
+      cell: (member: Contact) => (
+        <StatusBadge
+          status={isPersonInactive(member) ? "Inactive" : "Active"}
+          variant={personStatusVariant(member.person_status)}
+        />
+      ),
+    },
+    {
+      id: "availability",
+      header: "Availability",
+      cell: (member: Contact) => {
+        if (isPersonInactive(member)) {
+          return <span className="text-sm text-muted-foreground">—</span>;
+        }
+        return (
+          <StatusBadge
+            status={rosterAvailabilityLabel(member)}
+            variant={rosterAvailabilityVariant(member)}
+          />
+        );
+      },
+    },
+    {
+      id: "projects",
+      header: "Active projects",
+      className: "min-w-[160px]",
+      cell: (member: Contact) => {
+        const projects = rosterMap.get(member.id)?.active_projects ?? [];
+        return <span className="text-sm text-muted-foreground">{projectNamesCell(projects)}</span>;
+      },
+    },
+    ...(isSuperAdmin
+      ? [
+          {
+            id: "paid_mtd",
+            header: "Paid MTD",
+            cell: (member: Contact) => (
+              <span className="font-serif text-sm tabular-nums">
+                {formatEUR(rosterMap.get(member.id)?.paid_mtd ?? 0)}
+              </span>
+            ),
+          },
+          {
+            id: "paid_ytd",
+            header: "Paid YTD",
+            cell: (member: Contact) => (
+              <span className="font-serif text-sm tabular-nums">
+                {formatEUR(rosterMap.get(member.id)?.paid_ytd ?? 0)}
+              </span>
+            ),
+          },
+          {
+            id: "last_payment",
+            header: "Last payment",
+            cell: (member: Contact) => (
+              <span className="text-sm text-muted-foreground">
+                {rosterMap.get(member.id)?.last_payment_date ?? "—"}
+              </span>
+            ),
+          },
+        ]
+      : []),
+    {
+      id: "actions",
+      header: "",
+      defaultWidth: 48,
+      resizable: false,
+      cell: (member: Contact) => (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+            <Button variant="ghost" size="icon" className={teamActionBtn.menu}>
+              <MoreHorizontal className={teamIcon} />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+            <DropdownMenuItem onSelect={() => openDrawer(member)}>View profile</DropdownMenuItem>
+            {isSuperAdmin && (
+              <>
+                <DropdownMenuItem onSelect={() => openDrawer(member, "overview")}>Edit member</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => openDrawer(member, "rates")}>Change rate</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => openDrawer(member, "payments")}>Record payment</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => openDrawer(member, "projects")}>Assign project</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => { setSection("access"); }}>Manage workspace access</DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            )}
+            <DropdownMenuItem asChild>
+              <Link href={`/team/${member.id}`} className="flex items-center gap-2">
+                <ExternalLink className="h-3.5 w-3.5" /> Open full profile
+              </Link>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ),
+    },
+  ];
+
+  const kpis = kpisQuery.data;
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+      <PageHeader
+        title="Team"
+        subtitle="Manage OXUS employees and contractors — roster, availability, projects, and workspace access."
+        breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Team" }]}
+        actions={
+          isSuperAdmin ? (
+            <Button className={cn("gap-2", teamActionBtn.primary)} onClick={() => setAddOpen(true)}>
+              <Plus className={teamIcon} /> Add member
+            </Button>
+          ) : undefined
+        }
+      />
+
+      {kpis && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+          <MetricCard title="Active team" value={String(kpis.active_team)} icon={<Users className={teamIcon} />} className="shadow-none" valueClassName="text-2xl" />
+          <MetricCard title="Employees" value={String(kpis.employees)} className="shadow-none" valueClassName="text-2xl" />
+          <MetricCard title="Contractors" value={String(kpis.contractors)} className="shadow-none" valueClassName="text-2xl" />
+          <MetricCard
+            title="Available / partial"
+            value={kpis.has_capacity_data && kpis.available_capacity != null ? String(kpis.available_capacity) : "—"}
+            subtitle={!kpis.has_capacity_data ? "Set availability on members" : undefined}
+            className="shadow-none"
+            valueClassName="text-2xl"
+          />
+          {isSuperAdmin && kpis.has_payout_data && (
+            <MetricCard
+              title="Paid this month"
+              value={formatEUR(kpis.paid_this_month ?? 0)}
+              icon={<Wallet className={teamIcon} />}
+              className="shadow-none"
+              valueClassName="text-2xl"
+            />
+          )}
+        </div>
+      )}
+
+      <Tabs value={section} onValueChange={(v) => setSection(v as "roster" | "access")}>
+        <TabsList className="h-auto gap-1 bg-transparent p-0">
+          <TabsTrigger value="roster" className="tab-trigger-underline gap-2 text-sm">
+            <Users className={teamIcon} /> Roster
+          </TabsTrigger>
+          {isSuperAdmin && (
+            <TabsTrigger value="access" className="tab-trigger-underline gap-2 text-sm">
+              <Briefcase className={teamIcon} /> Workspace Access
+            </TabsTrigger>
+          )}
+        </TabsList>
+
+        <TabsContent value="roster" className="mt-5 space-y-4">
+          <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
+            <ToggleGroup
+              type="single"
+              value={engagementFilter}
+              onValueChange={(v) => v && setEngagementFilter(v as EngagementFilter)}
+              className="flex-wrap justify-start"
+            >
+              {(["all", "employee", "contractor", "inactive"] as const).map((f) => (
+                <ToggleGroupItem key={f} value={f} size="sm" className="h-8 px-3 text-sm">
+                  {f === "all" ? "Active" : f === "inactive" ? "Inactive" : f.charAt(0).toUpperCase() + f.slice(1)}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative w-full sm:w-56">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  className="h-9 pl-9 text-sm"
+                  placeholder="Search team…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <Select value={availabilityFilter} onValueChange={(v) => setAvailabilityFilter(v as AvailabilityFilter)}>
+                <SelectTrigger className="h-9 w-[148px] text-sm"><SelectValue placeholder="Availability" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All availability</SelectItem>
+                  <SelectItem value="full">Available</SelectItem>
+                  <SelectItem value="partial">Partial</SelectItem>
+                  <SelectItem value="busy">Fully allocated</SelectItem>
+                  <SelectItem value="unavailable">Unavailable</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={toSelectValue(projectFilter)} onValueChange={(v) => setProjectFilter(fromSelectValue(v))}>
+                <SelectTrigger className="h-9 w-[160px] text-sm"><SelectValue placeholder="Project" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={toSelectValue("")}>All projects</SelectItem>
+                  {(projectsQuery.data ?? []).map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {rosterQuery.isLoading ? (
+            <TableSkeleton columns={8} />
+          ) : rosterQuery.isError ? (
+            <ErrorState error={rosterQuery.error} onRetry={() => void rosterQuery.refetch()} />
+          ) : filteredTeam.length === 0 ? (
+            <EmptyState
+              icon={<Users />}
+              title="No team members"
+              description="Add employees and contractors to track availability, projects, and compensation."
+              action={isSuperAdmin ? (
+                <Button className="gap-2" onClick={() => setAddOpen(true)}>
+                  <Plus className={teamIcon} /> Add member
+                </Button>
+              ) : undefined}
+            />
+          ) : (
+            <DataTable
+              tableId="team-roster"
+              data={filteredTeam}
+              columns={columns}
+              onRowClick={(member) => openDrawer(member)}
+              getRowClassName={(member) => teamTableRowClass(isPersonInactive(member))}
+            />
+          )}
+        </TabsContent>
+
+        {isSuperAdmin && (
+          <TabsContent value="access" className="mt-5">
+            <WorkspaceAccessTable />
+          </TabsContent>
+        )}
+      </Tabs>
+
+      <TeamMemberDrawer
+        person={drawerPerson}
+        open={!!selectedMember}
+        onOpenChange={(open) => !open && setSelectedMember(null)}
+        initialTab={drawerTab}
+        onManageAccess={() => { setSelectedMember(null); setSection("access"); }}
+        onPersonUpdated={(person) => setSelectedMember(person)}
+        onPersonDeleted={() => setSelectedMember(null)}
+      />
+
+      <AddTeamMemberDrawer
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onCreated={(id) => {
+          const person = rosterQuery.data?.find((r) => r.person.id === id)?.person;
+          if (person) openDrawer(person);
+        }}
+      />
+    </motion.div>
+  );
+}
+

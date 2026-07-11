@@ -1,4 +1,9 @@
 import {
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
+import {
   useMutation,
   useQuery,
   useQueryClient,
@@ -14,6 +19,8 @@ import {
 } from "@/lib/invoiceEur";
 import { summarizePaidRevenueRows } from "@/lib/paymentReconciliation";
 import { getReportingMonthKey } from "@/lib/reportingTimezone";
+import { getDefaultRate } from "@/lib/teamMemberRates";
+import { loadPaidRevenueExclusions, savePaidRevenueExclusions } from "@/lib/paidRevenueExclusions";
 import type {
   Activity,
   AiProjectBrief,
@@ -143,11 +150,24 @@ export const qk = {
   projectExecutionNotes: (projectId: string) => ["project_execution_notes", projectId] as const,
   companyPeople: (companyId?: string) => ["company_people", companyId ?? "all"] as const,
   teamMemberRates: (personId: string) => ["team_member_rates", personId] as const,
+  resolveTeamMemberRate: (personId: string, projectId?: string, workType?: string) =>
+    ["resolve_team_member_rate", personId, projectId ?? "", workType ?? ""] as const,
+  teamFinancialSummary: (personId: string, period?: string) =>
+    ["team_financial_summary", personId, period ?? "mtd"] as const,
+  rateUsage: (rateId: string) => ["rate_usage", rateId] as const,
   payouts: (personId?: string) => ["payouts", personId ?? "all"] as const,
   expenses: ["expenses"] as const,
   stripeConnection: ["stripe_connection"] as const,
   companyMetrics: (companyId: string) => ["company_metrics", companyId] as const,
   teamMemberSummary: (personId: string) => ["team_member_summary", personId] as const,
+  teamRoster: ["team_roster"] as const,
+  teamKpis: ["team_kpis"] as const,
+  contractorInvoices: (personId?: string) => ["contractor_invoices", personId ?? "all"] as const,
+  contractorInvoiceSummary: (personId: string) => ["contractor_invoice_summary", personId] as const,
+  contractorInvoice: (id: string) => ["contractor_invoice", id] as const,
+  payoutAllocations: (payoutId?: string) => ["payout_allocations", payoutId ?? "all"] as const,
+  personProjectAssignments: (personId: string) => ["person_project_assignments", personId] as const,
+  contactActivities: (contactId: string) => ["contact_activities", contactId] as const,
   invoiceMetrics: ["invoice_metrics"] as const,
   financeOverview: ["finance_overview"] as const,
   paidRevenueReconciliation: (month: string) => ["paid_revenue_reconciliation", month] as const,
@@ -216,9 +236,10 @@ export function useDeleteClient() {
 // --------------------------------------------------------------------------
 // Contacts (people)
 // --------------------------------------------------------------------------
-export function useContacts(): UseQueryResult<Contact[]> {
+export function useContacts(options?: { enabled?: boolean }): UseQueryResult<Contact[]> {
   return useQuery({
     queryKey: qk.contacts,
+    enabled: options?.enabled ?? true,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("contacts")
@@ -270,7 +291,12 @@ export function useUpdateContact() {
       const { error } = await supabase.from("contacts").update(patch).eq("id", id);
       if (error) throw new Error(error.message);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.contacts }),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: qk.contacts });
+      qc.invalidateQueries({ queryKey: qk.teamRoster });
+      qc.invalidateQueries({ queryKey: qk.teamKpis });
+      qc.invalidateQueries({ queryKey: qk.teamMemberSummary(vars.id) });
+    },
   });
 }
 
@@ -1746,12 +1772,17 @@ export function useInvoices(options?: { enabled?: boolean }): UseQueryResult<Inv
       const { data, error } = await supabase
         .from("invoices")
         .select("*, invoice_line_items(*)")
+        .order("issued_at", { ascending: false, nullsFirst: false })
         .order("issue_date", { ascending: false });
       if (error) throw new Error(error.message);
-      return (data ?? []).map((inv: any) => ({
-        ...inv,
-        line_items: (inv.invoice_line_items ?? []).sort((a: any, b: any) => a.position - b.position),
-      })) as InvoiceWithItems[];
+      const invoiceCreatedAt = (inv: InvoiceWithItems) =>
+        new Date(inv.issued_at ?? `${inv.issue_date}T12:00:00`).getTime();
+      return (data ?? [])
+        .map((inv: any) => ({
+          ...inv,
+          line_items: (inv.invoice_line_items ?? []).sort((a: any, b: any) => a.position - b.position),
+        }))
+        .sort((a: InvoiceWithItems, b: InvoiceWithItems) => invoiceCreatedAt(b) - invoiceCreatedAt(a)) as InvoiceWithItems[];
     },
   });
 }
@@ -3576,18 +3607,280 @@ export function useCreateCompanyPerson() {
 // --------------------------------------------------------------------------
 // Team member rates
 // --------------------------------------------------------------------------
-export function useTeamMemberRates(personId: string) {
+export function useTeamMemberRates(personId: string, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: qk.teamMemberRates(personId),
-    enabled: !!personId,
+    enabled: (options?.enabled ?? true) && !!personId,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("team_member_rates")
-        .select("*")
+        .select("*, projects(id, name)")
         .eq("person_id", personId)
         .order("effective_from", { ascending: false });
       if (error) throw new Error(error.message);
       return (data ?? []) as import("@/lib/types").TeamMemberRate[];
+    },
+  });
+}
+
+export function useResolveTeamMemberRate(
+  personId: string,
+  options?: {
+    enabled?: boolean;
+    projectId?: string | null;
+    workType?: string | null;
+    effectiveDate?: string;
+  },
+) {
+  return useQuery({
+    queryKey: qk.resolveTeamMemberRate(personId, options?.projectId ?? undefined, options?.workType ?? undefined),
+    enabled: (options?.enabled ?? true) && !!personId,
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke<import("@/lib/types").ResolveTeamMemberRateResult>(
+        "resolve-team-member-rate",
+        {
+          body: {
+            person_id: personId,
+            project_id: options?.projectId ?? null,
+            work_type: options?.workType ?? null,
+            effective_date: options?.effectiveDate,
+          },
+        },
+      );
+      if (error) await throwEdgeFunctionError(error);
+      return data!;
+    },
+  });
+}
+
+export function useRateUsageCheck(rateId: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: qk.rateUsage(rateId),
+    enabled: (options?.enabled ?? true) && !!rateId,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("team_member_rate_is_used", {
+        p_rate_id: rateId,
+      });
+      if (!error) return { is_used: !!data };
+      const { data: edgeData, error: edgeErr } = await supabase.functions.invoke<{ is_used: boolean }>(
+        "team-member-rates",
+        { body: { action: "check_usage", rate_id: rateId } },
+      );
+      if (edgeErr) await throwEdgeFunctionError(edgeErr);
+      return edgeData!;
+    },
+  });
+}
+
+export function useTeamFinancialSummary(
+  personId: string,
+  period: "mtd" | "ytd" | "lifetime" = "mtd",
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: qk.teamFinancialSummary(personId, period),
+    enabled: (options?.enabled ?? true) && !!personId,
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke<{
+        period: string;
+        paid: import("@/lib/types").EurReportingAggregate;
+        outstanding_invoices: import("@/lib/types").EurReportingAggregate;
+      }>("team-financial-summary", {
+        body: { person_id: personId, period },
+      });
+      if (error) await throwEdgeFunctionError(error);
+      return data!;
+    },
+  });
+}
+
+type ManageRateInput = {
+  action: "create" | "update" | "end" | "replace" | "set_default" | "delete";
+  person_id: string;
+  rate_id?: string;
+  name?: string;
+  description?: string | null;
+  rate_type?: import("@/lib/types").RateType;
+  amount?: number;
+  currency?: string;
+  project_id?: string | null;
+  work_type?: string | null;
+  is_default?: boolean;
+  effective_from?: string;
+  effective_to?: string | null;
+  notes?: string | null;
+  allow_used?: boolean;
+};
+
+async function manageRateViaRpc(input: ManageRateInput) {
+  switch (input.action) {
+    case "create": {
+      const { data, error } = await supabase.rpc("create_team_member_rate", {
+        p_person_id: input.person_id,
+        p_name: input.name ?? "Rate",
+        p_rate_type: input.rate_type,
+        p_amount: input.amount,
+        p_currency: input.currency ?? "EUR",
+        p_project_id: input.project_id ?? null,
+        p_work_type: input.work_type ?? null,
+        p_is_default: input.is_default ?? false,
+        p_effective_from: input.effective_from ?? new Date().toISOString().slice(0, 10),
+        p_effective_to: input.effective_to ?? null,
+        p_description: input.description ?? null,
+        p_notes: input.notes ?? null,
+      });
+      if (error) throw new Error(error.message);
+      return { rate: data as import("@/lib/types").TeamMemberRate };
+    }
+    case "update": {
+      const { data, error } = await supabase.rpc("update_team_member_rate", {
+        p_rate_id: input.rate_id,
+        p_name: input.name ?? null,
+        p_description: input.description ?? null,
+        p_rate_type: input.rate_type ?? null,
+        p_amount: input.amount ?? null,
+        p_currency: input.currency ?? null,
+        p_project_id: input.project_id ?? null,
+        p_work_type: input.work_type ?? null,
+        p_is_default: input.is_default ?? null,
+        p_effective_from: input.effective_from ?? null,
+        p_effective_to: input.effective_to ?? null,
+        p_notes: input.notes ?? null,
+        p_allow_used: input.allow_used ?? false,
+      });
+      if (error) throw new Error(error.message);
+      return { rate: data as import("@/lib/types").TeamMemberRate };
+    }
+    case "end": {
+      const { data, error } = await supabase.rpc("end_team_member_rate", {
+        p_rate_id: input.rate_id,
+        p_effective_to: input.effective_to ?? new Date().toISOString().slice(0, 10),
+      });
+      if (error) throw new Error(error.message);
+      return { rate: data as import("@/lib/types").TeamMemberRate };
+    }
+    case "replace": {
+      const { data, error } = await supabase.rpc("replace_team_member_rate", {
+        p_rate_id: input.rate_id,
+        p_new_effective_from: input.effective_from,
+        p_name: input.name ?? null,
+        p_rate_type: input.rate_type ?? null,
+        p_amount: input.amount ?? null,
+        p_currency: input.currency ?? null,
+        p_description: input.description ?? null,
+        p_notes: input.notes ?? null,
+      });
+      if (error) throw new Error(error.message);
+      return { rate: data as import("@/lib/types").TeamMemberRate };
+    }
+    case "set_default": {
+      const { data, error } = await supabase.rpc("set_default_team_member_rate", {
+        p_rate_id: input.rate_id,
+      });
+      if (error) throw new Error(error.message);
+      return { rate: data as import("@/lib/types").TeamMemberRate };
+    }
+    case "delete": {
+      const { error } = await supabase.rpc("delete_team_member_rate", {
+        p_rate_id: input.rate_id,
+      });
+      if (error) throw new Error(error.message);
+      return { deleted: true };
+    }
+    default:
+      throw new Error(`Unsupported action: ${input.action}`);
+  }
+}
+
+export function useManageTeamMemberRate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: ManageRateInput) => {
+      try {
+        return await manageRateViaRpc(input);
+      } catch (rpcErr) {
+        const msg = rpcErr instanceof Error ? rpcErr.message : "";
+        // Fall back to edge function when RPC is unavailable (pre-migration environments)
+        if (!msg.includes("create_team_member_rate") && !msg.includes("Could not find the function")) {
+          throw rpcErr;
+        }
+        const { data, error } = await supabase.functions.invoke<{ rate?: import("@/lib/types").TeamMemberRate; deleted?: boolean }>(
+          "team-member-rates",
+          { body: input },
+        );
+        if (error) await throwEdgeFunctionError(error);
+        return data!;
+      }
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: qk.teamMemberRates(vars.person_id) });
+      qc.invalidateQueries({ queryKey: qk.teamMemberSummary(vars.person_id) });
+      qc.invalidateQueries({ queryKey: qk.teamRoster });
+      qc.invalidateQueries({ queryKey: qk.contacts });
+      qc.invalidateQueries({ queryKey: qk.contactActivities(vars.person_id) });
+      if (vars.rate_id) {
+        qc.invalidateQueries({ queryKey: qk.rateUsage(vars.rate_id) });
+      }
+      qc.invalidateQueries({ queryKey: qk.teamFinancialSummary(vars.person_id) });
+    },
+  });
+}
+
+export function useChangeTeamMemberRate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      person_id: string;
+      rate_type: import("@/lib/types").RateType;
+      amount: number;
+      currency?: string;
+      effective_from: string;
+      notes?: string | null;
+    }) => {
+      const { data, error } = await supabase.rpc("change_team_member_rate", {
+        p_person_id: input.person_id,
+        p_rate_type: input.rate_type,
+        p_amount: input.amount,
+        p_currency: input.currency ?? "EUR",
+        p_effective_from: input.effective_from,
+        p_notes: input.notes ?? null,
+      });
+      if (!error && data) return data as import("@/lib/types").TeamMemberRate;
+
+      // Fallback when RPC migration is not yet applied
+      if (error?.message?.includes("change_team_member_rate")) {
+        await supabase
+          .from("team_member_rates")
+          .update({ effective_to: input.effective_from })
+          .eq("person_id", input.person_id)
+          .is("effective_to", null);
+        const { data: inserted, error: insertErr } = await supabase
+          .from("team_member_rates")
+          .insert({
+            person_id: input.person_id,
+            rate_type: input.rate_type,
+            amount: input.amount,
+            currency: input.currency ?? "EUR",
+            effective_from: input.effective_from,
+            notes: input.notes ?? null,
+          })
+          .select()
+          .single();
+        if (insertErr) throw new Error(insertErr.message);
+        if (input.rate_type === "hourly") {
+          await supabase.from("contacts").update({ hourly_rate: input.amount }).eq("id", input.person_id);
+        }
+        return inserted as import("@/lib/types").TeamMemberRate;
+      }
+      if (error) throw new Error(error.message);
+      throw new Error("Could not change rate");
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: qk.teamMemberRates(vars.person_id) });
+      qc.invalidateQueries({ queryKey: qk.teamMemberSummary(vars.person_id) });
+      qc.invalidateQueries({ queryKey: qk.teamRoster });
+      qc.invalidateQueries({ queryKey: qk.contacts });
+      qc.invalidateQueries({ queryKey: qk.contactActivities(vars.person_id) });
     },
   });
 }
@@ -3645,6 +3938,339 @@ export function useCreatePayout() {
       qc.invalidateQueries({ queryKey: qk.payouts() });
       qc.invalidateQueries({ queryKey: qk.financeOverview });
       qc.invalidateQueries({ queryKey: qk.teamMemberSummary(vars.person_id) });
+      qc.invalidateQueries({ queryKey: qk.teamRoster });
+      qc.invalidateQueries({ queryKey: qk.teamKpis });
+    },
+  });
+}
+
+export const CONTRACTOR_INVOICES_BUCKET = "contractor-invoices";
+
+const CONTRACTOR_INVOICE_SELECT = "*, projects(id, name)";
+
+function invalidateContractorInvoiceQueries(qc: ReturnType<typeof useQueryClient>, personId?: string) {
+  qc.invalidateQueries({ queryKey: qk.contractorInvoices(personId) });
+  qc.invalidateQueries({ queryKey: qk.contractorInvoices() });
+  if (personId) {
+    qc.invalidateQueries({ queryKey: qk.contractorInvoiceSummary(personId) });
+    qc.invalidateQueries({ queryKey: qk.teamMemberSummary(personId) });
+  }
+  qc.invalidateQueries({ queryKey: qk.financeOverview });
+  qc.invalidateQueries({ queryKey: qk.teamRoster });
+  qc.invalidateQueries({ queryKey: qk.teamKpis });
+}
+
+export function useContractorInvoices(personId?: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: qk.contractorInvoices(personId),
+    enabled: options?.enabled ?? true,
+    queryFn: async () => {
+      let query = supabase
+        .from("contractor_invoices")
+        .select(CONTRACTOR_INVOICE_SELECT)
+        .order("invoice_date", { ascending: false });
+      if (personId) query = query.eq("person_id", personId);
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      return (data ?? []) as import("@/lib/types").ContractorInvoice[];
+    },
+  });
+}
+
+export function useContractorInvoiceSummary(personId: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: qk.contractorInvoiceSummary(personId),
+    enabled: (options?.enabled ?? true) && !!personId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("contractor_invoices")
+        .select("*")
+        .eq("person_id", personId);
+      if (error) throw new Error(error.message);
+      const invoices = (data ?? []) as import("@/lib/types").ContractorInvoice[];
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      const open = invoices.filter((i) => ["received", "approved", "partially_paid"].includes(i.status));
+      return {
+        outstanding: open.reduce((s, i) => s + Math.max(0, Number(i.total) - Number(i.paid_amount)), 0),
+        due_this_month: open
+          .filter((i) => i.due_date && new Date(i.due_date).getMonth() === month && new Date(i.due_date).getFullYear() === year)
+          .reduce((s, i) => s + Math.max(0, Number(i.total) - Number(i.paid_amount)), 0),
+        paid_ytd: invoices
+          .filter((i) => i.status === "paid" && i.paid_at && new Date(i.paid_at).getFullYear() === year)
+          .reduce((s, i) => s + Number(i.paid_amount), 0),
+        invoice_count: invoices.length,
+      } satisfies import("@/lib/types").ContractorInvoiceSummary;
+    },
+  });
+}
+
+export function useCreateContractorInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      person_id: string;
+      invoice_number?: string | null;
+      invoice_date: string;
+      due_date?: string | null;
+      period_start?: string | null;
+      period_end?: string | null;
+      project_id?: string | null;
+      currency?: string;
+      subtotal?: number;
+      tax_amount?: number;
+      total: number;
+      description?: string | null;
+      source?: string;
+      status?: string;
+      file_path?: string | null;
+    }) => {
+      const { data, error } = await supabase.functions.invoke<{ invoice: import("@/lib/types").ContractorInvoice }>(
+        "contractor-invoices",
+        { body: { action: "create", ...input } },
+      );
+      if (error) await throwEdgeFunctionError(error);
+      if (!data?.invoice) throw new Error("Invoice was not created.");
+      return data.invoice;
+    },
+    onSuccess: (invoice) => invalidateContractorInvoiceQueries(qc, invoice.person_id),
+  });
+}
+
+export function useUpdateContractorInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      id: string;
+      person_id: string;
+      patch: Partial<import("@/lib/types").ContractorInvoice>;
+    }) => {
+      const { data, error } = await supabase.functions.invoke<{ invoice: import("@/lib/types").ContractorInvoice }>(
+        "contractor-invoices",
+        { body: { action: "update", invoice_id: input.id, patch: input.patch } },
+      );
+      if (error) await throwEdgeFunctionError(error);
+      if (!data?.invoice) throw new Error("Invoice was not updated.");
+      return data.invoice;
+    },
+    onSuccess: (invoice) => invalidateContractorInvoiceQueries(qc, invoice.person_id),
+  });
+}
+
+export function useContractorInvoiceAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      invoice_id: string;
+      person_id: string;
+      action: "approve" | "dispute" | "cancel";
+    }) => {
+      const { data, error } = await supabase.functions.invoke<{ invoice: import("@/lib/types").ContractorInvoice }>(
+        "contractor-invoices",
+        { body: input },
+      );
+      if (error) await throwEdgeFunctionError(error);
+      if (!data?.invoice) throw new Error("Action failed.");
+      return data.invoice;
+    },
+    onSuccess: (_d, vars) => invalidateContractorInvoiceQueries(qc, vars.person_id),
+  });
+}
+
+export function useUploadContractorInvoiceFile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { invoice_id: string; person_id: string; file: File }) => {
+      const buffer = await input.file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const base64 = btoa(binary);
+      const { data, error } = await supabase.functions.invoke<{ file_path: string; signed_url: string }>(
+        "contractor-invoice-file",
+        {
+          body: {
+            action: "upload",
+            invoice_id: input.invoice_id,
+            person_id: input.person_id,
+            file_name: input.file.name,
+            content_type: input.file.type,
+            file_base64: base64,
+          },
+        },
+      );
+      if (error) await throwEdgeFunctionError(error);
+      if (!data?.file_path) throw new Error("Upload failed.");
+      return data;
+    },
+    onSuccess: (_d, vars) => invalidateContractorInvoiceQueries(qc, vars.person_id),
+  });
+}
+
+export async function getContractorInvoiceFileUrl(invoiceId: string): Promise<string | null> {
+  const { data, error } = await supabase.functions.invoke<{ signed_url: string }>(
+    "contractor-invoice-file",
+    { body: { action: "download", invoice_id: invoiceId } },
+  );
+  if (error) {
+    await throwEdgeFunctionError(error);
+    return null;
+  }
+  return data?.signed_url ?? null;
+}
+
+export function usePayoutsWithAllocations(personId?: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: [...qk.payouts(personId), "allocations"],
+    enabled: options?.enabled ?? true,
+    queryFn: async () => {
+      let query = supabase
+        .from("payouts")
+        .select("*, contractor_invoice_payments(id, contractor_invoice_id, allocated_amount, contractor_invoices(id, invoice_number, total, currency))")
+        .order("payment_date", { ascending: false });
+      if (personId) query = query.eq("person_id", personId);
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      return (data ?? []) as import("@/lib/types").PayoutWithAllocations[];
+    },
+  });
+}
+
+export function useAllocateInvoicePayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      person_id: string;
+      amount: number;
+      currency: string;
+      payment_date: string;
+      period_start?: string | null;
+      period_end?: string | null;
+      project_id?: string | null;
+      provider: import("@/lib/types").PayoutProvider;
+      status?: string;
+      notes?: string | null;
+      allocations: { contractor_invoice_id: string; allocated_amount: number }[];
+    }) => {
+      const { data, error } = await supabase.functions.invoke<{
+        payout: import("@/lib/types").Payout;
+      }>("allocate-invoice-payment", { body: input });
+      if (error) await throwEdgeFunctionError(error);
+      if (!data?.payout) throw new Error("Payment was not recorded.");
+      return data.payout;
+    },
+    onSuccess: (payout, vars) => {
+      qc.invalidateQueries({ queryKey: qk.payouts(vars.person_id) });
+      qc.invalidateQueries({ queryKey: qk.payouts() });
+      qc.invalidateQueries({ queryKey: [...qk.payouts(vars.person_id), "allocations"] });
+      invalidateContractorInvoiceQueries(qc, vars.person_id);
+      qc.invalidateQueries({ queryKey: qk.teamMemberSummary(vars.person_id) });
+      qc.invalidateQueries({ queryKey: qk.financeOverview });
+      qc.invalidateQueries({ queryKey: qk.teamRoster });
+      qc.invalidateQueries({ queryKey: qk.teamKpis });
+    },
+  });
+}
+
+export function useUpdateTeamMember() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; patch: Record<string, unknown> }) => {
+      const { data, error } = await supabase.functions.invoke<{ contact: import("@/lib/types").Contact }>(
+        "team-member-update",
+        { body: { person_id: input.id, patch: input.patch } },
+      );
+      if (error) await throwEdgeFunctionError(error);
+      if (!data?.contact) throw new Error("Member was not updated.");
+      return data.contact;
+    },
+    onSuccess: (contact) => {
+      qc.invalidateQueries({ queryKey: qk.contacts });
+      qc.invalidateQueries({ queryKey: qk.teamMemberSummary(contact.id) });
+      qc.invalidateQueries({ queryKey: qk.teamRoster });
+      qc.invalidateQueries({ queryKey: qk.teamKpis });
+    },
+  });
+}
+
+function invalidateTeamMemberQueries(qc: ReturnType<typeof useQueryClient>, personId: string) {
+  qc.invalidateQueries({ queryKey: qk.contacts });
+  qc.invalidateQueries({ queryKey: qk.teamMemberSummary(personId) });
+  qc.invalidateQueries({ queryKey: qk.teamRoster });
+  qc.invalidateQueries({ queryKey: qk.teamKpis });
+  qc.invalidateQueries({ queryKey: qk.contactActivities(personId) });
+  qc.invalidateQueries({ queryKey: qk.profiles });
+}
+
+export function useTeamMemberStatusChange() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { person_id: string; action: "deactivate" | "reactivate" }) => {
+      const token = await getAuthToken();
+      const { data, error } = await supabase.functions.invoke<{ contact: Contact; action: string }>(
+        "team-member-status",
+        {
+          body: input,
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      if (error) await throwEdgeFunctionError(error);
+      if (!data?.contact) throw new Error("Member status was not updated.");
+      return data.contact;
+    },
+    onSuccess: (contact) => invalidateTeamMemberQueries(qc, contact.id),
+  });
+}
+
+export function useTeamMemberDeleteDependencies(personId: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ["team_member_delete_deps", personId],
+    enabled: (options?.enabled ?? true) && !!personId,
+    queryFn: async () => {
+      const token = await getAuthToken();
+      const { data, error } = await supabase.functions.invoke<import("@/lib/types").TeamMemberDeleteCheck>(
+        "delete-team-member",
+        {
+          body: { person_id: personId, action: "check_dependencies" },
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      if (error) await throwEdgeFunctionError(error);
+      if (!data) throw new Error("Could not load deletion dependencies.");
+      return data;
+    },
+  });
+}
+
+export function useDeleteTeamMemberPermanently() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      person_id: string;
+      confirmation_text: string;
+      delete_auth_user?: boolean;
+    }) => {
+      const token = await getAuthToken();
+      const { data, error } = await supabase.functions.invoke<{
+        deleted: boolean;
+        auth_user_deleted?: boolean;
+        auth_delete_error?: string;
+        message?: string;
+      }>("delete-team-member", {
+        body: { ...input, action: "delete" },
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (error) await throwEdgeFunctionError(error);
+      if (!data?.deleted) throw new Error("Member was not deleted.");
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.contacts });
+      qc.invalidateQueries({ queryKey: qk.teamRoster });
+      qc.invalidateQueries({ queryKey: qk.teamKpis });
+      qc.invalidateQueries({ queryKey: qk.profiles });
+      qc.invalidateQueries({ queryKey: qk.companyPeople() });
     },
   });
 }
@@ -3704,20 +4330,61 @@ export function useCompanyMetrics(companyId: string) {
   });
 }
 
-export function useTeamMemberSummary(personId: string) {
-  const ratesQuery = useTeamMemberRates(personId);
-  const payoutsQuery = usePayouts(personId);
-  const projectsQuery = useProjects();
-  const companyPeopleQuery = useCompanyPeople();
-
+export function useTeamMemberSummary(personId: string, options?: { enabled?: boolean; includeFinancials?: boolean }) {
+  const includeFinancials = options?.includeFinancials ?? true;
   return useQuery({
-    queryKey: qk.teamMemberSummary(personId),
-    enabled: !!personId,
+    queryKey: [...qk.teamMemberSummary(personId), includeFinancials],
+    enabled: (options?.enabled ?? true) && !!personId,
     queryFn: async () => {
-      const rates = ratesQuery.data ?? [];
-      const payouts = payoutsQuery.data ?? [];
+      const [ratesRes, payoutsRes, projectsRes, invoicesRes, contactRes] = await Promise.all([
+        includeFinancials
+          ? supabase.from("team_member_rates").select("*").eq("person_id", personId).order("effective_from", { ascending: false })
+          : Promise.resolve({ data: [], error: null }),
+        includeFinancials
+          ? supabase.from("payouts").select("*").eq("person_id", personId).order("payment_date", { ascending: false })
+          : Promise.resolve({ data: [], error: null }),
+        supabase.from("projects").select(PROJECT_SELECT),
+        includeFinancials
+          ? supabase.from("contractor_invoices").select("*").eq("person_id", personId)
+          : Promise.resolve({ data: [], error: null }),
+        supabase.from("contacts").select("metadata, availability").eq("id", personId).maybeSingle(),
+      ]);
+      if (ratesRes.error) throw new Error(ratesRes.error.message);
+      if (payoutsRes.error) throw new Error(payoutsRes.error.message);
+      if (projectsRes.error) throw new Error(projectsRes.error.message);
+      if (invoicesRes.error) throw new Error(invoicesRes.error.message);
+      if (contactRes.error) throw new Error(contactRes.error.message);
+
+      const rates = (ratesRes.data ?? []) as import("@/lib/types").TeamMemberRate[];
+      const payouts = (payoutsRes.data ?? []) as import("@/lib/types").Payout[];
+      const contractorInvoices = (invoicesRes.data ?? []) as import("@/lib/types").ContractorInvoice[];
+      const projects = (projectsRes.data ?? []).map(mapProject);
       const today = new Date().toISOString().slice(0, 10);
-      const currentRate = rates.find((r) => r.effective_from <= today && (!r.effective_to || r.effective_to >= today)) ?? rates[0] ?? null;
+      const defaultRate = getDefaultRate(rates, today);
+      const currentRate = defaultRate ?? rates.find((r) => r.effective_from <= today && (!r.effective_to || r.effective_to >= today)) ?? rates[0] ?? null;
+      const activeRateCount = rates.filter((r) => r.status === "active").length;
+
+      let paidMtdEur: import("@/lib/types").EurReportingAggregate | null = null;
+      let paidYtdEur: import("@/lib/types").EurReportingAggregate | null = null;
+      let outstandingInvoicesEur: import("@/lib/types").EurReportingAggregate | null = null;
+
+      if (includeFinancials) {
+        try {
+          const [mtdFx, ytdFx] = await Promise.all([
+            supabase.functions.invoke("team-financial-summary", { body: { person_id: personId, period: "mtd" } }),
+            supabase.functions.invoke("team-financial-summary", { body: { person_id: personId, period: "ytd" } }),
+          ]);
+          if (!mtdFx.error && mtdFx.data) {
+            paidMtdEur = (mtdFx.data as { paid: import("@/lib/types").EurReportingAggregate }).paid;
+            outstandingInvoicesEur = (mtdFx.data as { outstanding_invoices: import("@/lib/types").EurReportingAggregate }).outstanding_invoices;
+          }
+          if (!ytdFx.error && ytdFx.data) {
+            paidYtdEur = (ytdFx.data as { paid: import("@/lib/types").EurReportingAggregate }).paid;
+          }
+        } catch {
+          // FX edge function may not be deployed yet — fall back to native sums only
+        }
+      }
 
       const now = new Date();
       const year = now.getFullYear();
@@ -3729,22 +4396,489 @@ export function useTeamMemberSummary(personId: string) {
       const paidYtd = paid
         .filter((p) => p.payment_date && new Date(p.payment_date).getFullYear() === year)
         .reduce((s, p) => s + Number(p.amount), 0);
+      const lifetimePaid = paid.reduce((s, p) => s + Number(p.amount), 0);
       const pending = payouts.filter((p) => p.status === "pending").reduce((s, p) => s + Number(p.amount), 0);
       const lastPayment = paid.sort((a, b) => (b.payment_date ?? "").localeCompare(a.payment_date ?? ""))[0]?.payment_date ?? null;
 
-      const rels = companyPeopleQuery.data ?? [];
-      const isTeam = rels.some((r) => r.person_id === personId && ["employee", "contractor"].includes(r.relationship_type));
-      const projects = projectsQuery.data ?? [];
-      const activeProjects = isTeam ? projects.filter((p) => p.status === "in-progress").length : 0;
+      const activeProjectList = projects.filter(
+        (p) =>
+          (p.status === "in-progress" || p.status === "planning") &&
+          (p.team_contacts ?? []).some((c) => c.id === personId),
+      );
+
+      const openInvoices = contractorInvoices.filter((i) =>
+        ["received", "approved", "partially_paid"].includes(i.status),
+      );
+      const outstandingInvoices = openInvoices.reduce(
+        (s, i) => s + Math.max(0, Number(i.total) - Number(i.paid_amount)),
+        0,
+      );
+
+      const contact = contactRes.data;
+      const meta =
+        contact?.metadata && typeof contact.metadata === "object" && !Array.isArray(contact.metadata)
+          ? (contact.metadata as Record<string, unknown>)
+          : null;
+      const capacity = meta?.capacity_percent != null
+        ? `${meta.capacity_percent}%`
+        : meta?.weekly_available_hours != null
+          ? `${meta.weekly_available_hours}h/wk`
+          : contact?.availability === "full"
+            ? "100%"
+            : null;
 
       return {
         paid_mtd: paidMtd,
         paid_ytd: paidYtd,
+        lifetime_paid: lifetimePaid,
         pending,
         last_payment_date: lastPayment,
         current_rate: currentRate,
-        active_projects: activeProjects,
+        default_rate: defaultRate,
+        active_rate_count: activeRateCount,
+        paid_mtd_eur: paidMtdEur,
+        paid_ytd_eur: paidYtdEur,
+        outstanding_invoices_eur: outstandingInvoicesEur,
+        active_projects: activeProjectList.length,
+        active_project_names: activeProjectList.map((p) => p.name),
+        outstanding_invoices: outstandingInvoices,
+        available_capacity: capacity,
       } satisfies import("@/lib/types").TeamMemberFinancialSummary;
+    },
+  });
+}
+
+export function usePersonProjectAssignments(personId: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: qk.personProjectAssignments(personId),
+    enabled: (options?.enabled ?? true) && !!personId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("project_contact_assignees")
+        .select("*, projects(id, name, status), team_member_rates(*)")
+        .eq("contact_id", personId)
+        .order("created_at", { ascending: false });
+      if (error) throw new Error(error.message);
+      return (data ?? []) as import("@/lib/types").ProjectContactAssignment[];
+    },
+  });
+}
+
+export function useUpsertProjectAssignment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      project_id: string;
+      contact_id: string;
+      role_on_project?: string | null;
+      allocation_percent?: number | null;
+      weekly_hours?: number | null;
+      start_date?: string | null;
+      end_date?: string | null;
+      is_active?: boolean;
+      notes?: string | null;
+      rate_id?: string | null;
+      rate_snapshot_amount?: number | null;
+      rate_snapshot_currency?: string | null;
+    }) => {
+      const extended = {
+        project_id: input.project_id,
+        contact_id: input.contact_id,
+        role_on_project: input.role_on_project ?? null,
+        allocation_percent: input.allocation_percent ?? null,
+        weekly_hours: input.weekly_hours ?? null,
+        start_date: input.start_date ?? null,
+        end_date: input.end_date ?? null,
+        is_active: input.is_active ?? true,
+        notes: input.notes ?? null,
+        rate_id: input.rate_id ?? null,
+        rate_snapshot_amount: input.rate_snapshot_amount ?? null,
+        rate_snapshot_currency: input.rate_snapshot_currency ?? null,
+        rate_snapshot_at: input.rate_id ? new Date().toISOString() : null,
+      };
+      let { data, error } = await supabase
+        .from("project_contact_assignees")
+        .upsert(extended, { onConflict: "project_id,contact_id" })
+        .select()
+        .single();
+      if (error?.message?.includes("column")) {
+        ({ data, error } = await supabase
+          .from("project_contact_assignees")
+          .upsert(
+            { project_id: input.project_id, contact_id: input.contact_id },
+            { onConflict: "project_id,contact_id" },
+          )
+          .select()
+          .single());
+      }
+      if (error) throw new Error(error.message);
+      return data;
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: qk.personProjectAssignments(vars.contact_id) });
+      qc.invalidateQueries({ queryKey: qk.projects });
+      qc.invalidateQueries({ queryKey: qk.teamMemberSummary(vars.contact_id) });
+      qc.invalidateQueries({ queryKey: qk.teamRoster });
+      qc.invalidateQueries({ queryKey: qk.teamKpis });
+    },
+  });
+}
+
+export function useEndProjectAssignment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ project_id, contact_id }: { project_id: string; contact_id: string }) => {
+      const { error: updateErr } = await supabase
+        .from("project_contact_assignees")
+        .update({
+          is_active: false,
+          end_date: new Date().toISOString().slice(0, 10),
+        })
+        .eq("project_id", project_id)
+        .eq("contact_id", contact_id);
+      if (updateErr?.message?.includes("column")) {
+        const { error: deleteErr } = await supabase
+          .from("project_contact_assignees")
+          .delete()
+          .eq("project_id", project_id)
+          .eq("contact_id", contact_id);
+        if (deleteErr) throw new Error(deleteErr.message);
+        return;
+      }
+      if (updateErr) throw new Error(updateErr.message);
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: qk.personProjectAssignments(vars.contact_id) });
+      qc.invalidateQueries({ queryKey: qk.projects });
+      qc.invalidateQueries({ queryKey: qk.teamMemberSummary(vars.contact_id) });
+      qc.invalidateQueries({ queryKey: qk.teamRoster });
+      qc.invalidateQueries({ queryKey: qk.teamKpis });
+    },
+  });
+}
+
+export function useCreateTeamActivity() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      contact_id: string;
+      title: string;
+      description?: string | null;
+      kind?: import("@/lib/types").ActivityKind;
+      entity_type?: string | null;
+      entity_id?: string | null;
+      visibility?: import("@/lib/types").ActivityVisibility;
+    }) => {
+      const { data: session } = await supabase.auth.getSession();
+      const payload = {
+        contact_id: input.contact_id,
+        title: input.title,
+        description: input.description ?? null,
+        kind: input.kind ?? "info",
+        entity_type: input.entity_type ?? "team_member",
+        entity_id: input.entity_id ?? input.contact_id,
+        created_by: session.session?.user?.id ?? null,
+      };
+      let { data, error } = await supabase
+        .from("activities")
+        .insert({ ...payload, visibility: input.visibility ?? "team" })
+        .select()
+        .single();
+      if (error?.message?.includes("visibility")) {
+        ({ data, error } = await supabase.from("activities").insert(payload).select().single());
+      }
+      if (error) throw new Error(error.message);
+      return data as import("@/lib/types").Activity;
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: qk.contactActivities(vars.contact_id) });
+      qc.invalidateQueries({ queryKey: qk.activities });
+    },
+  });
+}
+
+export function useContactActivities(contactId: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: qk.contactActivities(contactId),
+    enabled: (options?.enabled ?? true) && !!contactId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("activities")
+        .select("*")
+        .eq("contact_id", contactId)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as import("@/lib/types").Activity[];
+    },
+  });
+}
+
+export function useAddTeamMember() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      contact: Partial<Contact> & { name: string; email?: string | null };
+      relationship_type: "employee" | "contractor";
+      oxus_company_id: string;
+      initial_rate?: import("@/lib/types").TeamMemberRateInput;
+      project_id?: string | null;
+    }) => {
+      let personId: string;
+      const email = input.contact.email?.trim().toLowerCase() ?? null;
+
+      if (email) {
+        const { data: existing } = await supabase.from("contacts").select("id").ilike("email", email).maybeSingle();
+        if (existing?.id) {
+          personId = existing.id;
+          const { error: updErr } = await supabase
+            .from("contacts")
+            .update({
+              ...input.contact,
+              type: input.contact.type ?? "contractor",
+              employment_type: input.relationship_type,
+              person_status: "active",
+            })
+            .eq("id", personId);
+          if (updErr) throw new Error(updErr.message);
+        } else {
+          const { data, error } = await supabase
+            .from("contacts")
+            .insert({
+              last_contact_at: new Date().toISOString(),
+              type: "contractor",
+              employment_type: input.relationship_type,
+              person_status: "active",
+              stack: [],
+              ...input.contact,
+            })
+            .select()
+            .single();
+          if (error) throw new Error(error.message);
+          personId = (data as Contact).id;
+        }
+      } else {
+        const { data, error } = await supabase
+          .from("contacts")
+          .insert({
+            last_contact_at: new Date().toISOString(),
+            type: "contractor",
+            employment_type: input.relationship_type,
+            person_status: "active",
+            stack: [],
+            ...input.contact,
+          })
+          .select()
+          .single();
+        if (error) throw new Error(error.message);
+        personId = (data as Contact).id;
+      }
+
+      const { error: relErr } = await supabase.from("company_people").upsert(
+        {
+          company_id: input.oxus_company_id,
+          person_id: personId,
+          relationship_type: input.relationship_type,
+        },
+        { onConflict: "company_id,person_id,relationship_type" },
+      );
+      if (relErr) throw new Error(relErr.message);
+
+      if (input.initial_rate && input.initial_rate.amount > 0) {
+        const rate = input.initial_rate;
+        const { data: createdRate, error: createErr } = await supabase.functions.invoke<{ rate: import("@/lib/types").TeamMemberRate }>(
+          "team-member-rates",
+          {
+            body: {
+              action: "create",
+              person_id: personId,
+              name: rate.name,
+              description: rate.description,
+              rate_type: rate.rate_type,
+              amount: rate.amount,
+              currency: rate.currency ?? "EUR",
+              project_id: rate.project_id ?? null,
+              work_type: rate.work_type ?? null,
+              is_default: rate.is_default ?? false,
+              effective_from: rate.effective_from ?? new Date().toISOString().slice(0, 10),
+              effective_to: rate.effective_to ?? null,
+              notes: rate.notes ?? "Initial rate",
+            },
+          },
+        );
+        if (createErr) {
+          const { error: rateErr } = await supabase.rpc("change_team_member_rate", {
+            p_person_id: personId,
+            p_rate_type: rate.rate_type,
+            p_amount: rate.amount,
+            p_currency: rate.currency ?? "EUR",
+            p_effective_from: rate.effective_from ?? new Date().toISOString().slice(0, 10),
+            p_notes: rate.notes ?? "Initial rate",
+          });
+          if (rateErr?.message?.includes("change_team_member_rate")) {
+            const { error: insertErr } = await supabase.from("team_member_rates").insert({
+              person_id: personId,
+              name: rate.name ?? "Initial rate",
+              rate_type: rate.rate_type,
+              amount: rate.amount,
+              currency: rate.currency ?? "EUR",
+              project_id: rate.project_id ?? null,
+              work_type: rate.work_type ?? null,
+              is_default: rate.is_default ?? true,
+              effective_from: rate.effective_from ?? new Date().toISOString().slice(0, 10),
+              notes: rate.notes ?? "Initial rate",
+            });
+            if (insertErr) throw new Error(insertErr.message);
+          } else if (rateErr) {
+            throw new Error(rateErr.message);
+          }
+        } else if (!createdRate?.rate) {
+          throw new Error("Could not create initial rate");
+        }
+      }
+
+      if (input.project_id) {
+        const { error: assignErr } = await supabase.from("project_contact_assignees").upsert(
+          { project_id: input.project_id, contact_id: personId, is_active: true },
+          { onConflict: "project_id,contact_id" },
+        );
+        if (assignErr) throw new Error(assignErr.message);
+      }
+
+      return personId;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.contacts });
+      qc.invalidateQueries({ queryKey: qk.companyPeople() });
+      qc.invalidateQueries({ queryKey: qk.teamRoster });
+      qc.invalidateQueries({ queryKey: qk.teamKpis });
+      qc.invalidateQueries({ queryKey: qk.projects });
+    },
+  });
+}
+
+export function useTeamRoster(options?: { enabled?: boolean; includeFinancials?: boolean }) {
+  const includeFinancials = options?.includeFinancials ?? true;
+  const contactsQuery = useContacts({ enabled: options?.enabled ?? true });
+  const companyPeopleQuery = useCompanyPeople();
+  const projectsQuery = useProjects({ enabled: options?.enabled ?? true });
+
+  return useQuery({
+    queryKey: [...qk.teamRoster, includeFinancials],
+    enabled: (options?.enabled ?? true) && contactsQuery.isSuccess && companyPeopleQuery.isSuccess && projectsQuery.isSuccess,
+    queryFn: async () => {
+      const contacts = contactsQuery.data ?? [];
+      const companyPeople = companyPeopleQuery.data ?? [];
+      const projects = projectsQuery.data ?? [];
+      const teamIds = new Set<string>();
+      for (const rel of companyPeople) {
+        if (rel.relationship_type === "employee" || rel.relationship_type === "contractor") {
+          teamIds.add(rel.person_id);
+        }
+      }
+      for (const c of contacts) {
+        if (c.type === "contractor" || c.type === "agent") teamIds.add(c.id);
+      }
+      const teamContacts = contacts.filter((c) => teamIds.has(c.id));
+      const personIds = teamContacts.map((c) => c.id);
+
+      let ratesByPerson = new Map<string, import("@/lib/types").TeamMemberRate[]>();
+      let payouts: import("@/lib/types").Payout[] = [];
+      if (includeFinancials && personIds.length > 0) {
+        const [ratesRes, payoutsRes] = await Promise.all([
+          supabase.from("team_member_rates").select("*").in("person_id", personIds),
+          supabase.from("payouts").select("*").in("person_id", personIds),
+        ]);
+        if (ratesRes.error) throw new Error(ratesRes.error.message);
+        if (payoutsRes.error) throw new Error(payoutsRes.error.message);
+        for (const r of (ratesRes.data ?? []) as import("@/lib/types").TeamMemberRate[]) {
+          const list = ratesByPerson.get(r.person_id) ?? [];
+          list.push(r);
+          ratesByPerson.set(r.person_id, list);
+        }
+        payouts = (payoutsRes.data ?? []) as import("@/lib/types").Payout[];
+      }
+
+      const today = new Date().toISOString().slice(0, 10);
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth();
+
+      const rows: import("@/lib/types").TeamRosterRow[] = teamContacts.map((person) => {
+        const rates = (ratesByPerson.get(person.id) ?? []).sort((a, b) => b.effective_from.localeCompare(a.effective_from));
+        const currentRate =
+          rates.find((r) => r.effective_from <= today && (!r.effective_to || r.effective_to >= today)) ??
+          rates[0] ??
+          null;
+        const activeProjects = projects
+          .filter(
+            (p) =>
+              (p.status === "in-progress" || p.status === "planning") &&
+              (p.team_contacts ?? []).some((c) => c.id === person.id),
+          )
+          .map((p) => ({ id: p.id, name: p.name }));
+        const personPayouts = payouts.filter((p) => p.person_id === person.id && p.status === "paid");
+        const paidMtd = personPayouts
+          .filter((p) => p.payment_date && new Date(p.payment_date).getFullYear() === year && new Date(p.payment_date).getMonth() === month)
+          .reduce((s, p) => s + Number(p.amount), 0);
+        const paidYtd = personPayouts
+          .filter((p) => p.payment_date && new Date(p.payment_date).getFullYear() === year)
+          .reduce((s, p) => s + Number(p.amount), 0);
+        const lastPayment =
+          personPayouts.sort((a, b) => (b.payment_date ?? "").localeCompare(a.payment_date ?? ""))[0]?.payment_date ?? null;
+        return {
+          person,
+          current_rate: currentRate,
+          active_projects: activeProjects,
+          paid_mtd: paidMtd,
+          paid_ytd: paidYtd,
+          last_payment_date: lastPayment,
+        };
+      });
+
+      return rows;
+    },
+  });
+}
+
+export function useTeamKpis(options?: { enabled?: boolean; includeFinancials?: boolean }) {
+  const rosterQuery = useTeamRoster(options);
+  const projectsQuery = useProjects({ enabled: options?.enabled ?? true });
+
+  return useQuery({
+    queryKey: [...qk.teamKpis, options?.includeFinancials ?? true],
+    enabled: (options?.enabled ?? true) && rosterQuery.isSuccess,
+    queryFn: async () => {
+      const rows = rosterQuery.data ?? [];
+      const projects = projectsQuery.data ?? [];
+      const active = rows.filter((r) => r.person.person_status !== "inactive");
+      const employees = active.filter((r) => r.person.employment_type === "employee").length;
+      const contractors = active.filter(
+        (r) => r.person.employment_type === "contractor" || r.person.type === "contractor",
+      ).length;
+      const withCapacity = active.filter((r) => r.person.availability === "full" || r.person.availability === "partial");
+      const paidThisMonth = options?.includeFinancials
+        ? active.reduce((s, r) => s + r.paid_mtd, 0)
+        : null;
+      const activePersonIds = new Set(active.map((r) => r.person.id));
+      const activeAssignments = projects.reduce(
+        (s, p) => {
+          if (p.status !== "in-progress" && p.status !== "planning") return s;
+          return s + (p.team_contacts ?? []).filter((c) => activePersonIds.has(c.id)).length;
+        },
+        0,
+      );
+
+      return {
+        active_team: active.length,
+        employees,
+        contractors,
+        available_capacity: withCapacity.length > 0 ? withCapacity.length : null,
+        paid_this_month: paidThisMonth,
+        active_assignments: activeAssignments,
+        has_payout_data: options?.includeFinancials ?? false,
+        has_capacity_data: active.some((r) => !!r.person.availability),
+      } satisfies import("@/lib/types").TeamKpiSummary;
     },
   });
 }
@@ -3853,6 +4987,34 @@ export function usePaidRevenueReconciliation(monthKey?: string) {
       };
     },
   });
+}
+
+export function usePaidRevenueExclusions(monthKey: string) {
+  const [excludedIds, setExcludedIds] = useState<Set<string>>(() => loadPaidRevenueExclusions(monthKey));
+
+  useEffect(() => {
+    setExcludedIds(loadPaidRevenueExclusions(monthKey));
+  }, [monthKey]);
+
+  const toggleExclusion = useCallback((id: string) => {
+    setExcludedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      savePaidRevenueExclusions(monthKey, next);
+      return next;
+    });
+  }, [monthKey]);
+
+  const includeAll = useCallback(() => {
+    setExcludedIds(() => {
+      const next = new Set<string>();
+      savePaidRevenueExclusions(monthKey, next);
+      return next;
+    });
+  }, [monthKey]);
+
+  return { excludedIds, toggleExclusion, includeAll };
 }
 
 export function useStripeCreateInvoice() {
