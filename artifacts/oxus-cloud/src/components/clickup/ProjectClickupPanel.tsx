@@ -1,5 +1,16 @@
 import React, { useMemo, useState } from "react";
-import { AlertCircle, CheckCircle2, ExternalLink, Link2, Settings, Zap } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Copy,
+  ExternalLink,
+  Link2,
+  MoreHorizontal,
+  RefreshCw,
+  Settings,
+  ShieldCheck,
+  Zap,
+} from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Link } from "wouter";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -11,6 +22,13 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
@@ -20,17 +38,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { UpdateClickupSetupDialog } from "@/components/clickup/UpdateClickupSetupDialog";
 import { useToast } from "@/hooks/use-toast";
 import { useClickupOAuthHandler } from "@/hooks/useClickupOAuthHandler";
 import {
+  useAuditClickupProjectSetup,
   useClickupDiagnostics,
   useClickupMyConnection,
   useClickupTeamSpaces,
   useEnsureProjectClickupSpace,
   useProjectClickupLink,
   useStartClickupOAuth,
+  useSyncClickupMembers,
+  useSyncClickupProjectSetup,
+  type ClickupSetupUpdatePlan,
 } from "@/hooks/api";
 import { projectClickupOAuthReturnPath } from "@/lib/clickupOAuthReturn";
+import { CLICKUP_TEMPLATE_VERSION } from "@/lib/clickup/template";
 
 interface Props {
   projectId: string;
@@ -44,6 +68,30 @@ function metadataValue(metadata: unknown, key: string): string | null {
   return value === null || value === undefined ? null : String(value);
 }
 
+function setupStatusLabel(status: string | null | undefined): string {
+  switch (status) {
+    case "configured":
+      return "Configured";
+    case "needs_update":
+      return "Update available";
+    case "missing_required":
+      return "Missing required fields";
+    case "access_required":
+      return "Access required";
+    case "unverified":
+      return "Configuration could not be verified";
+    default:
+      return "Not audited";
+  }
+}
+
+function setupStatusVariant(status: string | null | undefined): "default" | "secondary" | "destructive" | "outline" {
+  if (status === "configured") return "default";
+  if (status === "needs_update") return "secondary";
+  if (status === "missing_required" || status === "access_required" || status === "unverified") return "destructive";
+  return "outline";
+}
+
 type LinkMode = "create" | "existing";
 
 export function ProjectClickupPanel({ projectId }: Props) {
@@ -52,11 +100,17 @@ export function ProjectClickupPanel({ projectId }: Props) {
   const { data: diagnostics } = useClickupDiagnostics(projectId);
   const { data: clickupStatus, refetch: refetchClickup } = useClickupMyConnection();
   const ensureSpace = useEnsureProjectClickupSpace();
+  const auditSetup = useAuditClickupProjectSetup();
+  const syncSetup = useSyncClickupProjectSetup();
+  const syncMembers = useSyncClickupMembers();
   const startClickupOAuth = useStartClickupOAuth();
   const { handleError, startConnect } = useClickupOAuthHandler();
 
   const [linkMode, setLinkMode] = useState<LinkMode>("create");
   const [selectedSpaceId, setSelectedSpaceId] = useState<string>("");
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  const [updatePlan, setUpdatePlan] = useState<ClickupSetupUpdatePlan | null>(null);
+  const [diagnosticsSummary, setDiagnosticsSummary] = useState<string | null>(null);
 
   const accountConnected = clickupStatus?.connected === true;
   const { data: spaces = [], isLoading: spacesLoading } = useClickupTeamSpaces(
@@ -106,8 +160,125 @@ export function ProjectClickupPanel({ projectId }: Props) {
     }
   };
 
+  const runAudit = async () => {
+    try {
+      const result = await auditSetup.mutateAsync({ project_id: projectId });
+      setUpdatePlan(result.update_plan);
+      setDiagnosticsSummary(result.diagnostics_summary);
+      toast({
+        title: "ClickUp setup audited",
+        description: `Status: ${setupStatusLabel(result.audit.status)}`,
+      });
+    } catch (e) {
+      if (!handleError(e, "Could not audit ClickUp setup")) {
+        toast({ title: "Audit failed", description: (e as Error).message, variant: "destructive" });
+      }
+    }
+  };
+
+  const openUpdateDialog = async () => {
+    try {
+      const result = await auditSetup.mutateAsync({ project_id: projectId });
+      setUpdatePlan(result.update_plan);
+      setDiagnosticsSummary(result.diagnostics_summary);
+      setUpdateDialogOpen(true);
+    } catch (e) {
+      if (!handleError(e, "Could not prepare ClickUp setup update")) {
+        toast({ title: "Could not prepare update", description: (e as Error).message, variant: "destructive" });
+      }
+    }
+  };
+
+  const confirmUpdate = async () => {
+    try {
+      const result = await syncSetup.mutateAsync({ project_id: projectId, confirm: true });
+      setDiagnosticsSummary(result.diagnostics_summary);
+      setUpdateDialogOpen(false);
+
+      if (result.already_applied) {
+        toast({
+          title: "Already up to date",
+          description: "This Space already matches the current OXUS template.",
+        });
+        return;
+      }
+
+      const updateResult = result.update_result;
+      const isPartial = updateResult?.status === "partial";
+      const isFailed = updateResult?.status === "failed";
+
+      if (isFailed) {
+        toast({
+          title: "ClickUp setup update incomplete",
+          description:
+            updateResult?.warnings[0] ??
+            "ClickUp rejected part of the setup update. Review diagnostics for details.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: isPartial ? "ClickUp setup partially updated" : "ClickUp setup updated",
+          description: isPartial
+            ? [
+                updateResult?.enabled_automatically.length
+                  ? `Enabled: ${updateResult.enabled_automatically.join(", ")}`
+                  : null,
+                updateResult?.requires_manual.length
+                  ? `Manual: ${updateResult.requires_manual.join("; ")}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(". ") || `Status: ${setupStatusLabel(result.audit.status)}`
+            : `Applied ${result.applied_changes.length} change(s). Status: ${setupStatusLabel(result.audit.status)}`,
+        });
+      }
+
+      try {
+        const auditResult = await auditSetup.mutateAsync({ project_id: projectId });
+        setDiagnosticsSummary(auditResult.diagnostics_summary);
+      } catch {
+        // Audit refresh is best-effort after a successful sync.
+      }
+    } catch (e) {
+      if (!handleError(e, "Could not update ClickUp setup")) {
+        toast({ title: "Update failed", description: (e as Error).message, variant: "destructive" });
+      }
+    }
+  };
+
+  const refreshMembers = async () => {
+    try {
+      const result = await syncMembers.mutateAsync({ project_id: projectId, force: true });
+      toast({
+        title: "Members refreshed",
+        description: `${result.assignable_synced_count} assignable member(s) synced.`,
+      });
+    } catch (e) {
+      if (!handleError(e, "Could not refresh members")) {
+        toast({ title: "Refresh failed", description: (e as Error).message, variant: "destructive" });
+      }
+    }
+  };
+
+  const copyDiagnostics = async () => {
+    const text = diagnosticsSummary ?? "Run Audit ClickUp setup to generate diagnostics.";
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ title: "Diagnostics copied" });
+    } catch {
+      toast({ title: "Could not copy diagnostics", variant: "destructive" });
+    }
+  };
+
   const meta = link?.metadata;
   const canLinkExisting = linkMode === "existing" && !!selectedSpaceId;
+  const setupStatus = link?.clickup_setup_status;
+  const needsUpdate = setupStatus === "needs_update" || setupStatus === "missing_required";
+
+  const folderUrl =
+    link?.clickup_folder_id && link.clickup_team_id
+      ? `https://app.clickup.com/${link.clickup_team_id}/v/f/${link.clickup_folder_id}`
+      : null;
 
   return (
     <div className="space-y-6">
@@ -126,6 +297,18 @@ export function ProjectClickupPanel({ projectId }: Props) {
           <p className="text-sm text-muted-foreground">Loading ClickUp link...</p>
         ) : link ? (
           <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={setupStatusVariant(setupStatus)}>{setupStatusLabel(setupStatus)}</Badge>
+              <span className="text-xs text-muted-foreground">
+                Template v{link.clickup_template_version ?? "—"} / current v{CLICKUP_TEMPLATE_VERSION}
+              </span>
+              {link.clickup_setup_audited_at && (
+                <span className="text-xs text-muted-foreground">
+                  Last audited {formatDistanceToNow(new Date(link.clickup_setup_audited_at), { addSuffix: true })}
+                </span>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               {link.space_name && (
                 <div className="rounded-lg border border-border bg-card p-3">
@@ -159,15 +342,70 @@ export function ProjectClickupPanel({ projectId }: Props) {
                   </div>
                 </div>
               )}
-              {link.last_sync_at && (
+              {link.clickup_setup_updated_at && (
                 <div className="rounded-lg border border-border bg-card p-3">
-                  <p className="section-label mb-1">Last sync</p>
-                  <p className="text-sm font-medium flex items-center gap-1">
-                    <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
-                    {formatDistanceToNow(new Date(link.last_sync_at), { addSuffix: true })}
+                  <p className="section-label mb-1">Last setup update</p>
+                  <p className="text-sm font-medium">
+                    {formatDistanceToNow(new Date(link.clickup_setup_updated_at), { addSuffix: true })}
                   </p>
                 </div>
               )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {needsUpdate ? (
+                <Button size="sm" onClick={openUpdateDialog} disabled={auditSetup.isPending || syncSetup.isPending}>
+                  <ShieldCheck className="h-4 w-4 mr-1" />
+                  Update ClickUp setup
+                </Button>
+              ) : (
+                <Button size="sm" variant="default" onClick={runAudit} disabled={auditSetup.isPending}>
+                  <ShieldCheck className="h-4 w-4 mr-1" />
+                  Audit ClickUp setup
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={refreshMembers}
+                disabled={syncMembers.isPending}
+              >
+                <RefreshCw className={`h-4 w-4 mr-1 ${syncMembers.isPending ? "animate-spin" : ""}`} />
+                Refresh members
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="ghost">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {link.space_url && (
+                    <DropdownMenuItem onClick={() => window.open(link.space_url!, "_blank")}>
+                      Open Space in ClickUp
+                    </DropdownMenuItem>
+                  )}
+                  {folderUrl && (
+                    <DropdownMenuItem onClick={() => window.open(folderUrl, "_blank")}>
+                      Open Folder
+                    </DropdownMenuItem>
+                  )}
+                  {link.list_url && (
+                    <DropdownMenuItem onClick={() => window.open(link.list_url!, "_blank")}>
+                      Open List
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem onClick={runAudit}>View diagnostics</DropdownMenuItem>
+                  <DropdownMenuItem onClick={copyDiagnostics}>
+                    <Copy className="h-3.5 w-3.5 mr-2" />
+                    Copy diagnostics
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild>
+                    <Link href="/settings#clickup-account">Change connection</Link>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
 
             {link.last_error && (
@@ -185,82 +423,16 @@ export function ProjectClickupPanel({ projectId }: Props) {
                 </AccordionTrigger>
                 <AccordionContent>
                   <div className="space-y-2 text-xs text-muted-foreground">
-                    <p>Project ClickUp link: <Badge variant="outline" className="text-[10px] h-5">connected</Badge></p>
-                    <p>Space ID: <span className="font-mono">{link.clickup_space_id ?? "—"}</span></p>
-                    <p>List ID: <span className="font-mono">{link.clickup_list_id ?? "—"}</span></p>
-                    <p>Webhook ID: <span className="font-mono">{link.clickup_webhook_id ?? "—"}</span></p>
-                    <p>Registered webhook events: {metadataValue(meta, "webhook_events") ?? "—"}</p>
-                    <p>Webhook scope: {metadataValue(meta, "webhook_scope") ?? "—"}</p>
-                    <p>Webhook created: {metadataValue(meta, "webhook_created_at") ?? "—"}</p>
-                    <p>Last webhook received: {metadataValue(meta, "last_webhook_received_at") ?? "—"}</p>
-                    <p>Last webhook event: {metadataValue(meta, "last_webhook_event_type") ?? "—"}</p>
-                    <p>Last webhook mapped: {metadataValue(meta, "last_webhook_mapped") ?? "—"}</p>
-                    <p>Last webhook error: {metadataValue(meta, "last_webhook_error") ?? "—"}</p>
-                    <p>Last manual sync: {metadataValue(meta, "last_manual_sync_at") ?? "—"}</p>
-                    <p>Last manual sync imported: {metadataValue(meta, "last_manual_sync_imported_count") ?? "—"} comments</p>
-                    <p>Needs comment fetch: {metadataValue(meta, "needs_comment_fetch") ?? "false"}</p>
+                    <pre className="whitespace-pre-wrap font-mono text-[11px] bg-muted/40 rounded-md p-3">
+                      {diagnosticsSummary ??
+                        (link.clickup_setup_snapshot
+                          ? JSON.stringify(link.clickup_setup_snapshot, null, 2)
+                          : "Run Audit ClickUp setup to verify against ClickUp.")}
+                    </pre>
                     <p>Workspace member count: {diagnostics?.workspaceMemberCount ?? "—"}</p>
                     <p>Project assignable member count: {diagnostics?.assignableMemberCount ?? "—"}</p>
-                    <p>Hidden workspace members: {diagnostics?.hiddenWorkspaceMemberCount ?? "—"}</p>
-                    <p>
-                      Linked Space:{" "}
-                      {diagnostics?.assignableMembersSync?.linked_space_name ??
-                        link.space_name ??
-                        diagnostics?.assignableMembersSync?.linked_space_id ??
-                        link.clickup_space_id ??
-                        "—"}
-                    </p>
-                    <p>
-                      Linked Folder:{" "}
-                      {diagnostics?.assignableMembersSync?.linked_folder_name ??
-                        link.folder_name ??
-                        diagnostics?.assignableMembersSync?.linked_folder_id ??
-                        link.clickup_folder_id ??
-                        "—"}
-                    </p>
-                    <p>
-                      Linked List:{" "}
-                      {diagnostics?.assignableMembersSync?.linked_list_name ??
-                        link.list_name ??
-                        diagnostics?.assignableMembersSync?.linked_list_id ??
-                        link.clickup_list_id ??
-                        "—"}
-                    </p>
-                    <p>
-                      Assignable member sync source:{" "}
-                      {diagnostics?.assignableMembersSync?.sync_source ?? "—"}
-                      {diagnostics?.assignableMembersSync?.confidence
-                        ? ` (${diagnostics.assignableMembersSync.confidence} confidence)`
-                        : ""}
-                    </p>
-                    {diagnostics?.lastWebhookEvent && (
-                      <p>
-                        Latest stored webhook: {diagnostics.lastWebhookEvent.event_type} on task {diagnostics.lastWebhookEvent.clickup_task_id}{" "}
-                        ({formatDistanceToNow(new Date(diagnostics.lastWebhookEvent.created_at), { addSuffix: true })})
-                        {diagnostics.lastWebhookEvent.processing_error && (
-                          <span className="text-destructive"> — {diagnostics.lastWebhookEvent.processing_error}</span>
-                        )}
-                      </p>
-                    )}
-                    {diagnostics?.lastTimelineEvent && (
-                      <p>
-                        Latest timeline event: {diagnostics.lastTimelineEvent.event_type} — {diagnostics.lastTimelineEvent.event_title}{" "}
-                        ({formatDistanceToNow(new Date(diagnostics.lastTimelineEvent.created_at), { addSuffix: true })})
-                      </p>
-                    )}
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
-              <AccordionItem value="details" className="border-0">
-                <AccordionTrigger className="text-xs text-muted-foreground hover:no-underline py-1">
-                  Technical details
-                </AccordionTrigger>
-                <AccordionContent>
-                  <div className="space-y-1 text-xs text-muted-foreground font-mono">
-                    <p>Team ID: {link.clickup_team_id}</p>
-                    <p>Space ID: {link.clickup_space_id ?? "—"}</p>
-                    <p>List ID: {link.clickup_list_id ?? "—"}</p>
-                    {link.clickup_webhook_id && <p>Webhook ID: {link.clickup_webhook_id}</p>}
+                    <p>Webhook ID: <span className="font-mono">{link.clickup_webhook_id ?? "—"}</span></p>
+                    <p>Registered webhook events: {metadataValue(meta, "webhook_events") ?? "—"}</p>
                   </div>
                 </AccordionContent>
               </AccordionItem>
@@ -293,7 +465,7 @@ export function ProjectClickupPanel({ projectId }: Props) {
                     <Label htmlFor="clickup-link-create" className="space-y-1 cursor-pointer">
                       <span className="text-sm font-medium">Create new space</span>
                       <p className="text-xs text-muted-foreground font-normal">
-                        Creates a ClickUp space with Delivery folder and Tasks list for this project.
+                        Creates a ClickUp space with the OXUS Delivery Template (features, Delivery folder, Tasks list).
                       </p>
                     </Label>
                   </div>
@@ -317,9 +489,6 @@ export function ProjectClickupPanel({ projectId }: Props) {
                             ))}
                           </SelectContent>
                         </Select>
-                      )}
-                      {linkMode === "existing" && !spacesLoading && spaces.length === 0 && (
-                        <p className="text-xs text-muted-foreground">No spaces found in your ClickUp workspace.</p>
                       )}
                     </div>
                   </div>
@@ -360,6 +529,15 @@ export function ProjectClickupPanel({ projectId }: Props) {
           Open Settings
         </Link>
       </p>
+
+      <UpdateClickupSetupDialog
+        open={updateDialogOpen}
+        onOpenChange={setUpdateDialogOpen}
+        appliedTemplateVersion={link?.clickup_template_version ?? null}
+        plan={updatePlan}
+        busy={syncSetup.isPending}
+        onConfirm={confirmUpdate}
+      />
     </div>
   );
 }
