@@ -16,6 +16,14 @@ export function getStripeWebhookSecret(): string | null {
   return secret || null;
 }
 
+export function getStripeWebhookSecrets(): string[] {
+  const secrets = [
+    Deno.env.get("STRIPE_WEBHOOK_SECRET")?.trim(),
+    Deno.env.get("STRIPE_WEBHOOK_SECRET_PREVIOUS")?.trim(),
+  ].filter((value): value is string => !!value);
+  return secrets;
+}
+
 export function createStripeClient(): Stripe | null {
   const secretKey = getStripeSecretKey();
   if (!secretKey) return null;
@@ -87,9 +95,9 @@ export function mapStripeInvoiceStatus(stripeStatus: string | null): string {
     case "paid":
       return "paid";
     case "uncollectible":
-      return "overdue";
+      return "uncollectible";
     case "void":
-      return "draft";
+      return "void";
     default:
       return "sent";
   }

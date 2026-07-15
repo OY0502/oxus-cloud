@@ -5794,7 +5794,54 @@ export function useStripeConnectionStatus(options?: { enabled?: boolean }) {
         { headers: { Authorization: `Bearer ${token}` } },
       );
       if (error) await throwEdgeFunctionError(error);
-      return data ?? { configured: false, connected: false, account: null, last_successful_sync_at: null, last_sync_error: null, webhook_last_received_at: null };
+      return data ?? {
+        configured: false,
+        connected: false,
+        account: null,
+        last_successful_sync_at: null,
+        last_sync_error: null,
+        webhook_last_received_at: null,
+      };
+    },
+  });
+}
+
+export function useStripeWebhookRecovery() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input?: { inbox_ids?: string[]; limit?: number }) => {
+      const token = await getAuthToken();
+      const { data, error } = await supabase.functions.invoke<{
+        retried: number;
+        results: Array<{ inbox_id: string; stripe_event_id: string; ok: boolean; status: number }>;
+      }>("stripe-webhook-recovery", {
+        body: { action: "retry", ...input },
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (error) await throwEdgeFunctionError(error);
+      return data ?? { retried: 0, results: [] };
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.stripeConnection });
+    },
+  });
+}
+
+export function useGoogleCheckInterruptedImports() {
+  return useMutation({
+    mutationFn: async () => {
+      const token = await getAuthToken();
+      const { data, error } = await supabase.functions.invoke<{
+        ok: boolean;
+        task_id: string;
+        trigger_run_id: string;
+        message: string;
+      }>("google-check-interrupted-imports", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (error) await throwEdgeFunctionError(error);
+      if (!data?.ok) throw new Error("Failed to queue interrupted import check.");
+      return data;
     },
   });
 }

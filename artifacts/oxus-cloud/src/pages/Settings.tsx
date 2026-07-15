@@ -17,7 +17,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { AlertCircle, Check, Link2, ShieldAlert, Slack, Unlink, X, CreditCard, RefreshCw } from "lucide-react";
+import { AlertCircle, Check, Link2, ShieldAlert, Slack, Unlink, X, CreditCard, RefreshCw, FileText } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   useClickupMyConnection,
@@ -30,7 +30,12 @@ import {
   useUpdateProfile,
   useStripeConnectionStatus,
   useStripeSyncInvoices,
+  useStripeWebhookRecovery,
+  useGoogleCheckInterruptedImports,
+  usePandaDocConnectionStatus,
+  useGoogleConnectionStatus,
 } from "@/hooks/api";
+import { GoogleConnection } from "@/components/crm/GoogleConnection";
 import { useClickupOAuthHandler } from "@/hooks/useClickupOAuthHandler";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -52,6 +57,11 @@ export function Settings() {
   const disconnectSlack = useDisconnectSlack();
   const { data: stripeStatus, refetch: refetchStripe } = useStripeConnectionStatus({ enabled: isSuperAdmin });
   const syncStripe = useStripeSyncInvoices();
+  const retryStripeWebhooks = useStripeWebhookRecovery();
+  const checkInterruptedImports = useGoogleCheckInterruptedImports();
+  const { data: pandadocStatus, refetch: refetchPandaDoc, isFetching: pandadocFetching } = usePandaDocConnectionStatus({
+    enabled: isSuperAdmin,
+  });
   const { startConnect } = useClickupOAuthHandler();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -64,6 +74,8 @@ export function Settings() {
   const highlightSlack = clickupParams.get("connect") === "slack";
   const slackConnectedParam = clickupParams.get("slack");
   const slackErrorMessage = clickupParams.get("message");
+  const googleConnectedParam = clickupParams.get("google");
+  const googleErrorMessage = clickupParams.get("message");
 
   const activeSlackWorkspace = slackWorkspaces.find((w) => w.status === "active") ?? null;
 
@@ -92,6 +104,23 @@ export function Settings() {
       setLocation("/settings");
     }
   }, [clickupConnectedParam, clickupErrorMessage, refetchClickup, setLocation, toast]);
+
+  const { refetch: refetchGoogle } = useGoogleConnectionStatus();
+
+  useEffect(() => {
+    if (googleConnectedParam === "connected") {
+      setLocation("/settings/integrations", { replace: true });
+      toast({ title: "Google connected", description: "OXUS is importing your relationship data in the background." });
+      void refetchGoogle();
+    }
+    if (googleConnectedParam === "error" && googleErrorMessage) {
+      toast({
+        title: "Google connection failed",
+        description: decodeURIComponent(googleErrorMessage),
+        variant: "destructive",
+      });
+    }
+  }, [googleConnectedParam, googleErrorMessage, refetchGoogle, setLocation, toast]);
 
   useEffect(() => {
     if (slackConnectedParam === "connected") {
@@ -356,6 +385,33 @@ export function Settings() {
         </CardContent>
       </Card>
 
+      <GoogleConnection variant="card" redirectAfter="/settings/integrations" enableGmail />
+
+      {isSuperAdmin && (
+        <Card id="google-import-diagnostics">
+          <CardHeader>
+            <CardTitle className="text-base">Google import watchdog</CardTitle>
+            <CardDescription>
+              Daily safety check for abandoned import runs. This does not fetch new Gmail or CRM data.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button
+              variant="outline"
+              disabled={checkInterruptedImports.isPending}
+              onClick={() => {
+                checkInterruptedImports.mutate(undefined, {
+                  onSuccess: () => toast({ title: "Watchdog queued", description: "Checking interrupted imports in the background." }),
+                  onError: (e) => toast({ title: "Check failed", description: e.message, variant: "destructive" }),
+                });
+              }}
+            >
+              {checkInterruptedImports.isPending ? "Queueing…" : "Check interrupted imports"}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       <Card className={highlightClickup ? "ring-2 ring-primary" : undefined} id="clickup-account">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -538,9 +594,27 @@ export function Settings() {
                 </div>
                 <div>
                   <p className="text-muted-foreground text-xs">Webhook</p>
-                  <p>{stripeStatus.webhook_configured ? "Configured" : "Secret missing"}</p>
+                  <p>{stripeStatus.webhook_configured ? "Signature configured" : "Secret missing"}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Endpoint {stripeStatus.webhook_endpoint_reachable ? "reachable" : "unreachable"}
+                  </p>
                   {stripeStatus.webhook_last_received_at && (
-                    <p className="text-xs text-muted-foreground">Last event: {new Date(stripeStatus.webhook_last_received_at).toLocaleString()}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Last received: {new Date(stripeStatus.webhook_last_received_at).toLocaleString()}
+                    </p>
+                  )}
+                  {stripeStatus.webhook_last_processed_at && (
+                    <p className="text-xs text-muted-foreground">
+                      Last processed: {new Date(stripeStatus.webhook_last_processed_at).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Webhook queue</p>
+                  <p>Pending: {stripeStatus.webhook_pending_events ?? 0}</p>
+                  <p>Failed: {stripeStatus.webhook_failed_events ?? 0}</p>
+                  {stripeStatus.webhook_last_event_id && (
+                    <p className="text-xs text-muted-foreground truncate">Last event: {stripeStatus.webhook_last_event_id}</p>
                   )}
                 </div>
               </div>
@@ -551,7 +625,7 @@ export function Settings() {
                 <AlertDescription>{stripeStatus.last_sync_error}</AlertDescription>
               </Alert>
             )}
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="outline"
                 disabled={!stripeStatus?.configured || syncStripe.isPending}
@@ -568,8 +642,98 @@ export function Settings() {
                 <RefreshCw className={`h-4 w-4 mr-2 ${syncStripe.isPending ? "animate-spin" : ""}`} />
                 Sync latest
               </Button>
-              <p className="text-xs text-muted-foreground">Pull the latest invoice and payment changes from Stripe.</p>
+              <Button
+                variant="outline"
+                disabled={!stripeStatus?.configured || retryStripeWebhooks.isPending || !(stripeStatus.webhook_failed_events ?? 0)}
+                onClick={() => {
+                  retryStripeWebhooks.mutate({ limit: 10 }, {
+                    onSuccess: (r) => {
+                      void refetchStripe();
+                      toast({ title: "Webhook retry queued", description: `${r.retried} event(s) reprocessed.` });
+                    },
+                    onError: (e) => toast({ title: "Webhook retry failed", description: e.message, variant: "destructive" }),
+                  });
+                }}
+              >
+                Retry failed webhooks
+              </Button>
               <Button variant="ghost" onClick={() => void refetchStripe()}>Refresh status</Button>
+            </div>
+            <p className="text-xs text-muted-foreground">Sync latest pulls invoice changes from Stripe. Webhook retries reprocess failed inbox events only.</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {isSuperAdmin && (
+        <Card id="pandadoc-integration">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              PandaDoc
+            </CardTitle>
+            <CardDescription>
+              Server-side PandaDoc workspace integration for linking MSA, NDA, SOW, and other documents to projects.
+              API keys never reach the browser. Document content is not ingested into Project Intelligence.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            {!pandadocStatus?.configured ? (
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  PandaDoc is not configured. Set <code className="text-xs">PANDADOC_API_KEY</code> and optionally{" "}
+                  <code className="text-xs">PANDADOC_WEBHOOK_SHARED_KEY</code> in Supabase Edge Function secrets.
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <p className="text-muted-foreground text-xs">Status</p>
+                  <p className="font-medium">{pandadocStatus.connected ? "Configured / Connected" : "Configured"}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Workspace</p>
+                  <p>{pandadocStatus.workspace_name ?? "—"}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Last successful sync</p>
+                  <p>
+                    {pandadocStatus.last_successful_sync_at
+                      ? new Date(pandadocStatus.last_successful_sync_at).toLocaleString()
+                      : "Never"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Webhook</p>
+                  <p>{pandadocStatus.webhook_configured ? "Configured" : "Shared key missing"}</p>
+                  {pandadocStatus.webhook_last_received_at && (
+                    <p className="text-xs text-muted-foreground">
+                      Last event: {new Date(pandadocStatus.webhook_last_received_at).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+            {pandadocStatus?.last_sync_error && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{pandadocStatus.last_sync_error}</AlertDescription>
+              </Alert>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                disabled={!pandadocStatus?.configured || pandadocFetching}
+                onClick={() => {
+                  void refetchPandaDoc().then(() => {
+                    toast({ title: "Connection tested", description: "PandaDoc status refreshed." });
+                  });
+                }}
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${pandadocFetching ? "animate-spin" : ""}`} />
+                Test connection
+              </Button>
+              <Button variant="ghost" onClick={() => void refetchPandaDoc()}>Refresh status</Button>
             </div>
           </CardContent>
         </Card>

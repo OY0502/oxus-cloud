@@ -1,5 +1,6 @@
 import { task } from "@trigger.dev/sdk";
 import { getServiceClient, invokeAgentWorker } from "../server/supabase";
+import "./googleSyncTasks";
 
 async function workerPost(functionName: string, body: Record<string, unknown>) {
   const resp = await invokeAgentWorker(functionName, body);
@@ -315,6 +316,17 @@ export const backfillInvoiceFxTask = task({
   },
 });
 
+export const processStripeWebhookEventTask = task({
+  id: "process-stripe-webhook-event",
+  run: async (payload: { inbox_id?: string; stripe_event_id?: string }) => {
+    const result = await workerPost("process-stripe-webhook-event", payload);
+    if ((result as { error?: string }).error) {
+      throw new Error(String((result as { error?: string }).error));
+    }
+    return result;
+  },
+});
+
 export const reconcileStripeInvoicePaymentsTask = task({
   id: "reconcile-stripe-invoice-payments",
   run: async (payload?: { month?: string; invoice_id?: string; force?: boolean; limit?: number }) => {
@@ -328,6 +340,62 @@ export const reconcileStripeInvoicePaymentsTask = task({
       throw new Error(String((result as { error?: string }).error));
     }
     console.info("[reconcile-stripe-invoice-payments] completed", result);
+    return result;
+  },
+});
+
+export const crmEnrichCompanyTask = task({
+  id: "crm-enrich-company",
+  run: async (payload: { company_id: string; user_id: string; website?: string | null }) => {
+    return workerPost("crm-enrich-company", payload);
+  },
+});
+
+export const reconcileCrmImportQualityTask = task({
+  id: "reconcile-crm-import-quality",
+  run: async (payload?: { dry_run?: boolean; user_id?: string }) => {
+    const result = await workerPost("crm-reconcile-import-quality", {
+      dry_run: payload?.dry_run ?? false,
+    });
+    if ((result as { error?: string }).error) {
+      throw new Error(String((result as { error?: string }).error));
+    }
+    console.info("[reconcile-crm-import-quality] completed", result);
+    return result;
+  },
+});
+
+export const resolveCompanyLogoTask = task({
+  id: "resolve-company-logo",
+  run: async (payload: { company_id: string; domain?: string; website_url?: string; force_refresh?: boolean }) => {
+    return workerPost("resolve-company-logo", payload);
+  },
+});
+
+export const crmResolverStageTask = task({
+  id: "crm-resolver-stage",
+  run: async (payload: { run_id: string }) => {
+    const result = await workerPost("crm-resolver-worker", {
+      action: "run_stage",
+      run_id: payload.run_id,
+    });
+    if ((result as { error?: string }).error) {
+      throw new Error(String((result as { error?: string }).error));
+    }
+    return result;
+  },
+});
+
+export const crmMigrateV2Task = task({
+  id: "crm-migrate-v2",
+  run: async (payload: { connection_id: string }) => {
+    const result = await workerPost("crm-resolver-worker", {
+      action: "migrate_account",
+      connection_id: payload.connection_id,
+    });
+    if ((result as { error?: string }).error) {
+      throw new Error(String((result as { error?: string }).error));
+    }
     return result;
   },
 });

@@ -5,19 +5,24 @@ import type { Json } from "./database.types";
 
 export type QuoteStage = "new-lead" | "scoping" | "proposal" | "won" | "archived";
 export type Urgency = "low" | "normal" | "high";
-export type CompanyType = "internal" | "client" | "prospect" | "partner" | "vendor" | "inactive";
-export const COMPANY_TYPES: CompanyType[] = ["client", "prospect", "partner", "vendor", "internal", "inactive"];
+export type CompanyType = "internal" | "client" | "prospect" | "partner" | "vendor" | "tool" | "unknown" | "inactive";
+export const COMPANY_TYPES: CompanyType[] = ["client", "prospect", "partner", "vendor", "tool", "unknown", "internal", "inactive"];
 
 export type CompanyPersonRelationship =
+  | "team_member"
   | "employee"
   | "contractor"
+  | "founder"
+  | "advisor"
   | "client_contact"
   | "decision_maker"
   | "billing_contact"
   | "technical_contact"
+  | "former_employee"
   | "lead"
   | "partner"
-  | "vendor_contact";
+  | "vendor_contact"
+  | "other";
 
 export type InvoiceProvider = "stripe" | "wise" | "manual" | "other";
 export type PayoutProvider = "manual" | "wise" | "bank_transfer" | "stripe" | "other";
@@ -32,7 +37,7 @@ export type ProjectStatus = "planning" | "in-progress" | "on-hold" | "completed"
 export type Priority = "low" | "medium" | "high";
 export type ProjectHealth = "on-track" | "at-risk" | "off-track";
 export type RiskLevel = "none" | "low" | "medium" | "high";
-export type InvoiceStatus = "draft" | "sent" | "viewed" | "partial" | "overdue" | "paid";
+export type InvoiceStatus = "draft" | "sent" | "viewed" | "partial" | "overdue" | "paid" | "uncollectible" | "void";
 export type EventType = "meeting" | "design" | "internal" | "milestone";
 export type TransactionType = "income" | "expense";
 export type ActivityKind = "success" | "info" | "warning" | "default";
@@ -416,6 +421,66 @@ export interface Client {
   metadata: Json;
   created_at: string;
   updated_at: string;
+  legal_name?: string | null;
+  primary_domain?: string | null;
+  alternate_domains?: string[];
+  sub_industry?: string | null;
+  headquarters?: string | null;
+  country?: string | null;
+  city?: string | null;
+  company_size?: string | null;
+  business_model?: string | null;
+  products_services?: string | null;
+  target_customers?: string | null;
+  relationship_owner_id?: string | null;
+  source?: string | null;
+  first_interaction_at?: string | null;
+  last_interaction_at?: string | null;
+  next_meeting_at?: string | null;
+  interaction_count?: number;
+  relationship_strength?: string | null;
+  tags?: string[];
+  field_provenance?: Json;
+  locked_fields?: string[];
+  enrichment_status?: string;
+  enrichment_confidence?: number | null;
+  last_enriched_at?: string | null;
+  enrichment_sources?: Json;
+  needs_review?: boolean;
+  archived_at?: string | null;
+  display_name?: string | null;
+  normalized_name?: string | null;
+  name_confidence?: number | null;
+  name_source?: string | null;
+  manually_confirmed?: boolean;
+  registrable_domain?: string | null;
+  host_subdomain?: string | null;
+  normalized_host?: string | null;
+  data_quality_status?: string;
+  suppressed_at?: string | null;
+  classification_confidence?: number | null;
+  classification_evidence?: Json;
+  import_confidence?: number | null;
+  import_confidence_band?: string | null;
+  last_interaction_type?: string | null;
+  last_interaction_direction?: string | null;
+  primary_contact_id?: string | null;
+  logo_storage_path?: string | null;
+  logo_source?: string | null;
+  logo_source_url?: string | null;
+  logo_confidence?: number | null;
+  logo_width?: number | null;
+  logo_height?: number | null;
+  logo_content_hash?: string | null;
+  logo_resolved_at?: string | null;
+  logo_status?: string;
+  manual_logo_locked?: boolean;
+  visibility_state?: string | null;
+  quality_reason?: string | null;
+  aggregated_sources?: string[];
+  two_way_thread_count?: number;
+  soft_deleted_at?: string | null;
+  merged_into_id?: string | null;
 }
 
 /** Alias for Client — same underlying `clients` table. */
@@ -461,10 +526,197 @@ export interface Contact {
   stack: string[];
   created_at: string;
   updated_at: string;
+  alternate_emails?: string[];
+  timezone?: string | null;
+  language?: string | null;
+  department?: string | null;
+  seniority?: string | null;
+  relationship_type?: string | null;
+  relationship_owner_id?: string | null;
+  first_interaction_at?: string | null;
+  next_meeting_at?: string | null;
+  email_thread_count?: number;
+  meeting_count?: number;
+  tags?: string[];
+  field_provenance?: Json;
+  locked_fields?: string[];
+  decision_maker?: boolean;
+  technical_contact?: boolean;
+  billing_contact?: boolean;
+  archived_at?: string | null;
+  display_name?: string | null;
+  name_confidence?: number | null;
+  name_source?: string | null;
+  manually_confirmed?: boolean;
+  is_role_inbox?: boolean;
+  role_inbox_label?: string | null;
+  data_quality_status?: string;
+  suppressed_at?: string | null;
+  import_confidence?: number | null;
+  import_confidence_band?: string | null;
+  last_interaction_at?: string | null;
+  last_interaction_type?: string | null;
+  last_interaction_direction?: string | null;
+  interaction_count?: number;
+  visibility_state?: string | null;
+  quality_reason?: string | null;
+  aggregated_sources?: string[];
+  is_automated_sender?: boolean;
+  two_way_thread_count?: number;
+  soft_deleted_at?: string | null;
+  merged_into_id?: string | null;
+  lifecycle_stage?: string | null;
+  primary_project_id?: string | null;
+  identity_confidence?: number | null;
+  primary_email?: string | null;
 }
 
 /** Alias for Contact — same underlying `contacts` table. */
 export type Person = Contact;
+
+export interface GoogleConnectionSafe {
+  id: string;
+  user_id: string;
+  google_account_id: string;
+  google_email: string;
+  granted_scopes: string[];
+  token_expires_at: string | null;
+  status: string;
+  sources_enabled: Record<string, boolean>;
+  import_settings: Record<string, unknown>;
+  connected_at: string;
+  disconnected_at: string | null;
+  last_successful_sync_at: string | null;
+  last_sync_error: string | null;
+  contacts_last_synced_at?: string | null;
+  calendar_last_synced_at?: string | null;
+  gmail_last_synced_at?: string | null;
+  sync_incident_dismissed_at?: string | null;
+  metadata: Json;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GoogleImportRun {
+  id: string;
+  connection_id: string;
+  owner_user_id: string;
+  run_type: string;
+  status: string;
+  progress_stage: string | null;
+  sources: string[];
+  lookback_months: number;
+  settings: Json;
+  counts: Json;
+  trigger_run_id: string | null;
+  progress_processed: number | null;
+  progress_total: number | null;
+  progress_percentage: number | null;
+  started_at: string | null;
+  completed_at: string | null;
+  failed_at: string | null;
+  error: string | null;
+  error_code: string | null;
+  correlation_id: string | null;
+  warnings: string[];
+  created_at: string;
+  updated_at: string;
+  enrichment_status?: string | null;
+  core_sync_status?: string | null;
+  enrichment_paused_at?: string | null;
+  processor_version?: number | null;
+  workflow_version?: number | null;
+  source_progress?: Json;
+  last_heartbeat_at?: string | null;
+  sync_mode?: string | null;
+  cost_metrics?: Json;
+  recovered_at?: string | null;
+  resumed_at?: string | null;
+  resumed_from_trigger_run_id?: string | null;
+  last_historical_error_code?: string | null;
+  last_historical_error_message?: string | null;
+  import_history?: Json;
+  action_required?: boolean | null;
+  recovery_status?: string | null;
+  next_retry_at?: string | null;
+  retry_count?: number | null;
+  retry_task_run_id?: string | null;
+  finalization_started_at?: string | null;
+  finalization_heartbeat_at?: string | null;
+  last_reconciled_at?: string | null;
+  last_reconciliation_outcome?: string | null;
+}
+
+export type GoogleSyncStage =
+  | "idle"
+  | "queued"
+  | "syncing_contacts"
+  | "syncing_calendar"
+  | "syncing_gmail"
+  | "resolving_entities"
+  | "processing_relationships"
+  | "enriching_companies"
+  | "finalizing"
+  | "completed"
+  | "completed_with_warnings"
+  | "failed";
+
+export interface CrmEntityCandidate {
+  id: string;
+  owner_user_id: string;
+  connection_id: string | null;
+  entity_type: "company" | "person" | "lead";
+  status: string;
+  display_name: string;
+  email: string | null;
+  domain: string | null;
+  website: string | null;
+  job_title: string | null;
+  company_name: string | null;
+  suggested_company_type: string | null;
+  suggested_relationship_type: string | null;
+  confidence: number;
+  evidence: Json;
+  sources: string[];
+  reason: string | null;
+  model_version: string | null;
+  matched_company_id: string | null;
+  matched_person_id: string | null;
+  created_entity_id: string | null;
+  processed_at: string | null;
+  processed_by: string | null;
+  metadata: Json;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GoogleInteraction {
+  id: string;
+  connection_id: string;
+  owner_user_id: string;
+  provider: string;
+  interaction_type: string;
+  external_id: string;
+  external_thread_id: string | null;
+  occurred_at: string;
+  subject: string | null;
+  participant_emails: string[];
+  participant_names: string[];
+  organizer_email: string | null;
+  attendee_emails: string[];
+  direction: string | null;
+  snippet: string | null;
+  ai_summary: string | null;
+  classification: string | null;
+  importance: string | null;
+  company_id: string | null;
+  person_ids: string[];
+  project_id: string | null;
+  metadata: Json;
+  processed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface TeamMember {
   id: string;
@@ -586,6 +838,9 @@ export interface Project {
   company_enrichment_error: string | null;
   company_enriched_at: string | null;
   company_enrichment_metadata: Json;
+  archived_at: string | null;
+  archived_by: string | null;
+  archive_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -597,6 +852,8 @@ export interface ProjectWithAssignees extends Project {
   assignees: Profile[];
   team_contacts: Contact[];
   owner: Profile | null;
+  /** Client organization logo from joined `clients` row (organization or client). */
+  client_logo_url?: string | null;
 }
 
 export interface AiProjectBrief {
@@ -988,6 +1245,14 @@ export interface ProjectClickupLink {
   status: ClickupLinkStatus;
   last_sync_at: string | null;
   last_error: string | null;
+  clickup_template_version: number | null;
+  clickup_setup_status: string | null;
+  clickup_setup_audited_at: string | null;
+  clickup_setup_updated_at: string | null;
+  clickup_setup_snapshot: Json | null;
+  clickup_setup_warnings: Json | null;
+  clickup_setup_error: string | null;
+  clickup_setup_updated_by: string | null;
   metadata: Json;
   created_by: string | null;
   created_at: string;
@@ -1046,7 +1311,10 @@ export type ProjectTimelineSourceType =
   | "github"
   | "manual"
   | "ai"
-  | "other";
+  | "other"
+  | "company_website"
+  | "system"
+  | "pandadoc";
 
 export interface ProjectTimelineEvent {
   id: string;
@@ -1332,12 +1600,54 @@ export interface Attachment {
   entity_id: string;
   doc_type: DocType;
   is_active: boolean;
-  file_path: string;
-  file_name: string;
+  file_path: string | null;
+  file_name: string | null;
   file_size: number | null;
   mime_type: string | null;
   uploaded_by: string | null;
   created_at: string;
+  provider: DocumentProvider;
+  external_id: string | null;
+  external_url: string | null;
+  status: string | null;
+  title: string | null;
+  metadata: Json;
+  last_synced_at: string | null;
+  superseded_at: string | null;
+  superseded_by_id: string | null;
+}
+
+export type DocumentProvider = "upload" | "pandadoc";
+
+export type ProjectDocumentSlotType = "msa" | "nda" | "active_sow" | "other";
+
+export type NormalizedPandaDocDocument = {
+  external_id: string;
+  name: string;
+  status: string;
+  date_created?: string;
+  date_modified?: string;
+  date_sent?: string;
+  date_completed?: string;
+  owner_name?: string;
+  recipients?: Array<{
+    name?: string;
+    email?: string;
+    role?: string;
+  }>;
+  folder_id?: string;
+  external_url?: string;
+  metadata: Record<string, unknown>;
+};
+
+export interface PandaDocConnectionStatus {
+  configured: boolean;
+  connected: boolean;
+  workspace_name: string | null;
+  last_successful_sync_at: string | null;
+  last_sync_error: string | null;
+  webhook_configured?: boolean;
+  webhook_last_received_at: string | null;
 }
 
 export interface LineItem {
@@ -1414,6 +1724,16 @@ export interface CalendarEvent {
   color: string | null;
   project_id: string | null;
   client_id: string | null;
+  provider?: "manual" | "google";
+  external_id?: string | null;
+  external_calendar_id?: string | null;
+  organizer_email?: string | null;
+  attendee_emails?: string[];
+  meeting_url?: string | null;
+  html_link?: string | null;
+  ai_summary?: string | null;
+  metadata?: Json;
+  cancelled_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1455,6 +1775,11 @@ export interface Activity {
   entity_type: string | null;
   entity_id: string | null;
   contact_id: string | null;
+  company_id?: string | null;
+  interaction_type?: string | null;
+  occurred_at?: string | null;
+  source?: string | null;
+  metadata?: Json;
   visibility?: ActivityVisibility;
   created_at: string;
 }
@@ -1468,6 +1793,12 @@ export type TeamMemberRateMatchType =
   | "none";
 export type SupportedCurrency = "EUR" | "USD";
 
+export interface TeamMemberRateProject {
+  id: string;
+  name: string;
+  archived_at?: string | null;
+}
+
 export interface TeamMemberRate {
   id: string;
   person_id: string;
@@ -1476,7 +1807,10 @@ export interface TeamMemberRate {
   rate_type: RateType;
   amount: number;
   currency: SupportedCurrency | string;
+  /** @deprecated Use project_ids — kept for backward compatibility during migration */
   project_id: string | null;
+  project_ids: string[];
+  projects: TeamMemberRateProject[];
   work_type: string | null;
   is_default: boolean;
   effective_from: string;
@@ -1484,7 +1818,19 @@ export interface TeamMemberRate {
   status: TeamMemberRateStatus;
   notes: string | null;
   created_at: string;
-  projects?: Pick<Project, "id" | "name"> | null;
+}
+
+export interface TeamMemberRateConflict {
+  project_id: string | null;
+  project_name: string | null;
+  conflicting_rate_id: string;
+  conflicting_rate_name: string | null;
+  effective_from: string;
+  effective_to: string | null;
+}
+
+export interface TeamMemberRateConflictResult {
+  conflicts: TeamMemberRateConflict[];
 }
 
 export interface ResolveTeamMemberRateResult {
@@ -1501,7 +1847,9 @@ export interface TeamMemberRateInput {
   rate_type: RateType;
   amount: number;
   currency?: SupportedCurrency | string;
+  /** @deprecated Use project_ids */
   project_id?: string | null;
+  project_ids?: string[];
   work_type?: string | null;
   is_default?: boolean;
   effective_from: string;
@@ -1578,6 +1926,14 @@ export interface StripeConnectionStatus {
   last_sync_error: string | null;
   webhook_configured?: boolean;
   webhook_last_received_at: string | null;
+  webhook_last_processed_at?: string | null;
+  webhook_last_event_id?: string | null;
+  webhook_endpoint_url?: string | null;
+  webhook_endpoint_reachable?: boolean | null;
+  webhook_pending_events?: number;
+  webhook_failed_events?: number;
+  webhook_processing_events?: number;
+  webhook_processed_events?: number;
 }
 
 export type StripeInvoiceActionType =
@@ -1762,9 +2118,15 @@ export interface TeamMemberFinancialSummary {
   active_rate_count: number;
   paid_mtd_eur: EurReportingAggregate | null;
   paid_ytd_eur: EurReportingAggregate | null;
-  outstanding_invoices_eur: EurReportingAggregate | null;
+  outstanding_payables_eur: EurReportingAggregate | null;
+  ready_to_pay_eur: EurReportingAggregate | null;
+  /** @deprecated Use outstanding_payables_eur */
+  outstanding_invoices_eur?: EurReportingAggregate | null;
   active_projects: number;
   active_project_names: string[];
+  outstanding_payables?: number;
+  ready_to_pay?: number;
+  /** @deprecated Use outstanding_payables */
   outstanding_invoices?: number;
   available_capacity?: string | null;
 }
@@ -1801,13 +2163,19 @@ export interface TeamRosterRow {
 
 export interface TeamKpiSummary {
   active_team: number;
-  employees: number;
-  contractors: number;
   available_capacity: number | null;
+  fully_allocated: number | null;
   paid_this_month: number | null;
+  outstanding_payables: number | null;
+  ready_to_pay: number | null;
+  /** @deprecated Use outstanding_payables */
+  outstanding_invoices?: number | null;
   active_assignments: number;
   has_payout_data: boolean;
   has_capacity_data: boolean;
+  has_payable_data: boolean;
+  /** @deprecated Use has_payable_data */
+  has_invoice_data?: boolean;
 }
 
 export interface TeamMemberDependencySummary {
@@ -1828,7 +2196,6 @@ export interface TeamMemberDeleteCheck {
     id: string;
     name: string;
     email: string | null;
-    engagement: string;
     person_status: string;
   };
   can_delete: boolean;
@@ -1836,4 +2203,128 @@ export interface TeamMemberDeleteCheck {
   summary: TeamMemberDependencySummary;
   will_delete: string[];
   will_preserve: string[];
+}
+
+export type TeamMemberPayableCalculationBasis =
+  | "manual"
+  | "hours_x_rate"
+  | "days_x_rate"
+  | "percentage_of_client_invoice"
+  | "fixed_project";
+
+export type TeamMemberPayableApprovalStatus = "draft" | "approved" | "cancelled";
+
+export type TeamMemberPayableReleaseCondition = "immediate" | "when_client_invoice_paid" | "manual";
+
+export type TeamMemberPayableUiState =
+  | "draft"
+  | "waiting_for_client_payment"
+  | "waiting_for_release"
+  | "ready_to_pay"
+  | "partially_paid"
+  | "paid"
+  | "cancelled"
+  | "needs_review";
+
+export interface TeamMemberPayable {
+  id: string;
+  person_id: string;
+  project_id: string | null;
+  client_invoice_id: string | null;
+  contractor_invoice_id: string | null;
+  title: string | null;
+  description: string | null;
+  work_type: string | null;
+  calculation_basis: TeamMemberPayableCalculationBasis;
+  source_rate_id: string | null;
+  quantity: number | null;
+  unit_amount: number | null;
+  unit_currency: string | null;
+  percentage: number | null;
+  currency: string;
+  amount: number;
+  amount_eur: number | null;
+  fx_rate_to_eur: number | null;
+  fx_rate_date: string | null;
+  fx_rate_source: string | null;
+  fx_status: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  due_date: string | null;
+  approval_status: TeamMemberPayableApprovalStatus;
+  release_condition: TeamMemberPayableReleaseCondition;
+  released_at: string | null;
+  needs_review: boolean;
+  created_by: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  notes: string | null;
+  metadata: Json;
+  created_at: string;
+  updated_at: string;
+  contacts?: Pick<Contact, "id" | "name"> | null;
+  projects?: Pick<Project, "id" | "name"> | null;
+  invoices?: Pick<Invoice, "id" | "number" | "status" | "client_name" | "currency" | "total"> & { total_eur?: number | null } | null;
+}
+
+export interface TeamMemberPayablePayment {
+  id: string;
+  payable_id: string;
+  payout_id: string;
+  allocated_amount: number;
+  allocated_amount_eur: number | null;
+  created_at: string;
+}
+
+export interface TeamMemberPayableEnriched extends TeamMemberPayable {
+  allocations?: { allocated_amount: number; allocated_amount_eur?: number | null }[];
+  paid_amount: number;
+  paid_amount_eur: number | null;
+  remaining_amount: number;
+  payment_status: "unpaid" | "partially_paid" | "paid";
+  ui_state: TeamMemberPayableUiState;
+}
+
+export interface TeamPayablesSummary {
+  period: string;
+  payables: TeamMemberPayableEnriched[];
+  summary: {
+    outstanding_eur: EurReportingAggregate;
+    ready_to_pay_eur: EurReportingAggregate;
+    waiting_eur: EurReportingAggregate;
+    paid_period_eur: EurReportingAggregate;
+    payable_count: number;
+    ready_count: number;
+    fx_unavailable_count: number;
+  };
+  client_invoice?: {
+    allocated_eur: number;
+    paid_eur: number;
+    remaining_eur: number;
+    revenue_eur: number | null;
+    margin_eur: number | null;
+    margin_pct: number | null;
+    team_member_count: number;
+    payables: TeamMemberPayableEnriched[];
+  } | null;
+  reconciliation?: {
+    unallocated_payouts: Array<{
+      payout_id: string;
+      person_id: string;
+      amount: number;
+      currency: string;
+      payment_date: string | null;
+      unallocated_amount: number;
+    }>;
+    unpaid_contractor_invoices: ContractorInvoice[];
+    payable_count: number;
+  } | null;
+}
+
+export interface FinancePayablesOverview {
+  team_costs_accrued: number | null;
+  ready_to_pay: number | null;
+  team_payments_mtd: number | null;
+  has_payable_data: boolean;
+  has_unconverted: boolean;
 }

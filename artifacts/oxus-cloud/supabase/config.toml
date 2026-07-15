@@ -3,6 +3,24 @@
 
 project_id = "xyphlqyujifneqqtzmto"
 
+[functions.google-oauth-callback]
+verify_jwt = false
+
+[functions.google-sync-worker]
+verify_jwt = false
+
+[functions.crm-enrich-company]
+verify_jwt = false
+
+[functions.crm-reconcile-import-quality]
+verify_jwt = false
+
+[functions.resolve-company-logo]
+verify_jwt = false
+
+[functions.crm-resolver-worker]
+verify_jwt = false
+
 # ClickUp OAuth redirect has no Supabase JWT — must be public.
 [functions.clickup-oauth-callback]
 verify_jwt = false
@@ -45,4 +63,21 @@ verify_jwt = false
 
 # Stripe webhooks are called by Stripe servers without a user JWT.
 [functions.stripe-webhook]
+verify_jwt = false
+
+[functions.process-stripe-webhook-event]
+verify_jwt = false
+
+[functions.stripe-webhook-recovery]
+verify_jwt = true
+
+[functions.stripe-rotate-webhook-secret]
+verify_jwt = false
+
+[functions.google-check-interrupted-imports]
+verify_jwt = true
+
+# PandaDoc webhooks are called by PandaDoc servers without a user JWT.
+# Authenticity is verified via HMAC-SHA256 shared-key signature query param.
+[functions.pandadoc-webhook]
 verify_jwt = false
