@@ -1826,6 +1826,7 @@ export async function executeConfirmedToolRun(args: {
   userId: string;
   inputOverrides?: Record<string, unknown>;
   skipAgentRunStatusUpdate?: boolean;
+  allowRunning?: boolean;
 }): Promise<{ result: Record<string, unknown>; tool_name: string }> {
   const { data: toolRun, error } = await args.admin
     .from("agent_tool_runs")
@@ -1837,7 +1838,8 @@ export async function executeConfirmedToolRun(args: {
   if (toolRun.user_id && toolRun.user_id !== args.userId) {
     throw new Error("Not authorized to confirm this tool run.");
   }
-  if (!isConfirmableAgentToolRun(toolRun)) {
+  const trustedWorkerContinuation = args.allowRunning === true && toolRun.status === "running";
+  if (!trustedWorkerContinuation && !isConfirmableAgentToolRun(toolRun)) {
     throw new Error(`Tool run is not confirmable (status=${toolRun.status}).`);
   }
 

@@ -1,4 +1,4 @@
 interface:
   display_name: "Deploy to Production"
-  short_description: "Safely release OXUS Cloud to production"
-  default_prompt: "Use $deploy-to-production to validate and release this project to production."
+  short_description: "Release OXUS Cloud with one approval"
+  default_prompt: "Use $deploy-to-production to validate this project, ask once for the complete production rollout, then publish across every approved provider."

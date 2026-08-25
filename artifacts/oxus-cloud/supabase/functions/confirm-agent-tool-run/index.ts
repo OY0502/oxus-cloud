@@ -1,7 +1,7 @@
 import { getServiceRoleSupabase } from "../_shared/clickup-auth.ts";
 import { executeConfirmedToolRun } from "../_shared/agent/orchestration.ts";
 import { mergeAndValidateClickupDocPayload } from "../_shared/agent/clickupDocTool.ts";
-import { isConfirmableAgentToolRun, isStaleAgentToolRun } from "../_shared/agent/toolRunUtils.ts";
+import { isConfirmableAgentToolRun } from "../_shared/agent/toolRunUtils.ts";
 import { isTriggerDevConfigured, triggerDevTask } from "../_shared/agent/triggerDev.ts";
 import {
   assertInternalOxusUser,
@@ -104,9 +104,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const staleRunning = isStaleAgentToolRun(toolRun);
-
-    if (isTriggerDevConfigured() && toolRun.tool_name && !staleRunning) {
+    if (isTriggerDevConfigured() && toolRun.tool_name) {
       const taskId = TRIGGER_TASK_MAP[toolRun.tool_name] ?? "create-clickup-task-from-agent";
       try {
         const triggered = await triggerDevTask(taskId, {

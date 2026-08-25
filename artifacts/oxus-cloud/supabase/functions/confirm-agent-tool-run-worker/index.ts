@@ -37,6 +37,7 @@ Deno.serve(async (req) => {
       toolRunId: body.tool_run_id,
       userId: body.user_id,
       inputOverrides: body.input_payload_overrides,
+      allowRunning: true,
     });
 
     return json({ tool_run_id: body.tool_run_id, tool_name, status: "succeeded", result });

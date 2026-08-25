@@ -309,11 +309,20 @@ export const createClickupTaskFromAgentTask = task({
     input_payload_overrides?: Record<string, unknown>;
   }) => {
     const admin = getServiceClient();
-    await admin
-      .from("agent_tool_runs")
-      .update({ status: "running", confirmed_at: new Date().toISOString() })
-      .eq("id", payload.tool_run_id);
-    return workerPost("confirm-agent-tool-run-worker", payload);
+    try {
+      return await workerPost("confirm-agent-tool-run-worker", payload);
+    } catch (error) {
+      const message = errorMessage(error);
+      await admin
+        .from("agent_tool_runs")
+        .update({
+          status: "failed",
+          error_message: message.slice(0, 500),
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", payload.tool_run_id);
+      throw error;
+    }
   },
 });
 

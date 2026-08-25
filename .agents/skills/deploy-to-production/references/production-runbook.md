@@ -85,7 +85,9 @@ If `npx` hangs with no output in the sandbox, stop it and rerun the same read-on
 
 ## 3. Production-changing phases
 
-Immediately before every phase below, show the target/effect/commands and obtain explicit user confirmation. Do not reuse the original “deploy” request as confirmation. If a command fails, stop and obtain fresh confirmation before retrying a changed or repeated mutation.
+After all read-only checks pass, show one consolidated plan with the named commit and every target/effect/command in Phases A–F. Immediately before Phase A, obtain one explicit confirmation for the complete rollout. Then execute all approved phases across Supabase, Trigger.dev, Vercel, and Pinecone without asking between tools. The helper confirmation phrases are deterministic execution guards and may be supplied by the agent after this consolidated approval; they do not require additional chat prompts.
+
+If a command fails, stop further mutations and diagnose read-only. Retry without another prompt only when the command is unchanged and evidence proves it did not apply. Obtain a new consolidated confirmation if the command/impact changes, the outcome is ambiguous, the work becomes a new release attempt, or rollback/destructive recovery is proposed.
 
 ### Phase A — Pinecone configuration in shadow mode
 
@@ -159,7 +161,7 @@ Require `readyState: READY` and an alias to `https://oxus.cloud`. The verified s
 
 ### Phase F — Pinecone setup, backfill, and primary switch
 
-The helper retrieves the service-role key through the authenticated Supabase CLI, keeps it in memory, and never prints it. In addition to its confirmation phrase, the agent must obtain immediate confirmation in chat before each mutating invocation.
+The helper retrieves the service-role key through the authenticated Supabase CLI, keeps it in memory, and never prints it. Its confirmation phrase is an internal execution guard. Once the consolidated rollout is approved, supply the phrase for each listed action without asking the user again.
 
 Create/verify the v2 index for one active project:
 
@@ -181,7 +183,7 @@ Status is read-only and needs no confirmation phrase:
 
 Keep shadow mode until all active project namespaces are ready, vector counts are nonzero, outbox jobs are completed, sync errors are null, and a shadow retrieval probe returns candidates/reranks. In shadow mode, `mode: vector` and `pinecone_used: false` are expected because Supabase still supplies the answer. Inspect `project_chat_vector_sync.metadata` for `retrieval_mode`, `candidates`, `reranked`, `result_overlap`, and errors.
 
-After a separate explicit confirmation, switch primary:
+When all shadow acceptance gates pass, switch primary under the existing consolidated rollout authorization:
 
 ```powershell
 npx --yes supabase@2.109.1 secrets set PINECONE_RETRIEVAL_MODE=primary --project-ref xyphlqyujifneqqtzmto
@@ -231,7 +233,7 @@ Project IDs observed in that verification were `adaedb34-2f40-4077-bf68-cb120bbf
 
 ## 5. Rollback guidance
 
-Rollback was not exercised during the verified release. Treat every rollback below as production-changing and obtain immediate explicit confirmation.
+Rollback was not exercised during the verified release. Rollback is outside the consolidated release authorization: show the rollback target/effect/commands and obtain one explicit confirmation for the complete rollback plan before changing production.
 
 ### Pinecone/retrieval
 

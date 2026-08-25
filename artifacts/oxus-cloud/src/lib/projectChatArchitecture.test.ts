@@ -182,6 +182,24 @@ describe("project chat architecture", () => {
     expect(model).toContain("Never include a Questions or Questions to clarify section");
   });
 
+  it("lets the trusted confirmation worker finish an already-running ClickUp action", async () => {
+    const fs = await import("node:fs/promises");
+    const [orchestration, confirmation, worker, trigger] = await Promise.all([
+      fs.readFile(new URL("../../supabase/functions/_shared/agent/orchestration.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/functions/confirm-agent-tool-run/index.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/functions/confirm-agent-tool-run-worker/index.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../trigger/index.ts", import.meta.url), "utf8"),
+    ]);
+
+    expect(orchestration).toContain("allowRunning?: boolean");
+    expect(orchestration).toContain('args.allowRunning === true && toolRun.status === "running"');
+    expect(confirmation).toContain("if (isTriggerDevConfigured() && toolRun.tool_name)");
+    expect(confirmation).not.toContain("!staleRunning");
+    expect(worker).toContain("allowRunning: true");
+    expect(trigger).toContain('status: "failed"');
+    expect(trigger).toContain("error_message: message.slice(0, 500)");
+  });
+
   it("shows source-linked activity, hides starters while typing, and reloads real ClickUp statuses", async () => {
     const fs = await import("node:fs/promises");
     const [timeline, context, chat, api, taskFields] = await Promise.all([
