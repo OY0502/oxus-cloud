@@ -645,6 +645,11 @@ export interface GoogleImportRun {
   finalization_heartbeat_at?: string | null;
   last_reconciled_at?: string | null;
   last_reconciliation_outcome?: string | null;
+  connection_generation?: number | null;
+  operation_identity?: string | null;
+  dispatch_status?: string | null;
+  interrupted_at?: string | null;
+  cancelled_at?: string | null;
 }
 
 export type GoogleSyncStage =
@@ -688,6 +693,18 @@ export interface CrmEntityCandidate {
   metadata: Json;
   created_at: string;
   updated_at: string;
+  /** Unified review workspace fields (from crm_review_workspace_v). */
+  review_identity?: string;
+  review_kind?: "new_suggestion" | "existing_needs_review" | "possible_duplicate" | "identity_conflict" | "missing_classification";
+  review_reason?: string;
+  candidate_type?: string;
+}
+
+export interface CrmReviewCounts {
+  people: number;
+  companies: number;
+  leads: number;
+  total: number;
 }
 
 export interface GoogleInteraction {
@@ -1033,6 +1050,7 @@ export interface ClickupDocSyncResult {
 export interface ProjectAgentRun {
   id: string;
   project_id: string;
+  chat_session_id: string | null;
   user_id: string | null;
   input_summary: string | null;
   detected_intent: string | null;
@@ -1048,6 +1066,44 @@ export interface ProjectAgentRun {
   diagnostics: Json;
   created_at: string;
   completed_at: string | null;
+}
+
+export interface ProjectChatSession {
+  id: string;
+  project_id: string;
+  created_by: string | null;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  last_message_at: string;
+}
+
+export interface ProjectChatMessage {
+  id: string;
+  project_id: string;
+  chat_session_id: string;
+  user_id: string | null;
+  role: "user" | "assistant" | "system";
+  content: string;
+  agent_run_id: string | null;
+  metadata: Json;
+  created_at: string;
+}
+
+export interface ProjectChatVectorSync {
+  project_id: string;
+  provider: "pinecone";
+  index_name: string;
+  namespace: string;
+  status: "not_configured" | "syncing" | "ready" | "degraded";
+  vector_count: number;
+  last_indexed_at: string | null;
+  last_queried_at: string | null;
+  last_verified_at: string | null;
+  last_error: string | null;
+  metadata: Json;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface AgentToolRun {
@@ -1120,6 +1176,9 @@ export type ProjectAgentRunResult = {
     pending_tool_runs_count?: number;
     workflow_step_count?: number;
     clickup_connected?: boolean;
+    file_review?: boolean;
+    clickup_tasks_checked?: number;
+    clickup_task_snapshot_source?: "live" | "cached" | "unavailable";
     total_tool_calls_planned?: number;
     safe_tool_calls_planned?: number;
     external_mutation_tool_calls_planned?: number;

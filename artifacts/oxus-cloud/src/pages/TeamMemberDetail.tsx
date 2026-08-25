@@ -12,7 +12,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 import { Button } from "@/components/ui/button";
 
-import { useContacts, useTeamMemberSummary, useCompanyPeople, useProfiles } from "@/hooks/api";
+import { useContacts, useTeamMemberSummary, useProfiles } from "@/hooks/api";
 
 import { TableSkeleton, ErrorState } from "@/components/states/QueryStates";
 
@@ -25,10 +25,6 @@ import {
   availabilityLabel,
 
   availabilityVariant,
-
-  engagementLabel,
-
-  engagementVariant,
 
   formatRate,
 
@@ -85,8 +81,6 @@ export function TeamMemberDetail() {
     includeFinancials: isSuperAdmin,
 
   });
-
-  const { data: companyPeople = [] } = useCompanyPeople();
 
   const { data: profiles = [] } = useProfiles();
 
@@ -158,15 +152,13 @@ export function TeamMemberDetail() {
 
             title={person.name}
 
-            subtitle={[person.job_title, engagementLabel(person, companyPeople)].filter(Boolean).join(" · ")}
+            subtitle={person.job_title ?? undefined}
 
           />
 
           <div className="flex flex-wrap items-center gap-2 text-sm">
 
             <span className="text-muted-foreground">{person.email ?? "No email"}</span>
-
-            <StatusBadge status={engagementLabel(person, companyPeople)} variant={engagementVariant()} />
 
             <StatusBadge
 
@@ -179,6 +171,12 @@ export function TeamMemberDetail() {
             {person.availability && (
 
               <StatusBadge status={availabilityLabel(person.availability)} variant={availabilityVariant(person.availability)} />
+
+            )}
+
+            {hasWorkspaceAccount && (
+
+              <span className="text-xs text-muted-foreground">Workspace access</span>
 
             )}
 
@@ -220,7 +218,7 @@ export function TeamMemberDetail() {
 
             <MetricCard title="Paid YTD" value={formatEUR(summary?.paid_ytd ?? 0)} icon={<Wallet className="w-5 h-5" />} />
 
-            <MetricCard title="Outstanding invoices" value={formatEUR(summary?.outstanding_invoices ?? 0)} icon={<Wallet className="w-5 h-5" />} />
+            <MetricCard title="Outstanding payables" value={formatEUR(summary?.outstanding_payables ?? summary?.outstanding_invoices ?? 0)} icon={<Wallet className="w-5 h-5" />} />
 
           </>
 

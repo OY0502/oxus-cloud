@@ -34,6 +34,14 @@ export async function purgeProjectStorage(
 }
 
 export async function deleteProjectRecord(projectId: string): Promise<void> {
+  // Purge the external namespace while project authorization still exists.
+  // The database deletion trigger also leaves a durable retry job if Pinecone
+  // is temporarily unavailable, so an external outage never blocks deletion.
+  const { error: pineconeError } = await supabase.functions.invoke("pinecone-chat-memory", {
+    body: { action: "delete_namespace", project_id: projectId },
+  });
+  if (pineconeError) console.warn("Pinecone namespace purge was queued for retry:", pineconeError.message);
+
   const { error } = await supabase.rpc("delete_project", { p_project_id: projectId });
   if (error) throw new Error(error.message);
 }

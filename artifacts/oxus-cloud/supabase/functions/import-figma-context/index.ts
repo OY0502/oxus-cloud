@@ -1,4 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { getServiceRoleSupabase } from "../_shared/clickup-auth.ts";
+import { embedProjectKnowledgeChunks } from "../_shared/agent/retrieval.ts";
+import { chunkKnowledgeText } from "../_shared/knowledgeChunking.ts";
 
 type Priority = "low" | "medium" | "high" | "urgent";
 type QaPriority = "low" | "medium" | "high";
@@ -591,16 +594,29 @@ Deno.serve(async (req) => {
       return errorResponse("Failed to store Figma knowledge source.", 500, "DB_ERROR", sourceError.message);
     }
 
-    const chunkSize = 10000;
     const chunkRows: { project_id: string; source_id: string; chunk_index: number; content: string; category: string; metadata: Record<string, unknown> }[] = [];
-    for (let start = 0, index = 0; start < designContext.length; start += chunkSize, index += 1) {
+    const retrievalChunks = chunkKnowledgeText(designContext, {
+      targetChars: Number(Deno.env.get("AI_RETRIEVAL_CHUNK_SIZE_CHARS") ?? "2600"),
+      overlapChars: Number(Deno.env.get("AI_RETRIEVAL_CHUNK_OVERLAP_CHARS") ?? "320"),
+    });
+    for (let index = 0; index < retrievalChunks.length; index += 1) {
+      const chunk = retrievalChunks[index];
       chunkRows.push({
         project_id: projectId,
         source_id: source.id,
         chunk_index: index,
-        content: designContext.slice(start, start + chunkSize),
+        content: chunk.content,
         category: "figma",
-        metadata: { file_key: fileKey, node_id: nodeId },
+        metadata: {
+          source_type: "figma",
+          source_title: sourceTitle,
+          file_key: fileKey,
+          node_id: nodeId,
+          section_path: chunk.sectionPath,
+          char_start: chunk.charStart,
+          char_end: chunk.charEnd,
+          token_estimate: chunk.tokenEstimate,
+        },
       });
     }
     if (chunkRows.length > 0) {
@@ -609,6 +625,17 @@ Deno.serve(async (req) => {
         await recordFigmaError(chunkError.message);
         return errorResponse("Failed to store Figma knowledge chunks.", 500, "DB_ERROR", chunkError.message);
       }
+    }
+
+    try {
+      await embedProjectKnowledgeChunks({
+        admin: getServiceRoleSupabase(),
+        projectId,
+        sourceId: String(source.id),
+        syncPinecone: true,
+      });
+    } catch (indexError) {
+      console.warn("[import-figma-context] Knowledge indexing failed:", (indexError as Error).message);
     }
 
     let completion: unknown;

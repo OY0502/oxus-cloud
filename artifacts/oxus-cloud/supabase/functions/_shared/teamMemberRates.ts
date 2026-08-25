@@ -4,6 +4,12 @@ export type RateType = "hourly" | "daily" | "monthly" | "fixed_project";
 export type RateStatus = "active" | "scheduled" | "expired";
 export type RateMatchType = "project_work_type" | "project" | "work_type" | "default" | "none";
 
+export interface TeamMemberRateProjectRow {
+  id: string;
+  name: string;
+  archived_at?: string | null;
+}
+
 export interface TeamMemberRateRow {
   id: string;
   person_id: string;
@@ -13,6 +19,8 @@ export interface TeamMemberRateRow {
   amount: number;
   currency: string;
   project_id: string | null;
+  project_ids?: string[];
+  projects?: TeamMemberRateProjectRow[];
   work_type: string | null;
   is_default: boolean;
   effective_from: string;
@@ -48,6 +56,12 @@ export function normalizeWorkType(value: string | null | undefined): string | nu
   return WORK_TYPE_ALIASES[trimmed.toLowerCase()] ?? trimmed;
 }
 
+export function rateProjectIds(rate: Pick<TeamMemberRateRow, "project_ids" | "project_id">): string[] {
+  if (rate.project_ids?.length) return rate.project_ids;
+  if (rate.project_id) return [rate.project_id];
+  return [];
+}
+
 export function isRateActiveOnDate(rate: TeamMemberRateRow, asOf: string): boolean {
   return (
     rate.effective_from <= asOf &&
@@ -62,18 +76,53 @@ function matchesScope(
   workType: string | null,
   matchType: RateMatchType,
 ): boolean {
+  const linkedProjects = rateProjectIds(rate);
+  const hasProjects = linkedProjects.length > 0;
+  const hasWorkType = !!rate.work_type?.trim();
+
   switch (matchType) {
     case "project_work_type":
-      return rate.project_id === projectId && normalizeWorkType(rate.work_type) === workType;
+      return (
+        !!projectId &&
+        linkedProjects.includes(projectId) &&
+        normalizeWorkType(rate.work_type) === workType
+      );
     case "project":
-      return rate.project_id === projectId && !rate.work_type?.trim();
+      return !!projectId && linkedProjects.includes(projectId) && !hasWorkType;
     case "work_type":
-      return !rate.project_id && normalizeWorkType(rate.work_type) === workType;
+      return !hasProjects && normalizeWorkType(rate.work_type) === workType;
     case "default":
-      return !rate.project_id && !rate.work_type?.trim();
+      return !hasProjects && !hasWorkType;
     default:
       return false;
   }
+}
+
+export function enrichTeamMemberRates(
+  rates: TeamMemberRateRow[],
+  links: Array<{ rate_id: string; project_id: string; projects: TeamMemberRateProjectRow | null }>,
+): TeamMemberRateRow[] {
+  const byRate = new Map<string, TeamMemberRateProjectRow[]>();
+  for (const link of links) {
+    if (!link.projects) continue;
+    const list = byRate.get(link.rate_id) ?? [];
+    list.push(link.projects);
+    byRate.set(link.rate_id, list);
+  }
+
+  return rates.map((rate) => {
+    const projects = byRate.get(rate.id) ?? [];
+    const project_ids = projects.length
+      ? projects.map((p) => p.id)
+      : rate.project_id
+        ? [rate.project_id]
+        : [];
+    return {
+      ...rate,
+      projects,
+      project_ids,
+    };
+  });
 }
 
 export function resolveTeamMemberRate(input: {
@@ -132,4 +181,16 @@ export function validateCurrency(currency: string): string {
     throw new Error(`Unsupported currency: ${currency}. Supported: ${SUPPORTED_CURRENCIES.join(", ")}`);
   }
   return upper;
+}
+
+export function parseRateConflictError(message: string): { conflicts: unknown[] } | null {
+  const prefix = "RATE_CONFLICT:";
+  const idx = message.indexOf(prefix);
+  if (idx === -1) return null;
+  try {
+    const payload = JSON.parse(message.slice(idx + prefix.length));
+    return payload as { conflicts: unknown[] };
+  } catch {
+    return null;
+  }
 }

@@ -79,6 +79,9 @@ import type {
   ProcessAiJobsResult,
   ProjectAgentRun,
   ProjectAgentRunResult,
+  ProjectChatMessage,
+  ProjectChatSession,
+  ProjectChatVectorSync,
   ProjectSignal,
   ProjectSignalThread,
   ProjectSlackEvent,
@@ -161,6 +164,10 @@ export const qk = {
   projectSignalThreads: (projectId: string) => ["project_signal_threads", projectId] as const,
   aiProcessingJobs: (projectId: string) => ["ai_processing_jobs", projectId] as const,
   projectAgentRuns: (projectId: string) => ["project_agent_runs", projectId] as const,
+  projectChatSessions: (projectId: string) => ["project_chat_sessions", projectId] as const,
+  projectChatMessages: (projectId: string, chatSessionId: string) =>
+    ["project_chat_messages", projectId, chatSessionId] as const,
+  projectChatVectorSync: (projectId: string) => ["project_chat_vector_sync", projectId] as const,
   agentToolRuns: (projectId: string, agentRunId?: string) =>
     ["agent_tool_runs", projectId, agentRunId ?? "all"] as const,
   slackPipelineDiagnostics: (projectId: string, linkId?: string) =>
@@ -1198,6 +1205,97 @@ export function useProjectAgentRuns(projectId: string): UseQueryResult<ProjectAg
   });
 }
 
+export function useProjectChatSessions(projectId: string): UseQueryResult<ProjectChatSession[]> {
+  return useQuery({
+    queryKey: qk.projectChatSessions(projectId),
+    enabled: !!projectId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("project_chat_sessions")
+        .select("*")
+        .eq("project_id", projectId)
+        .order("last_message_at", { ascending: false })
+        .order("created_at", { ascending: false });
+      return unwrap<ProjectChatSession[]>(data, error);
+    },
+  });
+}
+
+export function useCreateProjectChatSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (projectId: string) => {
+      const { data, error } = await supabase
+        .from("project_chat_sessions")
+        .insert({ project_id: projectId, title: "New chat" })
+        .select("*")
+        .single();
+      return unwrap<ProjectChatSession>(data, error);
+    },
+    onSuccess: (session) => {
+      qc.setQueryData<ProjectChatSession[]>(qk.projectChatSessions(session.project_id), (current = []) => [
+        session,
+        ...current.filter((row) => row.id !== session.id),
+      ]);
+    },
+  });
+}
+
+export function useDeleteProjectChatSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { project_id: string; chat_session_id: string }) => {
+      const { error } = await supabase
+        .from("project_chat_sessions")
+        .delete()
+        .eq("id", input.chat_session_id)
+        .eq("project_id", input.project_id);
+      if (error) throw error;
+      return input;
+    },
+    onSuccess: (input) => {
+      qc.setQueryData<ProjectChatSession[]>(qk.projectChatSessions(input.project_id), (current = []) =>
+        current.filter((row) => row.id !== input.chat_session_id)
+      );
+      qc.removeQueries({ queryKey: qk.projectChatMessages(input.project_id, input.chat_session_id) });
+    },
+  });
+}
+
+export function useProjectChatMessages(projectId: string, chatSessionId?: string): UseQueryResult<ProjectChatMessage[]> {
+  return useQuery({
+    queryKey: qk.projectChatMessages(projectId, chatSessionId ?? "none"),
+    enabled: !!projectId && !!chatSessionId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("project_chat_messages")
+        .select("*")
+        .eq("project_id", projectId)
+        .eq("chat_session_id", chatSessionId!)
+        .order("created_at", { ascending: false })
+        .limit(100);
+      return unwrap<ProjectChatMessage[]>(data, error).reverse();
+    },
+  });
+}
+
+export function useProjectChatVectorSync(projectId: string): UseQueryResult<ProjectChatVectorSync | null> {
+  return useQuery({
+    queryKey: qk.projectChatVectorSync(projectId),
+    enabled: !!projectId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("project_chat_vector_sync")
+        .select("*")
+        .eq("project_id", projectId)
+        .maybeSingle();
+      if (error) throw error;
+      return (data as ProjectChatVectorSync | null) ?? null;
+    },
+    staleTime: 30_000,
+  });
+}
+
 export function useAgentToolRuns(projectId: string, agentRunId?: string): UseQueryResult<AgentToolRun[]> {
   return useQuery({
     queryKey: qk.agentToolRuns(projectId, agentRunId),
@@ -1224,6 +1322,9 @@ export function useRunProjectAgent() {
       input_text: string;
       uploaded_file_ids?: string[];
       mode?: "auto" | "answer_only" | "memory_update" | "tool_request";
+      chat?: boolean;
+      chat_session_id?: string;
+      chat_action?: "clarification_response";
     }) => {
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
       if (sessionError) throw new Error(sessionError.message);
@@ -1249,6 +1350,8 @@ export function useRunProjectAgent() {
     },
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: qk.projectAgentRuns(vars.project_id) });
+      qc.invalidateQueries({ queryKey: ["project_chat_messages", vars.project_id] });
+      qc.invalidateQueries({ queryKey: qk.projectChatSessions(vars.project_id) });
       qc.invalidateQueries({ queryKey: qk.agentToolRuns(vars.project_id) });
       qc.invalidateQueries({ queryKey: qk.aiProposedTasks(vars.project_id) });
       qc.invalidateQueries({ queryKey: qk.projectPmProfile(vars.project_id) });
@@ -2129,6 +2232,17 @@ export function useProjectTimelineEvents(
     queryKey: qk.projectTimelineEvents(projectId, filters),
     enabled: !!projectId,
     queryFn: async () => {
+      if (!filters?.sourceType || filters.sourceType === "all" || filters.sourceType === "clickup") {
+        try {
+          const token = await getAuthToken();
+          await supabase.functions.invoke("clickup-list-statuses", {
+            body: { project_id: projectId, repair_timeline: true },
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        } catch {
+          // Activity remains readable from stored rows if ClickUp is temporarily unavailable.
+        }
+      }
       let query = supabase
         .from("project_timeline_events")
         .select("*")
@@ -2578,12 +2692,23 @@ export function useCrmImportCandidates(options?: { status?: string; enabled?: bo
     enabled: options?.enabled !== false,
     queryFn: async () => {
       const token = await getAuthToken();
-      const { data, error } = await supabase.functions.invoke<{ candidates: import("@/lib/types").CrmEntityCandidate[] }>("crm-list-import-candidates", {
-        body: { status: options?.status ?? "pending" },
+      const { data, error } = await supabase.functions.invoke<{
+        candidates: import("@/lib/types").CrmEntityCandidate[];
+        counts?: import("@/lib/types").CrmReviewCounts;
+      }>("crm-list-import-candidates", {
+        body: { status: options?.status ?? "pending", limit: 500 },
         headers: { Authorization: `Bearer ${token}` },
       });
       if (error) await throwEdgeFunctionError(error);
-      return data?.candidates ?? [];
+      return {
+        candidates: data?.candidates ?? [],
+        counts: data?.counts ?? {
+          people: (data?.candidates ?? []).filter((c) => c.entity_type === "person").length,
+          companies: (data?.candidates ?? []).filter((c) => c.entity_type === "company").length,
+          leads: (data?.candidates ?? []).filter((c) => c.entity_type === "lead").length,
+          total: (data?.candidates ?? []).length,
+        },
+      };
     },
   });
 }
@@ -2591,19 +2716,39 @@ export function useCrmImportCandidates(options?: { status?: string; enabled?: bo
 export function useAcceptCrmCandidate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { candidate_id: string; overrides?: Record<string, unknown> }) => {
+    mutationFn: async (input: {
+      candidate_id?: string;
+      review_identity?: string;
+      action?: "add_as_person" | "link_company_inbox" | "suppress" | "ignore";
+      overrides?: Record<string, unknown>;
+    }) => {
       const token = await getAuthToken();
       const { data, error } = await supabase.functions.invoke("crm-accept-import-candidate", {
         body: input,
         headers: { Authorization: `Bearer ${token}` },
       });
       if (error) await throwEdgeFunctionError(error);
-      return data;
+      return data as {
+        success?: boolean;
+        entity_id?: string | null;
+        entity_type?: string | null;
+        decision?: string;
+        created?: boolean;
+        matched?: boolean;
+        display_name?: string | null;
+        visibility?: string | null;
+        company_id?: string | null;
+        company_name?: string | null;
+        warning?: string | null;
+      };
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: qk.crmImportCandidates() });
       qc.invalidateQueries({ queryKey: qk.clients });
       qc.invalidateQueries({ queryKey: qk.contacts });
+      if (data?.entity_id && data.entity_type === "person") {
+        qc.invalidateQueries({ queryKey: qk.crmPersonDetail(data.entity_id) });
+      }
     },
   });
 }
@@ -2611,7 +2756,7 @@ export function useAcceptCrmCandidate() {
 export function useIgnoreCrmCandidate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { candidate_id: string }) => {
+    mutationFn: async (input: { candidate_id?: string; review_identity?: string }) => {
       const token = await getAuthToken();
       const { data, error } = await supabase.functions.invoke("crm-ignore-import-candidate", {
         body: input,
@@ -2622,6 +2767,8 @@ export function useIgnoreCrmCandidate() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.crmImportCandidates() });
+      qc.invalidateQueries({ queryKey: qk.clients });
+      qc.invalidateQueries({ queryKey: qk.contacts });
     },
   });
 }
@@ -3486,7 +3633,8 @@ export function useClickupListStatuses(
   return useQuery({
     queryKey: qk.clickupListStatuses(projectId ?? ""),
     enabled: !!projectId && enabled,
-    staleTime: 60_000,
+    staleTime: 0,
+    refetchOnMount: "always",
     queryFn: async () => {
       const token = await getAuthToken();
       const { data, error } = await supabase.functions.invoke<ClickupListStatusesResult>(

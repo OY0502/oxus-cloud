@@ -49,6 +49,9 @@ Deno.serve(async (req) => {
       input_text?: string;
       uploaded_file_ids?: string[];
       mode?: AgentMode;
+      chat?: boolean;
+      chat_session_id?: string;
+      chat_action?: "clarification_response";
     } = {};
     try {
       body = await req.json();
@@ -69,11 +72,38 @@ Deno.serve(async (req) => {
 
     const admin = getServiceRoleSupabase();
     const inputSummary = inputText.slice(0, 500);
+    let chatSessionId: string | null = null;
+    if (body.chat) {
+      const requestedSessionId = body.chat_session_id?.trim();
+      if (requestedSessionId) {
+        const { data: session, error: sessionError } = await admin
+          .from("project_chat_sessions")
+          .select("id")
+          .eq("id", requestedSessionId)
+          .eq("project_id", projectId)
+          .maybeSingle();
+        if (sessionError) return err("Failed to validate chat.", 500, "DB_ERROR", sessionError.message);
+        if (!session) return err("Chat not found for this project.", 404, "CHAT_NOT_FOUND");
+        chatSessionId = session.id;
+      } else {
+        // Backward-compatible for clients deployed during the migration window.
+        const { data: session, error: sessionError } = await admin
+          .from("project_chat_sessions")
+          .insert({ project_id: projectId, created_by: auth.userId, title: "New chat" })
+          .select("id")
+          .single();
+        if (sessionError || !session) {
+          return err("Failed to create chat.", 500, "DB_ERROR", sessionError?.message);
+        }
+        chatSessionId = session.id;
+      }
+    }
 
     const { data: agentRun, error: runErr } = await admin
       .from("project_agent_runs")
       .insert({
         project_id: projectId,
+        chat_session_id: chatSessionId,
         user_id: auth.userId,
         input_summary: inputSummary,
         status: "running",
@@ -87,6 +117,25 @@ Deno.serve(async (req) => {
       .single();
     if (runErr || !agentRun) return err("Failed to create agent run.", 500, "DB_ERROR", runErr?.message);
 
+    if (body.chat && inputText) {
+      const { error: messageError } = await admin.from("project_chat_messages").insert({
+        project_id: projectId,
+        chat_session_id: chatSessionId,
+        user_id: auth.userId,
+        role: "user",
+        content: inputText,
+        agent_run_id: agentRun.id,
+        metadata: { uploaded_file_count: uploadedFileIds.length },
+      });
+      if (messageError) {
+        await admin
+          .from("project_agent_runs")
+          .update({ status: "failed", result_summary: "Could not save chat message.", completed_at: new Date().toISOString() })
+          .eq("id", agentRun.id);
+        return err("Failed to save chat message.", 500, "DB_ERROR", messageError.message);
+      }
+    }
+
     const payload = {
       project_id: projectId,
       user_id: auth.userId,
@@ -94,6 +143,9 @@ Deno.serve(async (req) => {
       input_text: inputText,
       uploaded_file_ids: uploadedFileIds,
       mode: body.mode ?? "auto",
+      chat: body.chat === true,
+      chat_session_id: chatSessionId ?? undefined,
+      chat_action: body.chat_action,
     };
 
     if (isTriggerDevConfigured()) {

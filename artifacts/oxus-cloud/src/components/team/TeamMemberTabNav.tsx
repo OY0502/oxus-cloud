@@ -5,6 +5,7 @@ export type TeamMemberTab =
   | "overview"
   | "projects"
   | "rates"
+  | "payables"
   | "invoices"
   | "payments"
   | "activity"
@@ -13,6 +14,7 @@ export type TeamMemberTab =
 interface TeamMemberTabNavProps {
   value: TeamMemberTab;
   onChange: (tab: TeamMemberTab) => void;
+  showPayables?: boolean;
   showRates?: boolean;
   showInvoices?: boolean;
   showPayments?: boolean;
@@ -24,7 +26,8 @@ const TABS: { id: TeamMemberTab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "projects", label: "Projects" },
   { id: "rates", label: "Rates" },
-  { id: "invoices", label: "Invoices" },
+  { id: "payables", label: "Payables" },
+  { id: "invoices", label: "Supporting invoices" },
   { id: "payments", label: "Payments" },
   { id: "activity", label: "Activity" },
   { id: "access", label: "Access" },
@@ -34,6 +37,7 @@ export function TeamMemberTabNav({
   value,
   onChange,
   showRates = false,
+  showPayables = false,
   showInvoices = false,
   showPayments = false,
   showActivity = false,
@@ -41,6 +45,7 @@ export function TeamMemberTabNav({
 }: TeamMemberTabNavProps) {
   const visible = TABS.filter((t) => {
     if (t.id === "rates") return showRates;
+    if (t.id === "payables") return showPayables;
     if (t.id === "invoices") return showInvoices;
     if (t.id === "payments") return showPayments;
     if (t.id === "activity") return showActivity;
@@ -49,7 +54,7 @@ export function TeamMemberTabNav({
   });
 
   return (
-    <nav className="-mb-px flex gap-4 overflow-x-auto border-b border-border">
+    <nav className="-mb-px mb-4 flex gap-4 overflow-x-auto border-b border-border">
       {visible.map((tab) => (
         <button
           key={tab.id}

@@ -4,16 +4,21 @@ import {
   InternalOxusAuthError,
   internalOxusAuthErrorResponse,
 } from "../_shared/internalOxusAuth.ts";
-import { authenticateInternalWorker, internalWorkerAuthErrorResponse } from "../_shared/internalWorkerAuth.ts";
+import {
+  authenticateInternalWorker,
+  internalWorkerAuthErrorResponse,
+} from "../_shared/internalWorkerAuth.ts";
 import { getStripeWebhookSecret } from "../_shared/stripe.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-oxus-internal-secret",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-oxus-internal-secret",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
 const WEBHOOK_PATH = "/functions/v1/stripe-webhook";
+const STALE_PROCESSING_MS = 10 * 60 * 1000;
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -22,7 +27,10 @@ function json(body: unknown, status = 200) {
   });
 }
 
-async function countByStatus(admin: ReturnType<typeof getServiceRoleSupabase>, status: string): Promise<number> {
+async function countByStatus(
+  admin: ReturnType<typeof getServiceRoleSupabase>,
+  status: string,
+): Promise<number> {
   const { count, error } = await admin
     .from("stripe_webhook_events")
     .select("id", { count: "exact", head: true })
@@ -31,7 +39,9 @@ async function countByStatus(admin: ReturnType<typeof getServiceRoleSupabase>, s
   return count ?? 0;
 }
 
-async function dispatchProcessing(inboxId: string): Promise<{ ok: boolean; status: number }> {
+async function dispatchProcessing(
+  inboxId: string,
+): Promise<{ ok: boolean; status: number }> {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim();
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim();
   if (!supabaseUrl || !serviceKey) return { ok: false, status: 500 };
@@ -44,39 +54,52 @@ async function dispatchProcessing(inboxId: string): Promise<{ ok: boolean; statu
   };
   if (workerSecret) headers["x-oxus-internal-secret"] = workerSecret;
 
-  const response = await fetch(`${supabaseUrl}/functions/v1/process-stripe-webhook-event`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ inbox_id: inboxId }),
-  });
+  const response = await fetch(
+    `${supabaseUrl}/functions/v1/process-stripe-webhook-event`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ inbox_id: inboxId }),
+    },
+  );
   return { ok: response.ok, status: response.status };
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS")
+    return new Response("ok", { headers: corsHeaders });
 
   try {
     if (req.method === "GET") {
       await assertSuperAdminUser(req);
       const admin = getServiceRoleSupabase();
-      const { data: state } = await admin.from("stripe_integration_state").select("*").limit(1).maybeSingle();
+      const { data: state } = await admin
+        .from("stripe_integration_state")
+        .select("*")
+        .limit(1)
+        .maybeSingle();
 
-      const [pendingCount, receivedCount, failed, processing] = await Promise.all([
-        countByStatus(admin, "pending"),
-        countByStatus(admin, "received"),
-        countByStatus(admin, "failed"),
-        countByStatus(admin, "processing"),
-      ]);
+      const [pendingCount, receivedCount, failed, processing] =
+        await Promise.all([
+          countByStatus(admin, "pending"),
+          countByStatus(admin, "received"),
+          countByStatus(admin, "failed"),
+          countByStatus(admin, "processing"),
+        ]);
       const pending = pendingCount + receivedCount;
 
       const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim() ?? "";
-      const endpointUrl = state?.webhook_endpoint_url
-        ?? (supabaseUrl ? `${supabaseUrl}${WEBHOOK_PATH}` : null);
+      const endpointUrl =
+        state?.webhook_endpoint_url ??
+        (supabaseUrl ? `${supabaseUrl}${WEBHOOK_PATH}` : null);
 
       let endpointReachable: boolean | null = null;
       if (endpointUrl) {
         try {
-          const probe = await fetch(endpointUrl, { method: "POST", body: "{}" });
+          const probe = await fetch(endpointUrl, {
+            method: "POST",
+            body: "{}",
+          });
           endpointReachable = probe.status === 400 || probe.status === 200;
         } catch {
           endpointReachable = false;
@@ -85,7 +108,9 @@ Deno.serve(async (req) => {
 
       const { data: recentFailed } = await admin
         .from("stripe_webhook_events")
-        .select("id, stripe_event_id, event_type, status, attempt_count, received_at, processed_at, error_message")
+        .select(
+          "id, stripe_event_id, event_type, status, attempt_count, received_at, processed_at, error_message",
+        )
         .in("status", ["failed", "pending", "processing", "received"])
         .order("received_at", { ascending: false })
         .limit(25);
@@ -112,12 +137,18 @@ Deno.serve(async (req) => {
           await assertSuperAdminUser(req);
           isSuperAdmin = true;
         } catch (e) {
-          if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
-          if (!workerAuth.ok) return internalWorkerAuthErrorResponse(workerAuth.code, crypto.randomUUID(), corsHeaders);
+          if (e instanceof InternalOxusAuthError)
+            return internalOxusAuthErrorResponse(e, corsHeaders);
+          if (!workerAuth.ok)
+            return internalWorkerAuthErrorResponse(
+              workerAuth.code,
+              crypto.randomUUID(),
+              corsHeaders,
+            );
         }
       }
 
-      const body = await req.json().catch(() => ({})) as {
+      const body = (await req.json().catch(() => ({}))) as {
         action?: string;
         inbox_ids?: string[];
         limit?: number;
@@ -129,9 +160,46 @@ Deno.serve(async (req) => {
 
       const admin = getServiceRoleSupabase();
       const limit = Math.min(Math.max(Number(body.limit ?? 10), 1), 50);
+      const staleCutoff = new Date(
+        Date.now() - STALE_PROCESSING_MS,
+      ).toISOString();
+
+      // A worker can terminate after claiming a row. Requeue only stale claims;
+      // active processors remain protected from concurrent execution.
+      const { data: staleProcessing, error: staleError } = await admin
+        .from("stripe_webhook_events")
+        .update({
+          status: "failed",
+          error_message:
+            "Processing lease expired; queued for automatic retry.",
+        })
+        .eq("status", "processing")
+        .lt("processing_started_at", staleCutoff)
+        .select("id");
+      if (staleError) throw new Error(staleError.message);
+
+      const {
+        data: staleProcessingWithoutLease,
+        error: staleWithoutLeaseError,
+      } = await admin
+        .from("stripe_webhook_events")
+        .update({
+          status: "failed",
+          error_message:
+            "Processing lease was missing; queued for automatic retry.",
+        })
+        .eq("status", "processing")
+        .is("processing_started_at", null)
+        .lt("received_at", staleCutoff)
+        .select("id");
+      if (staleWithoutLeaseError)
+        throw new Error(staleWithoutLeaseError.message);
+
       let query = admin
         .from("stripe_webhook_events")
-        .select("id, stripe_event_id, event_type, status, attempt_count, received_at, error_message")
+        .select(
+          "id, stripe_event_id, event_type, status, attempt_count, received_at, error_message",
+        )
         .in("status", ["failed", "pending", "received"])
         .order("received_at", { ascending: true })
         .limit(limit);
@@ -139,7 +207,9 @@ Deno.serve(async (req) => {
       if (body.inbox_ids?.length) {
         query = admin
           .from("stripe_webhook_events")
-          .select("id, stripe_event_id, event_type, status, attempt_count, received_at, error_message")
+          .select(
+            "id, stripe_event_id, event_type, status, attempt_count, received_at, error_message",
+          )
           .in("id", body.inbox_ids)
           .limit(limit);
       }
@@ -166,14 +236,22 @@ Deno.serve(async (req) => {
 
       return json({
         retried: results.length,
+        stale_processing_requeued:
+          (staleProcessing?.length ?? 0) +
+          (staleProcessingWithoutLease?.length ?? 0),
         results,
-        initiated_by: workerAuth.ok ? "worker" : (isSuperAdmin ? "super_admin" : "unknown"),
+        initiated_by: workerAuth.ok
+          ? "worker"
+          : isSuperAdmin
+            ? "super_admin"
+            : "unknown",
       });
     }
 
     return json({ error: "Method not allowed." }, 405);
   } catch (e) {
-    if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
+    if (e instanceof InternalOxusAuthError)
+      return internalOxusAuthErrorResponse(e, corsHeaders);
     console.error("[stripe-webhook-recovery]", (e as Error).message);
     return json({ error: "Unexpected error." }, 500);
   }

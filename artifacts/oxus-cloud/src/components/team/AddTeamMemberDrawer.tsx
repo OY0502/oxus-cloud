@@ -46,7 +46,6 @@ export function AddTeamMemberDrawer({ open, onOpenChange, onCreated }: AddTeamMe
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [jobTitle, setJobTitle] = useState("");
-  const [relationship, setRelationship] = useState<"employee" | "contractor">("contractor");
   const [availability, setAvailability] = useState<Availability>("full");
   const [location, setLocation] = useState("");
   const [stack, setStack] = useState<string[]>([]);
@@ -62,7 +61,6 @@ export function AddTeamMemberDrawer({ open, onOpenChange, onCreated }: AddTeamMe
     setEmail("");
     setPhone("");
     setJobTitle("");
-    setRelationship("contractor");
     setAvailability("full");
     setLocation("");
     setStack([]);
@@ -112,7 +110,6 @@ export function AddTeamMemberDrawer({ open, onOpenChange, onCreated }: AddTeamMe
           type: "contractor",
           metadata: startDate ? { start_date: startDate } : {},
         },
-        relationship_type: relationship,
         oxus_company_id: oxusCompanyId,
         initial_rate: initialRate,
         project_id: projectId || null,
@@ -157,29 +154,17 @@ export function AddTeamMemberDrawer({ open, onOpenChange, onCreated }: AddTeamMe
             <div className="space-y-1"><Label>Job title</Label><Input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} /></div>
             <div className="space-y-1"><Label>Location</Label><Input value={location} onChange={(e) => setLocation(e.target.value)} /></div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Engagement</Label>
-              <Select value={relationship} onValueChange={(v) => setRelationship(v as "employee" | "contractor")}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="employee">Employee</SelectItem>
-                  <SelectItem value="contractor">Contractor</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label>Availability</Label>
-              <Select value={availability} onValueChange={(v) => setAvailability(v as Availability)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="full">Available</SelectItem>
-                  <SelectItem value="partial">Partial</SelectItem>
-                  <SelectItem value="busy">Fully allocated</SelectItem>
-                  <SelectItem value="unavailable">Unavailable</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="space-y-1">
+            <Label>Availability</Label>
+            <Select value={availability} onValueChange={(v) => setAvailability(v as Availability)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="full">Available</SelectItem>
+                <SelectItem value="partial">Partial</SelectItem>
+                <SelectItem value="busy">Fully allocated</SelectItem>
+                <SelectItem value="unavailable">Unavailable</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1"><Label>Start date</Label><Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></div>
           <div className="space-y-1"><Label>Tech stack</Label><TagInput value={stack} onChange={setStack} placeholder="React, Node…" /></div>

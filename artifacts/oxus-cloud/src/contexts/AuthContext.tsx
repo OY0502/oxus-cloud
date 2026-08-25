@@ -81,27 +81,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let active = true;
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (!active) return;
-      setSession(data.session);
-      setInitializing(false);
-      if (data.session?.user?.id) {
-        setProfile(null);
-        void loadProfile(data.session.user.id);
-      } else {
-        setProfile(null);
-        setProfileLoading(false);
-      }
-    });
-
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (!active) return;
       setSession(nextSession);
-      setInitializing(false);
+
       if (event === "PASSWORD_RECOVERY") {
         setIsRecovering(true);
       }
+
+      // Wait for INITIAL_SESSION before leaving the auth bootstrap state.
+      // getSession() alone can resolve before persisted storage is read, which
+      // caused false logouts after external OAuth redirects.
+      if (event === "INITIAL_SESSION") {
+        setInitializing(false);
+      }
+
       if (nextSession?.user?.id) {
         setProfile(null);
         setProfileLoading(true);
@@ -112,8 +108,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
+    const bootstrapTimeout = window.setTimeout(() => {
+      if (!active) return;
+      setInitializing((current) => (current ? false : current));
+    }, 5000);
+
     return () => {
       active = false;
+      window.clearTimeout(bootstrapTimeout);
       subscription.unsubscribe();
     };
   }, [loadProfile]);

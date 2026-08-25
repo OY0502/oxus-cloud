@@ -16,7 +16,7 @@ import {
 
 } from "@/hooks/api";
 
-import { formatCurrency } from "@/lib/currency";
+import { formatCurrency, formatEUR } from "@/lib/currency";
 
 import type { Contact, PayoutWithAllocations } from "@/lib/types";
 
@@ -156,7 +156,7 @@ export function TeamMemberPaymentsPanel({
           }
         />
         <TeamMiniStat label="Lifetime paid" value={formatCurrency(summary?.lifetime_paid ?? 0)} />
-        <TeamMiniStat label="Outstanding invoices" value={formatCurrency(invoiceSummary.data?.outstanding ?? 0)} />
+        <TeamMiniStat label="Outstanding payables" value={formatEUR(summary?.outstanding_payables ?? summary?.outstanding_invoices ?? 0)} />
         <TeamMiniStat label="Pending payouts" value={formatCurrency(summary?.pending ?? 0)} />
       </div>
 

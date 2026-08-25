@@ -15,10 +15,11 @@ interface MetricCardProps {
   chart?: React.ReactNode;
   className?: string;
   valueClassName?: string;
+  compact?: boolean;
   onClick?: () => void;
 }
 
-export function MetricCard({ title, value, trend, subtitle, icon, chart, className, valueClassName, onClick }: MetricCardProps) {
+export function MetricCard({ title, value, trend, subtitle, icon, chart, className, valueClassName, compact, onClick }: MetricCardProps) {
   const interactive = typeof onClick === "function";
   return (
     <Card
@@ -37,8 +38,8 @@ export function MetricCard({ title, value, trend, subtitle, icon, chart, classNa
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}
     >
-      <CardContent className="p-6">
-        <div className="flex justify-between items-start mb-2">
+      <CardContent className={cn(compact ? "p-4" : "p-6")}>
+        <div className={cn("flex justify-between items-start", compact ? "mb-1" : "mb-2")}>
           <h3 className="text-sm font-medium text-cool-slate">{title}</h3>
           {icon && <div className="text-cool-slate/60">{icon}</div>}
         </div>

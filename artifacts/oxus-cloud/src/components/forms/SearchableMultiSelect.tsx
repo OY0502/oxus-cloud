@@ -26,6 +26,7 @@ interface SearchableMultiSelectProps {
   emptyText?: string;
   footerLabel?: string;
   onFooterClick?: () => void;
+  showClearAll?: boolean;
   className?: string;
   disabled?: boolean;
 }
@@ -39,6 +40,7 @@ export function SearchableMultiSelect({
   emptyText = "No results.",
   footerLabel,
   onFooterClick,
+  showClearAll = false,
   className,
   disabled,
 }: SearchableMultiSelectProps) {
@@ -114,6 +116,20 @@ export function SearchableMultiSelect({
               })}
             </CommandGroup>
           </CommandList>
+          {showClearAll && selected.length > 0 && (
+            <>
+              <CommandSeparator />
+              <div className="p-1">
+                <button
+                  type="button"
+                  onClick={() => onChange([])}
+                  className="flex w-full items-center justify-center rounded-sm px-2 py-2 text-sm text-muted-foreground hover:bg-muted"
+                >
+                  Clear all
+                </button>
+              </div>
+            </>
+          )}
           {footerLabel && onFooterClick && (
             <>
               <CommandSeparator />

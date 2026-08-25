@@ -110,7 +110,7 @@ export function TeamMemberInvoicesPanel({
 
   if (!canManage) {
 
-    return <p className="text-sm text-muted-foreground">Contractor invoices are restricted to admins.</p>;
+    return <p className="text-sm text-muted-foreground">Member invoices are restricted to admins.</p>;
 
   }
 
@@ -387,7 +387,7 @@ export function TeamMemberInvoicesPanel({
       <input ref={fileInputRef} type="file" accept=".pdf,image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => void handleFileChange(e)} />
 
       <TeamPanelHeader
-        title="Contractor invoices"
+        title="Member invoices"
         action={
           <TeamOutlineButton onClick={() => { setEditInvoice(null); setDialogOpen(true); }}>
             <Plus className={teamIcon} /> Add invoice
@@ -410,7 +410,7 @@ export function TeamMemberInvoicesPanel({
 
       ) : invoices.length === 0 ? (
 
-        <p className="text-sm text-muted-foreground">No contractor invoices recorded yet.</p>
+        <p className="text-sm text-muted-foreground">No member invoices recorded yet.</p>
 
       ) : (
 

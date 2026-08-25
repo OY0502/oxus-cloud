@@ -14,10 +14,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatEUR } from "@/lib/currency";
 import { invoiceAmountDueEur, invoiceTotalEur } from "@/lib/invoiceEur";
+import { isOutstandingReceivable } from "@/lib/invoiceClassification";
 import { contactInitials } from "@/lib/contacts";
 import type { ProjectWithAssignees } from "@/lib/types";
-
-const OWED_STATUSES = ["sent", "viewed", "partial", "overdue"];
 
 export function Dashboard() {
   const [, navigate] = useLocation();
@@ -31,8 +30,8 @@ export function Dashboard() {
 
   const firstName = ((user?.user_metadata?.full_name as string | undefined) || user?.email?.split("@")[0] || "there").split(" ")[0];
 
-  const activeProjects = projects.filter((p) => p.status === "in-progress" && !p.is_draft);
-  const pendingInvoices = invoices.filter((i) => OWED_STATUSES.includes(i.status));
+  const activeProjects = projects.filter((p) => p.status === "in-progress" && !p.is_draft && !p.archived_at);
+  const pendingInvoices = invoices.filter((i) => isOutstandingReceivable(i));
   const totalPending = pendingInvoices.reduce((acc, i) => acc + (invoiceAmountDueEur(i) ?? 0), 0);
   const activeProposals = quotes.filter((q) => q.stage === "proposal");
 

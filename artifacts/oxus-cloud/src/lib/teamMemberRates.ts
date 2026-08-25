@@ -1,4 +1,4 @@
-import type { RateType, TeamMemberRate, TeamMemberRateMatchType } from "@/lib/types";
+import type { RateType, TeamMemberRate, TeamMemberRateMatchType, TeamMemberRateProject } from "@/lib/types";
 
 export const WORK_TYPES = [
   "Development",
@@ -58,8 +58,25 @@ function normalizeWorkType(value: string | null | undefined): string | null {
   return aliases[lower] ?? trimmed;
 }
 
+/** Resolved project IDs for a rate (join table with legacy fallback). */
+export function rateProjectIds(rate: Pick<TeamMemberRate, "project_ids" | "project_id">): string[] {
+  if (rate.project_ids?.length) return rate.project_ids;
+  if (rate.project_id) return [rate.project_id];
+  return [];
+}
+
+/** Resolved project records for a rate. */
+export function rateProjects(rate: TeamMemberRate): TeamMemberRateProject[] {
+  if (rate.projects?.length) return rate.projects;
+  return [];
+}
+
+export function rateHasProjects(rate: Pick<TeamMemberRate, "project_ids" | "project_id">): boolean {
+  return rateProjectIds(rate).length > 0;
+}
+
 export function rateScope(rate: TeamMemberRate): RateScope {
-  const hasProject = !!rate.project_id;
+  const hasProject = rateHasProjects(rate);
   const hasWorkType = !!rate.work_type?.trim();
   if (hasProject && hasWorkType) return "project_work_type";
   if (hasProject) return "project";
@@ -67,18 +84,49 @@ export function rateScope(rate: TeamMemberRate): RateScope {
   return "default";
 }
 
-export function rateScopeLabel(rate: TeamMemberRate, projectName?: string | null): string {
+export function formatProjectNames(
+  projects: TeamMemberRateProject[],
+  options?: { maxVisible?: number },
+): { display: string; full: string } {
+  const maxVisible = options?.maxVisible ?? 2;
+  const names = projects.map((p) => p.name);
+  const full = names.join(", ");
+  if (names.length <= maxVisible) {
+    return { display: full, full };
+  }
+  const visible = names.slice(0, maxVisible).join(", ");
+  const remaining = names.length - maxVisible;
+  return { display: `${visible} +${remaining}`, full };
+}
+
+export function rateScopeLabel(rate: TeamMemberRate): string {
   const scope = rateScope(rate);
+  const projects = rateProjects(rate);
+  const { display: projectLabel } = formatProjectNames(projects);
+
   switch (scope) {
     case "project_work_type":
-      return `${projectName ?? "Project"} · ${rate.work_type}`;
+      return projects.length ? `${rate.work_type} · ${projectLabel}` : (rate.work_type ?? "Work type");
     case "project":
-      return projectName ?? "Project-specific";
+      return projectLabel || "Project-specific";
     case "work_type":
       return rate.work_type ?? "Work type";
     default:
       return "Default";
   }
+}
+
+export function rateAppliesToLabel(rate: TeamMemberRate): string {
+  const scope = rateScope(rate);
+  const projects = rateProjects(rate);
+  const { display } = formatProjectNames(projects);
+
+  if (scope === "project_work_type") {
+    return [rate.work_type, display].filter(Boolean).join("\n");
+  }
+  if (scope === "project") return display || "—";
+  if (scope === "work_type") return rate.work_type ?? "—";
+  return "Default";
 }
 
 export function isRateActiveOnDate(
@@ -113,15 +161,23 @@ function matchesScope(
   workType: string | null,
   matchType: TeamMemberRateMatchType,
 ): boolean {
+  const linkedProjects = rateProjectIds(rate);
+  const hasProjects = linkedProjects.length > 0;
+  const hasWorkType = !!rate.work_type?.trim();
+
   switch (matchType) {
     case "project_work_type":
-      return rate.project_id === projectId && normalizeWorkType(rate.work_type) === workType;
+      return (
+        !!projectId &&
+        linkedProjects.includes(projectId) &&
+        normalizeWorkType(rate.work_type) === workType
+      );
     case "project":
-      return rate.project_id === projectId && !rate.work_type?.trim();
+      return !!projectId && linkedProjects.includes(projectId) && !hasWorkType;
     case "work_type":
-      return !rate.project_id && normalizeWorkType(rate.work_type) === workType;
+      return !hasProjects && normalizeWorkType(rate.work_type) === workType;
     case "default":
-      return !rate.project_id && !rate.work_type?.trim();
+      return !hasProjects && !hasWorkType;
     default:
       return false;
   }
@@ -206,23 +262,40 @@ export function formatRatePreview(
   if (rate.rate_type === "fixed_project") {
     return `${symbol}${amount} fixed`;
   }
-  return `${symbol}${amount} / ${suffix}`;
+  return `${symbol}${amount} per ${suffix}`;
+}
+
+export function formatProjectScopePreview(
+  projects: TeamMemberRateProject[],
+): string {
+  if (projects.length === 0) return "";
+  if (projects.length === 1) return projects[0]!.name;
+  if (projects.length === 2) return `${projects[0]!.name} and ${projects[1]!.name}`;
+  return `${projects.length} selected projects`;
 }
 
 export function formatRateDescription(
   rate: TeamMemberRate,
-  options?: { projectName?: string | null; effectiveDate?: string },
+  options?: { effectiveDate?: string },
 ): string {
   const preview = formatRatePreview(rate);
-  const scope = rateScopeLabel(rate, options?.projectName);
+  const scope = rateScope(rate);
+  const projects = rateProjects(rate);
   const parts = [preview];
-  if (scope !== "Default") parts.push(`for ${scope}`);
-  if (options?.effectiveDate) {
-    parts.push(`effective from ${options.effectiveDate}`);
-  } else if (rate.effective_from) {
-    parts.push(`effective from ${rate.effective_from}`);
+
+  if (scope === "project_work_type") {
+    const projectText = formatProjectScopePreview(projects);
+    parts.push(`for ${rate.work_type} on ${projectText}`);
+  } else if (scope === "project") {
+    parts.push(`for ${formatProjectScopePreview(projects)}`);
+  } else if (scope === "work_type") {
+    parts.push(`for ${rate.work_type}`);
   }
-  return parts.join(" · ");
+
+  const effectiveDate = options?.effectiveDate ?? rate.effective_from;
+  if (effectiveDate) parts.push(`Effective from ${effectiveDate}`);
+
+  return parts.join("\n");
 }
 
 export function rateStatusVariant(
@@ -252,23 +325,50 @@ export function computeRateStatus(
 
 export function scopeFromForm(
   appliesTo: "default" | "project" | "work_type" | "project_work_type",
-  projectId: string,
+  projectIds: string[],
   workType: string,
-): { project_id: string | null; work_type: string | null; is_default: boolean } {
+): { project_ids: string[]; work_type: string | null; is_default: boolean } {
   switch (appliesTo) {
     case "project":
-      return { project_id: projectId || null, work_type: null, is_default: false };
+      return { project_ids: projectIds, work_type: null, is_default: false };
     case "work_type":
-      return { project_id: null, work_type: normalizeWorkType(workType), is_default: false };
+      return { project_ids: [], work_type: normalizeWorkType(workType), is_default: false };
     case "project_work_type":
       return {
-        project_id: projectId || null,
+        project_ids: projectIds,
         work_type: normalizeWorkType(workType),
         is_default: false,
       };
     default:
-      return { project_id: null, work_type: null, is_default: true };
+      return { project_ids: [], work_type: null, is_default: true };
   }
+}
+
+export function mapTeamMemberRateRow(row: Record<string, unknown>): TeamMemberRate {
+  const links = (row.team_member_rate_projects ?? []) as Array<{
+    project_id: string;
+    projects: { id: string; name: string; archived_at?: string | null } | null;
+  }>;
+
+  const projects: TeamMemberRateProject[] = links
+    .map((link) => link.projects)
+    .filter((p): p is TeamMemberRateProject => !!p)
+    .map((p) => ({ id: p.id, name: p.name, archived_at: p.archived_at ?? null }));
+
+  const project_ids = projects.length
+    ? projects.map((p) => p.id)
+    : row.project_id
+      ? [String(row.project_id)]
+      : [];
+
+  const rate = row as unknown as TeamMemberRate;
+  return {
+    ...rate,
+    project_ids,
+    projects,
+    project_id: project_ids[0] ?? null,
+    status: rate.status ?? computeRateStatus(rate.effective_from, rate.effective_to),
+  };
 }
 
 export { normalizeWorkType, scopeSpecificity };

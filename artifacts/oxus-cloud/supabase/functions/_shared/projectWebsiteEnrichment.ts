@@ -11,7 +11,9 @@ import {
 import { generateStructuredObject, oxusIdentityGuidance } from "./agent/aiModel.ts";
 import { createLangfuseTrace, patchLangfuseTrace, buildLangfuseTraceUrl, type TraceMetadata } from "./agent/langfuse.ts";
 import { executeCreateProposedTasks, executeUpdateProjectMemory } from "./agent/tools.ts";
+import { embedProjectKnowledgeChunks } from "./agent/retrieval.ts";
 import { buildSuppressedQuestionKeys, normalizeMemoryListKey } from "./memoryMerge.ts";
+import { chunkKnowledgeText } from "./knowledgeChunking.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,7 +55,6 @@ export type EnrichmentRunResult = {
 
 const MAX_TOTAL_PAGES = clampInt(Deno.env.get("FIRECRAWL_MAX_PAGES"), 10, 4, 12);
 const MAX_CONTENT_CHARS = clampInt(Deno.env.get("FIRECRAWL_MAX_CONTENT_CHARS"), 60000, 10000, 200000);
-const CHUNK_SIZE = clampInt(Deno.env.get("AI_CHUNK_SIZE_CHARS"), 10000, 1000, 40000);
 
 function clampInt(raw: string | undefined, fallback: number, min: number, max: number): number {
   const n = Number(raw);
@@ -83,12 +84,6 @@ async function sha256Hex(text: string): Promise<string> {
   const data = new TextEncoder().encode(text);
   const hash = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-function chunkText(text: string, size: number): string[] {
-  const chunks: string[] = [];
-  for (let i = 0; i < text.length; i += size) chunks.push(text.slice(i, i + size));
-  return chunks;
 }
 
 function asStringArray(value: unknown): string[] {
@@ -242,7 +237,7 @@ async function upsertWebsiteKnowledgeSource(args: {
       })
       .eq("id", existing.id);
 
-    await replaceSourceChunks(admin, projectId, existing.id, title, markdown, sourceType);
+    await replaceSourceChunks(admin, projectId, existing.id, title, markdown, sourceType, pageUrl);
     return "updated";
   }
 
@@ -267,7 +262,7 @@ async function upsertWebsiteKnowledgeSource(args: {
     .single();
   if (error) throw new Error(error.message);
 
-  await replaceSourceChunks(admin, projectId, inserted.id, title, markdown, sourceType);
+  await replaceSourceChunks(admin, projectId, inserted.id, title, markdown, sourceType, pageUrl);
   return "created";
 }
 
@@ -278,18 +273,32 @@ async function replaceSourceChunks(
   title: string,
   markdown: string,
   sourceType: string,
+  canonicalUrl: string,
 ): Promise<void> {
   await admin.from("project_knowledge_chunks").delete().eq("source_id", sourceId);
-  const chunks = chunkText(markdown, CHUNK_SIZE);
+  const chunks = chunkKnowledgeText(markdown, {
+    targetChars: clampInt(Deno.env.get("AI_RETRIEVAL_CHUNK_SIZE_CHARS"), 2600, 800, 8000),
+    overlapChars: clampInt(Deno.env.get("AI_RETRIEVAL_CHUNK_OVERLAP_CHARS"), 320, 0, 1200),
+  });
   if (chunks.length === 0) return;
   const { error } = await admin.from("project_knowledge_chunks").insert(
-    chunks.map((content, index) => ({
+    chunks.map((chunk, index) => ({
       project_id: projectId,
       source_id: sourceId,
       chunk_index: index,
-      content,
+      content: chunk.content,
+      section_path: chunk.sectionPath,
       category: "company_website",
-      metadata: { source_type: sourceType, doc_title: title, char_count: content.length },
+      metadata: {
+        source_type: sourceType,
+        doc_title: title,
+        canonical_url: canonicalUrl,
+        section_path: chunk.sectionPath,
+        char_start: chunk.charStart,
+        char_end: chunk.charEnd,
+        token_estimate: chunk.tokenEstimate,
+        char_count: chunk.content.length,
+      },
     })),
   );
   if (error) throw new Error(error.message);
@@ -744,6 +753,18 @@ export async function runProjectWebsiteEnrichment(args: {
             if (outcome === "created") result.sources_created += 1;
             else if (outcome === "updated") result.sources_updated += 1;
             else result.sources_skipped_unchanged += 1;
+          }
+
+          if (result.sources_created + result.sources_updated > 0) {
+            try {
+              await embedProjectKnowledgeChunks({
+                admin,
+                projectId,
+                syncPinecone: true,
+              });
+            } catch (indexError) {
+              warnings.push(`Website knowledge indexing failed: ${(indexError as Error).message}`);
+            }
           }
 
           // Track the homepage source as the primary source id for intelligence linkage.

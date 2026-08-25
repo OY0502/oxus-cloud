@@ -10,6 +10,7 @@ out-tsc
 
 # dependencies
 node_modules
+/.pnpm-store/
 
 # IDEs and editors
 /.idea
@@ -26,11 +27,22 @@ node_modules
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+/*.code-workspace
 
 # env files (keep .env.example tracked)
 .env
 .env.local
 .env.*.local
+
+# Accidental Supabase CLI state when run from monorepo root (canonical project: artifacts/oxus-cloud/supabase)
+/supabase/.temp/
+
+# Stray Trigger.dev scaffold at repo root (canonical config: artifacts/oxus-cloud/trigger.config.ts)
+/trigger.config.ts
+/src/trigger/
+
+# Local production diagnostics and one-off repair artifacts
+/artifacts/oxus-cloud/scripts/_*
 
 # misc
 /.sass-cache

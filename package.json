@@ -2,14 +2,21 @@
   "name": "workspace",
   "version": "0.0.0",
   "license": "MIT",
+  "private": true,
+  "packageManager": "pnpm@10.34.1",
+  "engines": {
+    "node": ">=20.17.0"
+  },
   "scripts": {
     "preinstall": "node scripts/ensure-pnpm.mjs",
     "dev": "pnpm --filter @workspace/oxus-cloud run dev",
-    "build": "pnpm run typecheck && pnpm -r --if-present run build",
+    "build": "pnpm run typecheck && pnpm --filter @workspace/oxus-cloud run build",
+    "test": "pnpm --filter @workspace/oxus-cloud run test",
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
+    "trigger:dev": "pnpm --filter @workspace/oxus-cloud run trigger:dev",
+    "trigger:deploy": "pnpm --filter @workspace/oxus-cloud run trigger:deploy"
   },
-  "private": true,
   "devDependencies": {
     "prettier": "^3.8.3",
     "typescript": "~5.9.3"

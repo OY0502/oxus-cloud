@@ -28,6 +28,7 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
   { name: "update_project_memory", description: "Merge intake into durable project PM memory.", requires_confirmation: false },
   { name: "create_proposed_tasks", description: "Create ai_proposed_tasks rows for PM review.", requires_confirmation: false },
   { name: "create_clickup_task", description: "Create a ClickUp task after user confirmation.", requires_confirmation: true },
+  { name: "add_clickup_comment", description: "Add a comment to an existing ClickUp task after user confirmation.", requires_confirmation: true },
   { name: "create_clickup_doc", description: "Create a ClickUp doc after user confirmation.", requires_confirmation: true },
   { name: "link_clickup_doc_to_task", description: "Link a ClickUp doc to a task after user confirmation.", requires_confirmation: true },
   { name: "sync_clickup_docs", description: "Sync ClickUp docs into project knowledge (explicit user action).", requires_confirmation: true },
@@ -73,6 +74,7 @@ const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   sync_slack_channel: "read_external_sync",
   // External mutations (confirmation required)
   create_clickup_task: "external_mutation",
+  add_clickup_comment: "external_mutation",
   create_clickup_doc: "external_mutation",
   link_clickup_doc_to_task: "external_mutation",
   update_clickup_task: "external_mutation",

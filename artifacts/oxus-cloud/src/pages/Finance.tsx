@@ -76,7 +76,7 @@ export function Finance() {
     { id: "date", header: "Date", cell: (tx: Transaction) => <span className="text-muted-foreground whitespace-nowrap">{new Date(tx.occurred_on).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span> },
     { id: "description", header: "Description", cell: (tx: Transaction) => <div className="font-medium text-foreground">{tx.description}</div> },
     { id: "category", header: "Category", cell: (tx: Transaction) => <StatusBadge status={tx.category} variant={tx.amount >= 0 ? "success" : "neutral"} /> },
-    { id: "amount", header: "Amount", className: "text-right", cell: (tx: Transaction) => <span className={`font-semibold ${tx.amount > 0 ? "text-success" : "text-foreground"}`}>{tx.amount > 0 ? "+" : "-"}{formatEUR(Math.abs(tx.amount))}</span> },
+    { id: "amount", header: "Amount", cell: (tx: Transaction) => <span className={`font-semibold ${tx.amount > 0 ? "text-success" : "text-foreground"}`}>{tx.amount > 0 ? "+" : "-"}{formatEUR(Math.abs(tx.amount))}</span> },
   ];
 
   return (
@@ -112,11 +112,25 @@ export function Finance() {
             </Alert>
           )}
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-            <MetricCard title="Revenue MTD" value={formatEUR(overview?.revenue_mtd ?? latest.income)} icon={<Wallet className="w-5 h-5" />} />
-            <MetricCard title="Revenue YTD" value={formatEUR(overview?.revenue_ytd ?? 0)} icon={<TrendingUp className="w-5 h-5" />} />
-            <MetricCard title="Receivables" value={formatEUR(overview?.receivables ?? 0)} icon={<CreditCard className="w-5 h-5" />} />
-            <MetricCard title="Team payouts YTD" value={formatEUR(overview?.payouts_ytd ?? 0)} icon={<Wallet className="w-5 h-5" />} />
+            <MetricCard title="Client revenue MTD" value={formatEUR(overview?.revenue_mtd ?? latest.income)} icon={<Wallet className="w-5 h-5" />} />
+            <MetricCard title="Outstanding receivables" value={formatEUR(overview?.receivables ?? 0)} icon={<CreditCard className="w-5 h-5" />} />
+            <MetricCard title="Team costs accrued" value={formatEUR(overview?.team_costs_accrued ?? 0)} icon={<Wallet className="w-5 h-5" />} />
+            <MetricCard title="Ready to pay" value={formatEUR(overview?.ready_to_pay ?? 0)} icon={<TrendingUp className="w-5 h-5" />} />
           </div>
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+            <MetricCard title="Team payments MTD" value={formatEUR(overview?.team_payments_mtd ?? overview?.payouts_mtd ?? 0)} icon={<Wallet className="w-5 h-5" />} />
+            <MetricCard title="Gross margin YTD" value={overview?.gross_margin != null ? formatEUR(overview.gross_margin) : "—"} icon={<LineChartIcon className="w-5 h-5" />} />
+            <MetricCard title="Revenue YTD" value={formatEUR(overview?.revenue_ytd ?? 0)} icon={<TrendingUp className="w-5 h-5" />} />
+            <MetricCard title="Active projects" value={String(overview?.active_projects ?? 0)} icon={<Wallet className="w-5 h-5" />} />
+          </div>
+          {overview?.has_unconverted && (
+            <Alert>
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription>
+                Some payables lack EUR conversion and are excluded from accrued cost totals.
+              </AlertDescription>
+            </Alert>
+          )}
           {overview?.revenue_by_client && overview.revenue_by_client.length > 0 && (
             <ChartCard title="Revenue by client" subtitle="Paid invoices">
               <div className="h-[280px] mt-4">

@@ -6,10 +6,17 @@ import {
   pickDefaultStatus,
 } from "../_shared/clickup.ts";
 import {
+  auditProjectClickupSetup,
+  fetchClickupSpaceTags,
+  type ClickupProjectLinkRow,
+} from "../_shared/clickupProjectSetup.ts";
+import {
   ClickupAuthError,
   clickupAuthErrorResponse,
+  getServiceRoleSupabase,
   resolveUserClickupForProject,
 } from "../_shared/clickup-auth.ts";
+import { repairMalformedClickupTimeline } from "../_shared/repairClickupTimeline.ts";
 import {
   assertInternalOxusAuthUser,
   InternalOxusAuthError,
@@ -57,7 +64,7 @@ Deno.serve(async (req) => {
     const anonKey = getAnonKey();
     if (!supabaseUrl || !anonKey) return err("Missing Supabase environment.", 500, "CONFIG_ERROR");
 
-    let body: { project_id?: string };
+    let body: { project_id?: string; repair_timeline?: boolean };
     try {
       body = await req.json();
     } catch {
@@ -83,7 +90,7 @@ Deno.serve(async (req) => {
     // Read the existing project ClickUp link (do NOT provision a space here).
     const { data: link } = await supabase
       .from("project_clickup_links")
-      .select("clickup_list_id, clickup_folder_id, clickup_space_id")
+      .select("*")
       .eq("project_id", body.project_id)
       .maybeSingle();
 
@@ -93,6 +100,9 @@ Deno.serve(async (req) => {
         linked: false,
         statuses: [],
         priorities: CLICKUP_PRIORITY_OPTIONS,
+        tags: [],
+        capabilities: null,
+        setup: null,
         destination: null,
         message:
           "This project is not linked to a ClickUp list yet. Sync the ClickUp structure before creating tasks.",
@@ -117,18 +127,46 @@ Deno.serve(async (req) => {
     const statuses = await fetchListStatuses(clickup, listId);
     const folder = listDetails?.folder as { name?: string } | undefined;
     const space = listDetails?.space as { name?: string } | undefined;
+    const spaceId = link?.clickup_space_id as string | undefined;
+
+    const tags = spaceId ? await fetchClickupSpaceTags(clickup, spaceId) : [];
+    const setup = await auditProjectClickupSetup({
+      clickup,
+      link: link as ClickupProjectLinkRow,
+      supabase,
+    });
+    const repairedTimelineCount = body.repair_timeline === true
+      ? await repairMalformedClickupTimeline({
+          admin: getServiceRoleSupabase(),
+          clickup,
+          projectId: body.project_id,
+        })
+      : 0;
 
     return json({
       linked: true,
       statuses,
       default_status: pickDefaultStatus(statuses) ?? null,
-      priorities: CLICKUP_PRIORITY_OPTIONS,
+      priorities: [
+        { value: "", label: "No priority", clickup_value: null },
+        ...CLICKUP_PRIORITY_OPTIONS,
+      ],
+      tags,
+      capabilities: setup.capabilities,
+      setup: {
+        status: setup.status,
+        template_version: setup.template_version,
+        applied_template_version: setup.applied_template_version,
+        warnings: setup.warnings,
+        manual_steps: setup.manual_steps,
+      },
       destination: {
         list_id: listId,
         list_name: typeof listDetails?.name === "string" ? listDetails.name : null,
         folder_name: folder?.name ?? null,
         space_name: space?.name ?? null,
       },
+      repaired_timeline_count: repairedTimelineCount,
     });
   } catch (e) {
     console.error("[UNEXPECTED_ERROR]", (e as Error).message);

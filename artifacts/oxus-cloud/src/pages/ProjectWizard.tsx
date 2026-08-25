@@ -12,7 +12,7 @@ import { ProjectImageField } from "@/components/projects/ProjectImageField";
 import { Check, FileText, Info, ArrowLeft, ArrowRight, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
-import { useProject, useCreateProject, useUpdateProject, useDeleteProject, useClients, useEnrichProjectFromWebsite } from "@/hooks/api";
+import { useProject, useCreateProject, useUpdateProject, useDeleteProject, useClients, useEnrichProjectFromWebsite, useAcceptCrmCandidate, useCreateClient } from "@/hooks/api";
 import {
   useContactOptions,
   useOrganizationOptions,
@@ -58,6 +58,8 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
   const update = useUpdateProject();
   const deleteProject = useDeleteProject();
   const enrichFromWebsite = useEnrichProjectFromWebsite();
+  const acceptCandidate = useAcceptCrmCandidate();
+  const createClient = useCreateClient();
   const { data: clients = [] } = useClients();
   const orgOptions = useOrganizationOptions();
   const contactOptions = useContactOptions();
@@ -87,7 +89,14 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
   const [removeExistingImage, setRemoveExistingImage] = useState(false);
 
   // Whether we are editing a project that has already been finished (not a draft).
+  // Completed projects use /projects/:id/edit (ProjectEdit). Wizard is create + draft only.
   const isCompleted = !!existing.data && !existing.data.is_draft;
+
+  useEffect(() => {
+    if (isCompleted && projectId) {
+      navigate(`/projects/${projectId}/edit`);
+    }
+  }, [isCompleted, projectId, navigate]);
 
   useEffect(() => {
     if (existing.data && !hydrated) {
@@ -158,13 +167,43 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
   // Ensure a row exists so step 2 (documents) has an entity to attach to.
   // Preserve the draft flag of an existing project (don't flip a finished one back to draft).
   const ensureSaved = async (draftStep: number): Promise<string> => {
+    let resolvedOrgId = organizationId;
+    if (organizationId.startsWith("candidate:")) {
+      const result = await acceptCandidate.mutateAsync({ candidate_id: organizationId.replace("candidate:", "") });
+      const entityId = (result as { entity_id?: string })?.entity_id;
+      if (entityId) {
+        resolvedOrgId = entityId;
+        setOrganizationId(entityId);
+      }
+    } else if (!organizationId && companyWebsiteUrl.trim() && isLikelyWebsiteUrl(companyWebsiteUrl)) {
+      try {
+        const hostname = new URL(companyWebsiteUrl.startsWith("http") ? companyWebsiteUrl : `https://${companyWebsiteUrl}`).hostname.replace(/^www\./, "");
+        const created = await createClient.mutateAsync({
+          name: hostname.split(".")[0].replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+          website: companyWebsiteUrl.trim(),
+        });
+        resolvedOrgId = created.id;
+        setOrganizationId(created.id);
+        toast({ title: "Company created", description: "Enrichment is running in the background." });
+      } catch {
+        // optional — project can still save without company
+      }
+    }
+
     const isDraft = existing.data ? existing.data.is_draft : true;
+    const orgNameResolved = clients.find((c) => c.id === resolvedOrgId)?.name ?? orgName;
+    const patch = {
+      ...buildPatch(draftStep),
+      client_id: resolvedOrgId || null,
+      organization_id: resolvedOrgId || null,
+      client_name: orgNameResolved,
+    };
     let id: string;
     if (projectId) {
-      await update.mutateAsync({ id: projectId, patch: { ...buildPatch(draftStep), is_draft: isDraft }, contact_assignee_ids: teamMembers });
+      await update.mutateAsync({ id: projectId, patch: { ...patch, is_draft: isDraft }, contact_assignee_ids: teamMembers });
       id = projectId;
     } else {
-      const project = await create.mutateAsync({ ...buildPatch(draftStep), is_draft: true, contact_assignee_ids: teamMembers });
+      const project = await create.mutateAsync({ ...patch, is_draft: true, contact_assignee_ids: teamMembers });
       setProjectId(project.id);
       id = project.id;
     }

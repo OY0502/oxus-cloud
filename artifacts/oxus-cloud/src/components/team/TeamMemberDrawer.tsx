@@ -1,8 +1,7 @@
 import React, { useMemo, useState } from "react";
-import { Link } from "wouter";
+import { useLocation } from "wouter";
 import { EntityDrawer } from "@/components/EntityDrawer";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { StatusBadge } from "@/components/StatusBadge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,28 +11,29 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-  useCompanyPeople,
-  useTeamMemberSummary,
   useProfiles,
   useTeamMemberStatusChange,
+  useTeamMemberSummary,
+  useTeamRoster,
 } from "@/hooks/api";
 import {
   availabilityLabel,
   availabilityVariant,
   deactivatedAtLabel,
-  engagementLabel,
-  formatRate,
   isPersonInactive,
+  paidYtdRank,
   personInitials,
   personStatusVariant,
 } from "@/lib/team";
 import { formatEUR } from "@/lib/currency";
 import type { Contact } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { StatusBadge } from "@/components/StatusBadge";
 import { TeamMemberOverview } from "./TeamMemberOverview";
 import { TeamMemberProjects } from "./TeamMemberProjects";
 import { TeamMemberRatesPanel } from "./TeamMemberRates";
 import { TeamMemberPaymentsPanel } from "./TeamMemberPayments";
+import { TeamMemberPayablesPanel } from "./TeamMemberPayablesPanel";
 import { TeamMemberInvoicesPanel } from "./TeamMemberInvoices";
 import { TeamMemberAccessPanel } from "./TeamMemberAccess";
 import { TeamMemberTabNav, type TeamMemberTab } from "./TeamMemberTabNav";
@@ -89,11 +89,15 @@ export function TeamMemberDrawer({
 }: TeamMemberDrawerProps) {
   const { isSuperAdmin } = useAuth();
   const { toast } = useToast();
-  const { data: companyPeople = [] } = useCompanyPeople();
+  const [, navigate] = useLocation();
   const { data: profiles = [] } = useProfiles();
   const summaryQuery = useTeamMemberSummary(person?.id ?? "", {
     enabled: !!person && isSuperAdmin,
     includeFinancials: isSuperAdmin,
+  });
+  const rosterQuery = useTeamRoster({
+    enabled: !!person && isSuperAdmin && open,
+    includeFinancials: true,
   });
   const statusChange = useTeamMemberStatusChange();
 
@@ -102,6 +106,7 @@ export function TeamMemberDrawer({
   const [changeRateOpen, setChangeRateOpen] = useState(false);
   const [recordPaymentOpen, setRecordPaymentOpen] = useState(false);
   const [preselectedInvoiceId, setPreselectedInvoiceId] = useState<string | null>(null);
+  const [preselectedPayableId, setPreselectedPayableId] = useState<string | null>(null);
   const [assignOpen, setAssignOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
@@ -113,12 +118,13 @@ export function TeamMemberDrawer({
   }, [open, initialTab, person?.id]);
 
   const inactive = person ? isPersonInactive(person) : false;
-  const engagement = useMemo(
-    () => (person ? engagementLabel(person, companyPeople) : null),
-    [person, companyPeople],
-  );
   const deactivatedLabel = person ? deactivatedAtLabel(person) : null;
   const summary = summaryQuery.data;
+
+  const paidYtdRankInfo = useMemo(() => {
+    if (!person || !rosterQuery.data) return null;
+    return paidYtdRank(person.id, rosterQuery.data);
+  }, [person, rosterQuery.data]);
 
   const hasWorkspaceAccount = useMemo(() => {
     const email = person?.email?.trim().toLowerCase();
@@ -144,8 +150,14 @@ export function TeamMemberDrawer({
     }
   };
 
-  const openRecordPayment = (invoiceId?: string) => {
-    setPreselectedInvoiceId(invoiceId ?? null);
+  const openRecordPayment = (invoiceOrPayableId?: string, isPayable = false) => {
+    if (isPayable) {
+      setPreselectedPayableId(invoiceOrPayableId ?? null);
+      setPreselectedInvoiceId(null);
+    } else {
+      setPreselectedInvoiceId(invoiceOrPayableId ?? null);
+      setPreselectedPayableId(null);
+    }
     setRecordPaymentOpen(true);
   };
 
@@ -153,10 +165,105 @@ export function TeamMemberDrawer({
 
   const metadataParts = [
     person.email,
-    engagement,
-    person.location,
-    hasWorkspaceAccount ? "Workspace account" : null,
   ].filter(Boolean);
+
+  const drawerActions = (
+    <div className="flex flex-wrap items-center gap-2">
+      {isSuperAdmin && !inactive && (
+        <TeamPrimaryButton onClick={() => { setTab("overview"); setEditing(true); }}>
+          <Pencil className={teamIcon} /> Edit member
+        </TeamPrimaryButton>
+      )}
+
+      {isSuperAdmin && !inactive && (
+        <TeamOutlineButton onClick={() => openRecordPayment()}>
+          <Wallet className={teamIcon} /> Record payment
+        </TeamOutlineButton>
+      )}
+
+      {isSuperAdmin && inactive && (
+        <TeamPrimaryButton
+          disabled={statusChange.isPending}
+          onClick={() => void changeStatus("reactivate")}
+        >
+          <UserCheck className={teamIcon} /> Reactivate
+        </TeamPrimaryButton>
+      )}
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <TeamIconButton aria-label="More actions">
+            <MoreHorizontal className={teamIcon} />
+          </TeamIconButton>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52">
+          {isSuperAdmin && !inactive && (
+            <>
+              <DropdownMenuItem onSelect={() => setChangeRateOpen(true)}>
+                <DollarSign className="mr-2 h-4 w-4" /> Change rate
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setAssignOpen(true)}>
+                <Briefcase className="mr-2 h-4 w-4" /> Assign project
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
+
+          {isSuperAdmin && hasWorkspaceAccount && (
+            <DropdownMenuItem onSelect={() => setTab("access")}>
+              <UserCog className="mr-2 h-4 w-4" /> Workspace access
+            </DropdownMenuItem>
+          )}
+
+          {onManageAccess && isSuperAdmin && !hasWorkspaceAccount && (
+            <DropdownMenuItem onSelect={onManageAccess}>
+              <UserCog className="mr-2 h-4 w-4" /> Workspace access
+            </DropdownMenuItem>
+          )}
+
+          {person.email && (
+            <DropdownMenuItem onSelect={() => { window.location.href = `mailto:${person.email}`; }}>
+              <Mail className="mr-2 h-4 w-4" /> Send email
+            </DropdownMenuItem>
+          )}
+
+          <DropdownMenuItem onSelect={() => navigate(`/team/${person.id}`)}>
+            <ExternalLink className="mr-2 h-4 w-4" /> Open full profile
+          </DropdownMenuItem>
+
+          {isSuperAdmin && !inactive && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onSelect={() => void changeStatus("deactivate")}
+              >
+                <UserX className="mr-2 h-4 w-4" /> Deactivate member
+              </DropdownMenuItem>
+            </>
+          )}
+
+          {isSuperAdmin && inactive && (
+            <DropdownMenuItem onSelect={() => void changeStatus("reactivate")}>
+              <UserCheck className="mr-2 h-4 w-4" /> Reactivate member
+            </DropdownMenuItem>
+          )}
+
+          {isSuperAdmin && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onSelect={() => setDeleteOpen(true)}
+              >
+                <Trash2 className="mr-2 h-4 w-4" /> Delete permanently
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
 
   return (
     <>
@@ -208,6 +315,9 @@ export function TeamMemberDrawer({
                       variant={availabilityVariant(person.availability)}
                     />
                   )}
+                  {hasWorkspaceAccount && (
+                    <span className="text-xs text-muted-foreground">Workspace access</span>
+                  )}
                 </div>
                 {inactive && deactivatedLabel && (
                   <p className="text-xs text-muted-foreground">Deactivated {deactivatedLabel}</p>
@@ -215,117 +325,29 @@ export function TeamMemberDrawer({
               </div>
             </div>
 
+            {drawerActions}
+
             {isSuperAdmin && (
-              <div className="grid grid-cols-3 gap-2">
-                <TeamMiniStat
-                  label="Current rate"
-                  value={summary?.current_rate ? formatRate(summary.current_rate) : "—"}
-                />
-                <TeamMiniStat label="Paid MTD" value={formatEUR(summary?.paid_mtd ?? 0)} />
-                <TeamMiniStat label="Active projects" value={String(summary?.active_projects ?? 0)} />
+              <div className="rounded-lg border border-border/60 bg-card/40 px-4 py-3">
+                <div className="grid grid-cols-3 gap-3">
+                  <TeamMiniStat
+                    label="Top paid"
+                    value={paidYtdRankInfo ? `#${paidYtdRankInfo.rank}` : "—"}
+                    className="border-0 bg-transparent px-0 py-0"
+                  />
+                  <TeamMiniStat
+                    label="Paid MTD"
+                    value={formatEUR(summary?.paid_mtd ?? 0)}
+                    className="border-0 bg-transparent px-0 py-0"
+                  />
+                  <TeamMiniStat
+                    label="Active projects"
+                    value={String(summary?.active_projects ?? 0)}
+                    className="border-0 bg-transparent px-0 py-0"
+                  />
+                </div>
               </div>
             )}
-          </div>
-        }
-        headerActions={
-          <div className="flex items-center gap-2">
-            {isSuperAdmin && !inactive && (
-              <TeamPrimaryButton onClick={() => { setTab("overview"); setEditing(true); }}>
-                <Pencil className={teamIcon} /> Edit member
-              </TeamPrimaryButton>
-            )}
-
-            {isSuperAdmin && !inactive && (
-              <TeamOutlineButton onClick={() => openRecordPayment()}>
-                <Wallet className={teamIcon} /> Record payment
-              </TeamOutlineButton>
-            )}
-
-            {isSuperAdmin && inactive && (
-              <TeamPrimaryButton
-                disabled={statusChange.isPending}
-                onClick={() => void changeStatus("reactivate")}
-              >
-                <UserCheck className={teamIcon} /> Reactivate
-              </TeamPrimaryButton>
-            )}
-
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <TeamIconButton aria-label="More actions">
-                  <MoreHorizontal className={teamIcon} />
-                </TeamIconButton>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52">
-                {isSuperAdmin && !inactive && (
-                  <>
-                    <DropdownMenuItem onSelect={() => setChangeRateOpen(true)}>
-                      <DollarSign className="mr-2 h-4 w-4" /> Change rate
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => setAssignOpen(true)}>
-                      <Briefcase className="mr-2 h-4 w-4" /> Assign project
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                  </>
-                )}
-
-                {isSuperAdmin && hasWorkspaceAccount && (
-                  <DropdownMenuItem onSelect={() => setTab("access")}>
-                    <UserCog className="mr-2 h-4 w-4" /> Workspace access
-                  </DropdownMenuItem>
-                )}
-
-                {onManageAccess && isSuperAdmin && !hasWorkspaceAccount && (
-                  <DropdownMenuItem onSelect={onManageAccess}>
-                    <UserCog className="mr-2 h-4 w-4" /> Workspace access
-                  </DropdownMenuItem>
-                )}
-
-                {person.email && (
-                  <DropdownMenuItem asChild>
-                    <a href={`mailto:${person.email}`}>
-                      <Mail className="mr-2 h-4 w-4" /> Send email
-                    </a>
-                  </DropdownMenuItem>
-                )}
-
-                <DropdownMenuItem asChild>
-                  <Link href={`/team/${person.id}`} className="flex items-center gap-2">
-                    <ExternalLink className="h-4 w-4" /> Open full profile
-                  </Link>
-                </DropdownMenuItem>
-
-                {isSuperAdmin && !inactive && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      className="text-destructive focus:text-destructive"
-                      onSelect={() => void changeStatus("deactivate")}
-                    >
-                      <UserX className="mr-2 h-4 w-4" /> Deactivate member
-                    </DropdownMenuItem>
-                  </>
-                )}
-
-                {isSuperAdmin && inactive && (
-                  <DropdownMenuItem onSelect={() => void changeStatus("reactivate")}>
-                    <UserCheck className="mr-2 h-4 w-4" /> Reactivate member
-                  </DropdownMenuItem>
-                )}
-
-                {isSuperAdmin && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      className="text-destructive focus:text-destructive"
-                      onSelect={() => setDeleteOpen(true)}
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" /> Delete permanently
-                    </DropdownMenuItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
         }
       >
@@ -340,6 +362,7 @@ export function TeamMemberDrawer({
             value={tab}
             onChange={(v) => { setTab(v); if (v !== "overview") setEditing(false); }}
             showRates={isSuperAdmin}
+            showPayables={isSuperAdmin}
             showInvoices={isSuperAdmin}
             showPayments={isSuperAdmin}
             showAccess={isSuperAdmin && hasWorkspaceAccount}
@@ -361,6 +384,13 @@ export function TeamMemberDrawer({
           {tab === "rates" && isSuperAdmin && (
             <TeamMemberRatesPanel person={person} canManage={isSuperAdmin && !inactive} />
           )}
+          {tab === "payables" && isSuperAdmin && (
+            <TeamMemberPayablesPanel
+              person={person}
+              canManage={isSuperAdmin}
+              onRecordPayment={(payableId: string) => openRecordPayment(payableId, true)}
+            />
+          )}
           {tab === "invoices" && isSuperAdmin && (
             <TeamMemberInvoicesPanel
               person={person}
@@ -381,24 +411,33 @@ export function TeamMemberDrawer({
         </div>
       </EntityDrawer>
 
-      <ChangeRateDialog open={changeRateOpen} onOpenChange={setChangeRateOpen} person={person} />
-      <RecordPaymentDialog
-        open={recordPaymentOpen}
-        onOpenChange={setRecordPaymentOpen}
-        person={person}
-        preselectedInvoiceId={preselectedInvoiceId}
-      />
-      <AssignProjectDialog open={assignOpen} onOpenChange={setAssignOpen} person={person} />
-      <DeleteTeamMemberDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        person={person}
-        onDeleted={() => {
-          setDeleteOpen(false);
-          onPersonDeleted?.();
-          onOpenChange(false);
-        }}
-      />
+      {changeRateOpen && (
+        <ChangeRateDialog open={changeRateOpen} onOpenChange={setChangeRateOpen} person={person} />
+      )}
+      {recordPaymentOpen && (
+        <RecordPaymentDialog
+          open={recordPaymentOpen}
+          onOpenChange={setRecordPaymentOpen}
+          person={person}
+          preselectedInvoiceId={preselectedInvoiceId}
+          preselectedPayableId={preselectedPayableId}
+        />
+      )}
+      {assignOpen && (
+        <AssignProjectDialog open={assignOpen} onOpenChange={setAssignOpen} person={person} />
+      )}
+      {deleteOpen && (
+        <DeleteTeamMemberDialog
+          open={deleteOpen}
+          onOpenChange={setDeleteOpen}
+          person={person}
+          onDeleted={() => {
+            setDeleteOpen(false);
+            onPersonDeleted?.();
+            onOpenChange(false);
+          }}
+        />
+      )}
     </>
   );
 }

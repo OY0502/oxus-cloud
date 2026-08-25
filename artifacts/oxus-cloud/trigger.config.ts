@@ -22,6 +22,7 @@ export default defineConfig({
       syncEnvVars(async () => {
         const url = process.env.SUPABASE_URL?.trim() || process.env.VITE_SUPABASE_URL?.trim();
         const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+        const workerSecret = process.env.GOOGLE_SYNC_WORKER_SECRET?.trim();
         if (!url || !serviceKey) {
           console.warn(
             "[trigger.config] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY during deploy. " +
@@ -30,10 +31,14 @@ export default defineConfig({
           );
           return undefined;
         }
-        return {
+        const vars: Record<string, string> = {
           SUPABASE_URL: url,
           SUPABASE_SERVICE_ROLE_KEY: serviceKey,
         };
+        if (workerSecret) vars.GOOGLE_SYNC_WORKER_SECRET = workerSecret;
+        const triggerSecret = process.env.TRIGGER_SECRET_KEY?.trim();
+        if (triggerSecret) vars.TRIGGER_SECRET_KEY = triggerSecret;
+        return vars;
       }),
     ],
   },

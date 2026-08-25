@@ -6,7 +6,16 @@ import {
   patchLangfuseGeneration,
   patchLangfuseTrace,
 } from "./langfuse.ts";
-import type { AgentPlan, AgentMode, AgentToolName, AgentWorkflowPlan, AgentWorkflowStep, RetrievalChunk, TraceMetadata } from "./types.ts";
+import type {
+  AgentPlan,
+  AgentMode,
+  AgentToolName,
+  AgentWorkflowPlan,
+  AgentWorkflowStep,
+  ProjectMeetingMemory,
+  RetrievalChunk,
+  TraceMetadata,
+} from "./types.ts";
 import { extractToolCallInput } from "./clickupDocTool.ts";
 import type { ClickupHierarchyRow } from "../clickupHierarchy.ts";
 import { buildHierarchyContextBlock } from "../clickupHierarchy.ts";
@@ -21,22 +30,38 @@ export function openRouterConfig() {
   return { apiKey, baseUrl, model, appName, siteUrl };
 }
 
+export type OpenRouterUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  cost?: number;
+  prompt_tokens_details?: {
+    cached_tokens?: number;
+    cache_write_tokens?: number;
+  };
+};
+
 async function callOpenRouterJson(args: {
   messages: { role: "system" | "user"; content: string }[];
   trace?: TraceMetadata;
   traceName?: string;
-}): Promise<{ content: string; model: string; traceId: string | null; generationId: string | null }> {
+  model?: string;
+  maxTokens?: number;
+  jsonSchema?: { name: string; schema: Record<string, unknown> };
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
+}): Promise<{ content: string; model: string; usage: OpenRouterUsage; traceId: string | null; generationId: string | null }> {
   const cfg = openRouterConfig();
+  const model = args.model?.trim() || cfg.model;
   const traceHandle = await createLangfuseTrace({
     name: args.traceName ?? "openrouter-json",
-    metadata: { ...args.trace, model: cfg.model, prompt_type: args.traceName },
+    metadata: { ...args.trace, model, prompt_type: args.traceName },
     input: { message_count: args.messages.length },
   });
   const generationId = traceHandle
     ? await createLangfuseGeneration({
       traceId: traceHandle.traceId,
       name: args.traceName ?? "openrouter-json",
-      model: cfg.model,
+      model,
       metadata: args.trace,
       input: { message_count: args.messages.length },
     })
@@ -51,10 +76,23 @@ async function callOpenRouterJson(args: {
       "X-Title": cfg.appName,
     },
     body: JSON.stringify({
-      model: cfg.model,
+      model,
       messages: args.messages,
-      response_format: { type: "json_object" },
-      temperature: 0.2,
+      response_format: args.jsonSchema
+        ? {
+          type: "json_schema",
+          json_schema: {
+            name: args.jsonSchema.name,
+            strict: true,
+            schema: args.jsonSchema.schema,
+          },
+        }
+        : { type: "json_object" },
+      ...(!args.jsonSchema ? { temperature: 0.2 } : {}),
+      ...(args.maxTokens ? { max_tokens: args.maxTokens } : {}),
+      ...(args.reasoningEffort ? { reasoning: { effort: args.reasoningEffort, exclude: true } } : {}),
+      ...(args.trace?.project_id ? { session_id: `oxus-project-${args.trace.project_id}` } : {}),
+      provider: { data_collection: "deny", ...(args.jsonSchema ? { require_parameters: true } : {}) },
     }),
   });
 
@@ -65,7 +103,11 @@ async function callOpenRouterJson(args: {
     throw new Error(`OpenRouter error (${response.status}): ${text.slice(0, 800)}`);
   }
 
-  const completion = JSON.parse(text) as { choices?: { message?: { content?: string } }[] };
+  const completion = JSON.parse(text) as {
+    model?: string;
+    choices?: { message?: { content?: string } }[];
+    usage?: OpenRouterUsage;
+  };
   const content = completion.choices?.[0]?.message?.content;
   if (typeof content !== "string" || !content.trim()) {
     if (generationId) await patchLangfuseGeneration(generationId, { error: "empty content" });
@@ -74,7 +116,7 @@ async function callOpenRouterJson(args: {
 
   if (generationId) {
     await patchLangfuseGeneration(generationId, {
-      output: { chars: content.length },
+      output: { chars: content.length, usage: completion.usage ?? {} },
       metadata: args.trace,
     });
   }
@@ -87,7 +129,8 @@ async function callOpenRouterJson(args: {
 
   return {
     content,
-    model: cfg.model,
+    model: completion.model ?? model,
+    usage: completion.usage ?? {},
     traceId: traceHandle?.traceId ?? null,
     generationId,
   };
@@ -99,10 +142,18 @@ export async function generateStructuredObject<T>(args: {
   systemPrompt?: string;
   trace?: TraceMetadata;
   traceName?: string;
-}): Promise<{ data: T; model: string; traceId: string | null; generationId: string | null }> {
-  const { content, model, traceId, generationId } = await callOpenRouterJson({
+  model?: string;
+  maxTokens?: number;
+  jsonSchema?: { name: string; schema: Record<string, unknown> };
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
+}): Promise<{ data: T; model: string; usage: OpenRouterUsage; traceId: string | null; generationId: string | null }> {
+  const { content, model, usage, traceId, generationId } = await callOpenRouterJson({
     trace: args.trace,
     traceName: args.traceName ?? "generateStructuredObject",
+    model: args.model,
+    maxTokens: args.maxTokens,
+    jsonSchema: args.jsonSchema,
+    reasoningEffort: args.reasoningEffort,
     messages: [
       {
         role: "system",
@@ -114,7 +165,7 @@ export async function generateStructuredObject<T>(args: {
       },
     ],
   });
-  return { data: JSON.parse(content) as T, model, traceId, generationId };
+  return { data: JSON.parse(content) as T, model, usage, traceId, generationId };
 }
 
 /**
@@ -179,6 +230,9 @@ export function buildAgentContextBlock(ctx: {
   clientName?: string | null;
   projectType?: string | null;
   profile?: Record<string, unknown> | null;
+  operatingCadence?: Record<string, unknown> | null;
+  meetingMemories?: Array<Record<string, unknown>>;
+  projectFacts?: Array<Record<string, unknown>>;
   chunks: RetrievalChunk[];
   openAttention?: unknown[];
   proposedTasks?: unknown[];
@@ -189,15 +243,104 @@ export function buildAgentContextBlock(ctx: {
   slackConnected?: boolean;
   clickupHierarchy?: ClickupHierarchyRow[];
   clickupLink?: Record<string, unknown> | null;
+  clickupTasks?: Array<{
+    id: string;
+    name: string;
+    description?: string | null;
+    status?: string | null;
+    url?: string | null;
+    list_name?: string | null;
+    assignees?: string[];
+    due_date?: string | null;
+    updated_at?: string | null;
+  }>;
+  clickupTaskSnapshotSource?: "live" | "cached" | "unavailable";
+  slackMessages?: unknown[];
+  slackContextSource?: "live" | "cached" | "unavailable";
+  linkedReferences?: unknown[];
+  linkedReferenceWarnings?: string[];
+  asOf?: string;
+  chatHistory?: Array<{ role: string; content: string }>;
+  sourceFreshness?: {
+    latestTimelineAt?: string | null;
+    latestSignalAt?: string | null;
+    clickupLastSyncAt?: string | null;
+    slackLastSyncAt?: string | null;
+  };
 }): string {
   const parts: string[] = [];
+  if (ctx.asOf) {
+    parts.push(
+      `Freshness policy: current time is ${ctx.asOf}. Answer the current project state as of this time. Explicit PM facts and the newest structured meeting memory define scope and commitments; live ClickUp and Slack evidence update their current status. Prefer those sources over older transcript chunks. Treat undated project memory as background context, not proof that something is still current. State uncertainty when sources conflict.`,
+    );
+  }
+  if (ctx.sourceFreshness) {
+    parts.push(
+      `Evidence timestamps (these are the truth boundary, not a guarantee of live synchronization):\n${JSON.stringify(ctx.sourceFreshness, null, 2)}\nNever imply the project is current beyond the newest relevant evidence timestamp. If a connected source is stale or has never synced, disclose that briefly when it affects the answer.`,
+    );
+  }
   parts.push(buildProjectIdentityBlock(ctx));
+  if (ctx.operatingCadence) {
+    parts.push(
+      `Project operating cadence:\n${JSON.stringify(ctx.operatingCadence, null, 2)}\nFor a weekly cadence, the current delivery cycle starts at the latest meeting and ends at the next meeting. "This week" means work committed or actively progressed inside that cycle. A "next-meeting deliverable" is something the team expects to show, review, decide, or hand over at that meeting — it is not every active task.`,
+    );
+  }
+  if (ctx.projectFacts?.length) {
+    parts.push(
+      `Explicit PM facts and corrections (highest-priority project memory; newer facts supersede older assumptions):\n${JSON.stringify(ctx.projectFacts, null, 2)}`,
+    );
+  }
+  if (ctx.meetingMemories?.length) {
+    parts.push(
+      `Structured meeting memory (newest first):\n${JSON.stringify(ctx.meetingMemories, null, 2)}\nUse the newest meeting as the planning anchor. Use older meetings only for history or when the latest meeting explicitly carries work forward. Do not promote a discussion item, operational follow-up, or old plan into a next-meeting deliverable without evidence.`,
+    );
+  }
+  if (ctx.chatHistory?.length) {
+    parts.push(
+      `Recent conversation (for continuity only; it is not project knowledge):\n${ctx.chatHistory
+        .map((message) => `${message.role}: ${message.content.slice(0, 1200)}`)
+        .join("\n\n")}`,
+    );
+  }
   if (ctx.profile) parts.push(`Project memory:\n${JSON.stringify(ctx.profile, null, 2)}`);
   if (ctx.chunks.length > 0) {
     parts.push(
-      `Retrieved knowledge chunks:\n${
-        ctx.chunks.map((c, i) => `[${i + 1}] (sim=${c.similarity?.toFixed(3) ?? "n/a"})\n${c.content.slice(0, 2000)}`).join("\n\n")
+      `Retrieved project evidence (cite document-backed claims with the exact source labels [S1], [S2], etc.; never invent a label):\n${
+        ctx.chunks.map((chunk, index) => {
+          const metadata = chunk.metadata ?? {};
+          const citationId = typeof metadata.citation_id === "string" ? metadata.citation_id : `S${index + 1}`;
+          const title = typeof metadata.source_title === "string" ? metadata.source_title : "Untitled source";
+          const sourceType = typeof metadata.source_type === "string" ? metadata.source_type : chunk.category ?? "unknown";
+          const section = typeof metadata.section_path === "string" && metadata.section_path ? ` | section=${metadata.section_path}` : "";
+          const updated = typeof metadata.source_updated_at === "string" && metadata.source_updated_at
+            ? ` | updated=${metadata.source_updated_at}`
+            : typeof metadata.source_created_at === "string" && metadata.source_created_at
+            ? ` | created=${metadata.source_created_at}`
+            : "";
+          const url = typeof metadata.canonical_url === "string" && metadata.canonical_url ? ` | url=${metadata.canonical_url}` : "";
+          return `[${citationId}] ${title} | type=${sourceType}${section}${updated}${url} | relevance=${chunk.similarity?.toFixed(3) ?? "n/a"}\n${chunk.content.slice(0, 4500)}`;
+        }).join("\n\n")
       }`,
+    );
+  }
+  if (ctx.clickupTasks) {
+    parts.push(
+      `Current ClickUp task snapshot (${ctx.clickupTaskSnapshotSource ?? "unavailable"}; ${ctx.clickupTasks.length} tasks checked):\n${JSON.stringify(ctx.clickupTasks, null, 2)}\nUse this snapshot to prevent duplicate task suggestions. A semantically equivalent task counts as existing even when wording differs. Closed/completed tasks count as historical coverage, but create a new task only when the meeting clearly introduces distinct follow-up work.`,
+    );
+  }
+  if (ctx.slackMessages?.length) {
+    parts.push(
+      `Recent connected Slack context (${ctx.slackContextSource ?? "cached"}; ${ctx.slackMessages.length} messages):\n${JSON.stringify(ctx.slackMessages, null, 2)}\nCheck this context for existing answers and decisions before asking a clarification question. Cached context is current only through slackLastSyncAt.`,
+    );
+  }
+  if (ctx.linkedReferences?.length) {
+    parts.push(
+      `Explicit links resolved live for this message (highest-priority evidence for the linked item):\n${JSON.stringify(ctx.linkedReferences, null, 2)}\nUse the exact linked message, thread, task, or comment before broader project context. Never imply that a link was read when it is absent from this block.`,
+    );
+  }
+  if (ctx.linkedReferenceWarnings?.length) {
+    parts.push(
+      `Explicit link resolution warnings:\n${ctx.linkedReferenceWarnings.join("\n")}\nDo not claim to have read a link that failed resolution. Ask the user to verify access or the link when it blocks the request.`,
     );
   }
   if (ctx.clickupConnected && ctx.clickupHierarchy && ctx.clickupHierarchy.length > 0) {
@@ -284,24 +427,379 @@ Rules:
 - Never say external actions were completed — only propose tool_calls or workflows with pending confirmations.
 - Never claim "prepared tool calls" unless workflows or tool_calls are populated.`;
 
+const CHAT_RESPONSE_SCHEMA = `Return strict JSON:
+{
+  "detected_intent": "answer | add_clickup_comment",
+  "answer": "string",
+  "fact_updates": [{
+    "fact_key": "stable-kebab-case-key",
+    "subject": "string",
+    "statement": "string",
+    "state": "string|null",
+    "effective_date": "YYYY-MM-DD|null",
+    "explicit_user_fact": true,
+    "confidence": 1.0
+  }],
+  "tool_calls": [{
+    "tool_name": "add_clickup_comment",
+    "requires_confirmation": true,
+    "input": {
+      "task_id": "string",
+      "task_name": "string",
+      "task_url": "string",
+      "comment_text": "string",
+      "source_links": ["string"]
+    }
+  }],
+  "summary": "string",
+  "confidence": 0.0
+}
+Rules:
+- Answer the user's question directly from the supplied project evidence.
+- Before answering or identifying missing information, check the supplied ClickUp task snapshot and recent Slack context for an existing answer, decision, owner, status, or related work.
+- For questions about "this week", "next meeting", priorities, or deliverables, anchor the answer on the newest structured meeting and the operating cadence. Then reconcile each candidate item against explicit PM facts and live ClickUp/Slack status.
+- Separate current work, expected next-meeting deliverables, and items already finished/ready for client feedback. A task in Client Review, Complete, Live, or Billing is not upcoming implementation work unless newer evidence explicitly reopens it.
+- Never turn every active task or every meeting action into a next-meeting deliverable. Include only an explicit meeting commitment or a strongly evidenced artifact the team expects to show/review at the next cadence meeting.
+- If meeting dates are known, state the latest and next meeting dates. If the next date is cadence-derived rather than explicitly scheduled, label it as expected.
+- Format the answer as readable Markdown, never as one dense paragraph. Use a short title when useful and 2–4 descriptive section headings. Mix concise prose with lists: bullets are only for genuinely parallel action items, not for every status, note, or source line. Keep paragraphs to at most 2 sentences and lists compact.
+- For a Slack/ClickUp comparison, use: "## Slack & ClickUp review", a one-sentence conclusion, "### What changed", "### ClickUp actions", and optionally "### Already covered" or "### Needs clarification". Keep only sections that add value, cap each list at 4 items, and never repeat the same work item in multiple sections.
+- For weekly-planning answers, prefer this structure when the sections are relevant: "## Weekly plan · date range", "### In progress", "### Next meeting · date", "### Ready for feedback", and "### Needs clarification". Omit empty sections.
+- Bold short labels or statuses such as **Owner**, **Ready for feedback**, or **Blocked**, but do not over-format every sentence.
+- Do not add a dedicated source-freshness section when connected evidence is current. Mention stale, missing, or conflicting evidence only when it changes the answer.
+- Lead with the current state or conclusion, then use short sections or bullets.
+- Default to 350 words or fewer. Offer deeper detail only when useful.
+- Distinguish confirmed facts, reasonable inference, and missing/stale evidence.
+- If the supplied evidence does not support the requested detail, say that it was not found in the connected project sources instead of filling the gap from general knowledge.
+- Cite claims grounded in Retrieved project evidence with its exact labels, for example [S1]. Put citations immediately after the supported sentence or bullet. Never cite a label that was not supplied, and do not cite conversation history as evidence.
+- fact_updates is ONLY for durable facts or corrections explicitly stated by the user in the current message (for example, "Rich Text is finished and with Vegard for review" or "we meet every Friday"). Never store a question, model inference, ClickUp/Slack observation, or assistant answer as a fact. Otherwise return [].
+- Ordinary Q&A must not propose tools, external actions, tasks, general memory updates, or clarification workflows.
+- Exception: when the user explicitly asks to add/create/post/prepare a ClickUp comment, return exactly one add_clickup_comment tool call with the real target task ID, task name, URL, and a complete comment draft. Use a directly linked ClickUp task when supplied; otherwise identify one unambiguous task from the live snapshot. If the target is ambiguous, return no tool call and ask for the task link.
+- A requested ClickUp comment is always confirmation-gated. The answer should only say that the action is ready for review; do not repeat the full draft in the answer.
+- Base a comment about a shared Slack or ClickUp URL on the Explicit links resolved live block. If the link could not be resolved, return no tool call and explain that briefly.
+- Never include @mentions, Slack mention markup, or language that calls out/directly addresses the client in a ClickUp comment unless the current user message explicitly asks to tag or mention them. Neutral names used as factual attribution are allowed.`;
+
+const CHAT_RESPONSE_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    detected_intent: { type: "string", enum: ["answer", "add_clickup_comment"] },
+    answer: { type: "string", description: "A concise Markdown answer under 350 words." },
+    fact_updates: {
+      type: "array",
+      maxItems: 6,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          fact_key: { type: "string" },
+          subject: { type: "string" },
+          statement: { type: "string" },
+          state: { type: ["string", "null"] },
+          effective_date: { type: ["string", "null"] },
+          explicit_user_fact: { type: "boolean", enum: [true] },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+        },
+        required: [
+          "fact_key",
+          "subject",
+          "statement",
+          "state",
+          "effective_date",
+          "explicit_user_fact",
+          "confidence",
+        ],
+      },
+    },
+    tool_calls: {
+      type: "array",
+      maxItems: 1,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          tool_name: { type: "string", enum: ["add_clickup_comment"] },
+          requires_confirmation: { type: "boolean", enum: [true] },
+          input: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              task_id: { type: "string" },
+              task_name: { type: "string" },
+              task_url: { type: "string" },
+              comment_text: { type: "string" },
+              source_links: { type: "array", items: { type: "string" } },
+            },
+            required: ["task_id", "task_name", "task_url", "comment_text", "source_links"],
+          },
+        },
+        required: ["tool_name", "requires_confirmation", "input"],
+      },
+    },
+    summary: { type: "string" },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
+  },
+  required: ["detected_intent", "answer", "fact_updates", "tool_calls", "summary", "confidence"],
+};
+
+const FILE_REVIEW_SCHEMA = `Return strict JSON:
+{
+  "detected_intent": "meeting_review",
+  "answer": "string",
+  "memory_updates": {},
+  "meeting_memory": {
+    "title": "string",
+    "meeting_date": "YYYY-MM-DD|null",
+    "meeting_date_source": "transcript|filename|inferred|unknown",
+    "next_meeting_date": "YYYY-MM-DD|null",
+    "cadence_signal": "weekly|other|unknown",
+    "summary": "string",
+    "decisions": ["string"],
+    "completed_or_demo": ["string"],
+    "current_week_focus": ["string"],
+    "next_meeting_deliverables": [{
+      "title": "string",
+      "evidence": "string",
+      "owner": "string|null",
+      "status": "planned|in_progress|ready_for_demo|blocked|done",
+      "confidence": 0.0
+    }],
+    "feedback": ["string"],
+    "open_questions": ["string"],
+    "participants": ["string"],
+    "confidence": 0.0
+  },
+  "proposed_tasks": [],
+  "clarification_questions": [{
+    "question": "string",
+    "reason": "string",
+    "importance": "low|medium|high",
+    "blocks_task_creation": false
+  }],
+  "tool_calls": [{
+    "tool_name": "create_clickup_task",
+    "requires_confirmation": true,
+    "input": {
+      "title": "string",
+      "description": "string",
+      "priority": "low|medium|high|urgent",
+      "due_date_hint": "string|null",
+      "assignee_hint": "string|null",
+      "destination": { "type": "list", "id": "string", "name": "string", "path": "string", "reason": "string" },
+      "source_context": { "meeting_action": "string", "evidence": "string" }
+    }
+  }],
+  "workflows": [],
+  "summary": "string",
+  "confidence": 0.0
+}
+Rules:
+- Review the uploaded meeting as a PM, not merely as a summarizer.
+- Extract concrete action items, decisions, unresolved ownership, dependencies, and follow-ups.
+- Build meeting_memory as a dated, reusable project record. Separate work already completed or being demonstrated from current-cycle focus and from explicit next-meeting deliverables.
+- A next-meeting deliverable must be an artifact, result, decision, or demo the team committed to show/review at the next meeting. Do not classify every action item as a deliverable.
+- When a work item is already finished, in demo, or in client review, put it in completed_or_demo and do not also list it as future work unless the meeting explicitly requests a new follow-up.
+- Use a date encoded in the recording filename when present. Treat a weekly pattern or an explicit statement about weekly meetings as cadence_signal=weekly.
+- Compare every concrete action item against the Current ClickUp task snapshot. Match by meaning, not exact wording.
+- In answer, use only the relevant short sections from: Decisions, Already covered in ClickUp, Suggested new tasks. Omit empty sections.
+- Format answer as readable Markdown with section headings and short bullet lists. Never return a dense wall of prose.
+- Never include a Questions or Questions to clarify section, clarification question objects, or their reasons in answer. clarification_questions are rendered separately as interactive controls.
+- Ask up to 3 specific, answerable clarification questions that materially improve ownership, scope, due date, acceptance criteria, or whether work is still required. Never ask generic questions such as "Anything else?".
+- For each high-confidence action item with no semantically equivalent ClickUp task, emit one create_clickup_task tool call. It will only become a pending confirmation card; do not claim it was created.
+- Do not emit a task for a vague discussion, completed work, a low-priority idea explicitly deferred, or an item that needs clarification first.
+- Never duplicate an existing open, in-progress, or completed ClickUp task unless the meeting clearly defines distinct new follow-up work.
+- If the task snapshot source is unavailable, state that ClickUp could not be verified and emit no create_clickup_task calls.
+- Use the existing ClickUp hierarchy to choose the best destination list. Never create or reorganize folders/lists.
+- Keep memory_updates, proposed_tasks, and workflows empty.`;
+
+const MEETING_MEMORY_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    title: { type: "string" },
+    meeting_date: { type: ["string", "null"] },
+    meeting_date_source: { type: "string", enum: ["transcript", "filename", "inferred", "unknown"] },
+    next_meeting_date: { type: ["string", "null"] },
+    cadence_signal: { type: "string", enum: ["weekly", "other", "unknown"] },
+    summary: { type: "string" },
+    decisions: { type: "array", maxItems: 12, items: { type: "string" } },
+    completed_or_demo: { type: "array", maxItems: 12, items: { type: "string" } },
+    current_week_focus: { type: "array", maxItems: 12, items: { type: "string" } },
+    next_meeting_deliverables: {
+      type: "array",
+      maxItems: 10,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          title: { type: "string" },
+          evidence: { type: "string" },
+          owner: { type: ["string", "null"] },
+          status: { type: "string", enum: ["planned", "in_progress", "ready_for_demo", "blocked", "done"] },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+        },
+        required: ["title", "evidence", "owner", "status", "confidence"],
+      },
+    },
+    feedback: { type: "array", maxItems: 12, items: { type: "string" } },
+    open_questions: { type: "array", maxItems: 12, items: { type: "string" } },
+    participants: { type: "array", maxItems: 30, items: { type: "string" } },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
+  },
+  required: [
+    "title",
+    "meeting_date",
+    "meeting_date_source",
+    "next_meeting_date",
+    "cadence_signal",
+    "summary",
+    "decisions",
+    "completed_or_demo",
+    "current_week_focus",
+    "next_meeting_deliverables",
+    "feedback",
+    "open_questions",
+    "participants",
+    "confidence",
+  ],
+};
+
+const FILE_REVIEW_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    detected_intent: { type: "string", enum: ["meeting_review"] },
+    answer: {
+      type: "string",
+      description: "A concise PM review under 900 words with only relevant sections.",
+    },
+    memory_updates: { type: "object", additionalProperties: false, properties: {} },
+    meeting_memory: MEETING_MEMORY_JSON_SCHEMA,
+    proposed_tasks: { type: "array", maxItems: 0, items: { type: "string" } },
+    clarification_questions: {
+      type: "array",
+      maxItems: 3,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          question: { type: "string" },
+          reason: { type: "string" },
+          importance: { type: "string", enum: ["low", "medium", "high"] },
+          blocks_task_creation: { type: "boolean" },
+        },
+        required: ["question", "reason", "importance", "blocks_task_creation"],
+      },
+    },
+    tool_calls: {
+      type: "array",
+      maxItems: 5,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          tool_name: { type: "string", enum: ["create_clickup_task"] },
+          requires_confirmation: { type: "boolean", enum: [true] },
+          input: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              title: { type: "string" },
+              description: { type: "string", description: "Concise objective, context, and acceptance criteria." },
+              priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
+              due_date_hint: { type: ["string", "null"] },
+              assignee_hint: { type: ["string", "null"] },
+              destination: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  type: { type: "string", enum: ["list"] },
+                  id: { type: "string" },
+                  name: { type: "string" },
+                  path: { type: "string" },
+                  reason: { type: "string" },
+                },
+                required: ["type", "id", "name", "path", "reason"],
+              },
+              source_context: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  meeting_action: { type: "string" },
+                  evidence: { type: "string" },
+                },
+                required: ["meeting_action", "evidence"],
+              },
+            },
+            required: [
+              "title",
+              "description",
+              "priority",
+              "due_date_hint",
+              "assignee_hint",
+              "destination",
+              "source_context",
+            ],
+          },
+        },
+        required: ["tool_name", "requires_confirmation", "input"],
+      },
+    },
+    workflows: { type: "array", maxItems: 0, items: { type: "string" } },
+    summary: { type: "string" },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
+  },
+  required: [
+    "detected_intent",
+    "answer",
+    "memory_updates",
+    "meeting_memory",
+    "proposed_tasks",
+    "clarification_questions",
+    "tool_calls",
+    "workflows",
+    "summary",
+    "confidence",
+  ],
+};
+
 export async function generateAgentPlan(args: {
   inputText: string;
   mode: AgentMode;
   context: Parameters<typeof buildAgentContextBlock>[0];
   trace?: TraceMetadata;
-}): Promise<{ plan: AgentPlan; model: string; traceId: string | null; generationId: string | null }> {
-  const modeHint = args.mode === "auto"
+  isChat?: boolean;
+  reviewUploadedFiles?: boolean;
+}): Promise<{ plan: AgentPlan; model: string; usage: OpenRouterUsage; traceId: string | null; generationId: string | null }> {
+  const modeHint = args.isChat && args.mode === "answer_only"
+    ? "Answer-only mode for ordinary questions. The only allowed action is a confirmation-gated add_clickup_comment when the user explicitly requests that exact action; explicit user-stated project facts may still be captured in fact_updates."
+    : args.mode === "auto"
     ? "Detect intent automatically."
     : `Forced mode: ${args.mode}.`;
 
-  const { data, model, traceId, generationId } = await generateStructuredObject<AgentPlan>({
+  const { data, model, usage, traceId, generationId } = await generateStructuredObject<AgentPlan>({
     trace: { ...args.trace, prompt_type: "generateAgentPlan", chunks_retrieved_count: args.context.chunks.length },
     traceName: "generateAgentPlan",
-    schemaDescription: AGENT_PLAN_SCHEMA,
+    schemaDescription: args.reviewUploadedFiles ? FILE_REVIEW_SCHEMA : args.isChat ? CHAT_RESPONSE_SCHEMA : AGENT_PLAN_SCHEMA,
+    jsonSchema: args.reviewUploadedFiles
+      ? { name: "project_meeting_review", schema: FILE_REVIEW_JSON_SCHEMA }
+      : args.isChat
+      ? { name: "project_chat_response", schema: CHAT_RESPONSE_JSON_SCHEMA }
+      : undefined,
+    reasoningEffort: args.reviewUploadedFiles || args.isChat ? "low" : undefined,
+    model: args.isChat ? Deno.env.get("OPENROUTER_CHAT_MODEL")?.trim() || "openai/gpt-5-mini" : undefined,
+     maxTokens: args.reviewUploadedFiles
+       ? Number(Deno.env.get("OPENROUTER_FILE_REVIEW_MAX_TOKENS") ?? "6000")
+       : args.isChat
+       ? Number(Deno.env.get("OPENROUTER_CHAT_MAX_TOKENS") ?? "1800")
+       : undefined,
     systemPrompt: [
       "You are the OXUS Cloud project agent.",
-      "This is a single-shot intake, NOT a chat.",
-      "Plan safe actions; external side effects require confirmation.",
+       args.reviewUploadedFiles
+         ? "You are reviewing newly uploaded meeting evidence inside project chat. Build durable dated meeting memory, reconcile action items against the supplied ClickUp task snapshot, ask targeted questions, and prepare only confirmation-gated task suggestions."
+       : args.isChat
+        ? "You are in the project's persistent chat. Give a direct, useful answer that reflects the freshest available project state. For weekly planning, anchor on the latest structured meeting and reconcile it with live ClickUp and Slack. Use the recent conversation only for continuity."
+        : "This is a single-shot intake, NOT a chat.",
+      "Plan safe actions; external side effects require confirmation. Never tag, mention, ping, notify, or directly call out a client in a ClickUp comment unless the current user message explicitly requests it.",
       "You have access to the existing ClickUp hierarchy in context.",
       "Prefer existing folders/lists for doc and task placement.",
       "Never reorganize ClickUp structure unless the user explicitly asks.",
@@ -312,13 +810,17 @@ export async function generateAgentPlan(args: {
       }),
       modeHint,
     ].join(" "),
-    userPrompt: `User input:\n${args.inputText}\n\n${buildAgentContextBlock(args.context)}`,
+    userPrompt: `Project context:\n${buildAgentContextBlock(args.context)}\n\nCurrent user message:\n${args.inputText}`,
   });
 
   const plan: AgentPlan = {
     detected_intent: data.detected_intent ?? "mixed",
     answer: data.answer ?? null,
     memory_updates: data.memory_updates ?? {},
+    meeting_memory: data.meeting_memory ?? null,
+    fact_updates: (data.fact_updates ?? [])
+      .filter((fact) => fact?.explicit_user_fact === true)
+      .slice(0, 6),
     proposed_tasks: data.proposed_tasks ?? [],
     clarification_questions: (data.clarification_questions ?? []).slice(0, 3),
     tool_calls: (data.tool_calls ?? []).map((tc) => {
@@ -349,7 +851,126 @@ export async function generateAgentPlan(args: {
     confidence: data.confidence,
   };
 
-  return { plan, model, traceId, generationId };
+  return { plan, model, usage, traceId, generationId };
+}
+
+const CLICKUP_COMMENT_DRAFT_SCHEMA = `Return strict JSON:
+{
+  "comment_text": "string",
+  "summary": "string",
+  "confidence": 0.0
+}
+Rules:
+- Write only the comment that belongs on the specified ClickUp task. Do not include meta text such as "paste this", "recommended comment", or an analysis outside the comment.
+- Base the comment primarily on Explicit links resolved live. Use broader project memory only to clarify established context; never let older memory override the linked evidence.
+- Summarize the decision/current state, material risk or constraint, and concrete next steps. Keep it concise and operational.
+- Do not include internal retrieval citations such as [S1] or [S8]. Source links may be included only when they help the ClickUp reader.
+- Never tag, ping, mention, notify, or directly address a person unless mention permission is explicitly true.
+- When mention permission is false, use neutral owner/status wording and do not include @mentions, Slack markup, "Name — please...", or "tagging Name" language.
+- Do not invent decisions, owners, deadlines, access, or completion states.`;
+
+const CLICKUP_COMMENT_DRAFT_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    comment_text: { type: "string", minLength: 1, maxLength: 8000 },
+    summary: { type: "string" },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
+  },
+  required: ["comment_text", "summary", "confidence"],
+};
+
+export async function generateClickupCommentDraft(args: {
+  inputText: string;
+  context: Parameters<typeof buildAgentContextBlock>[0];
+  targetTask: { id: string; name: string; url?: string | null };
+  allowMentions: boolean;
+  trace?: TraceMetadata;
+}): Promise<{
+  commentText: string;
+  summary: string;
+  confidence: number;
+  model: string;
+  usage: OpenRouterUsage;
+  traceId: string | null;
+  generationId: string | null;
+}> {
+  const result = await generateStructuredObject<{
+    comment_text: string;
+    summary: string;
+    confidence: number;
+  }>({
+    trace: { ...args.trace, prompt_type: "generateClickupCommentDraft", chunks_retrieved_count: args.context.chunks.length },
+    traceName: "generateClickupCommentDraft",
+    schemaDescription: CLICKUP_COMMENT_DRAFT_SCHEMA,
+    jsonSchema: { name: "clickup_comment_draft", schema: CLICKUP_COMMENT_DRAFT_JSON_SCHEMA },
+    reasoningEffort: "low",
+    model: Deno.env.get("OPENROUTER_CHAT_MODEL")?.trim() || "openai/gpt-5-mini",
+    maxTokens: Number(Deno.env.get("OPENROUTER_CLICKUP_ACTION_MAX_TOKENS") ?? "1800"),
+    systemPrompt: [
+      "You are the ClickUp action planner inside OXUS Cloud.",
+      "The user explicitly requested a ClickUp comment, but nothing may be posted until they confirm the generated action card.",
+      `Mention permission is ${args.allowMentions ? "true" : "false"}.`,
+      "Return the final editable comment body, not a conversational answer.",
+    ].join(" "),
+    userPrompt: `Target ClickUp task:\n${JSON.stringify(args.targetTask, null, 2)}\n\nProject context:\n${buildAgentContextBlock(args.context)}\n\nUser request:\n${args.inputText}`,
+  });
+  return {
+    commentText: result.data.comment_text.trim(),
+    summary: result.data.summary.trim(),
+    confidence: result.data.confidence,
+    model: result.model,
+    usage: result.usage,
+    traceId: result.traceId,
+    generationId: result.generationId,
+  };
+}
+
+export async function generateMeetingMemory(args: {
+  sourceTitle: string;
+  sourceText: string;
+  meetingDateHint?: string | null;
+  existingReview?: string | null;
+  projectName?: string | null;
+  clientName?: string | null;
+  trace?: TraceMetadata;
+}): Promise<{
+  memory: ProjectMeetingMemory;
+  model: string;
+  usage: OpenRouterUsage;
+  traceId: string | null;
+  generationId: string | null;
+}> {
+  const result = await generateStructuredObject<ProjectMeetingMemory>({
+    trace: { ...args.trace, prompt_type: "generateMeetingMemory" },
+    traceName: "generateMeetingMemory",
+    model: Deno.env.get("OPENROUTER_MEETING_MEMORY_MODEL")?.trim()
+      || Deno.env.get("OPENROUTER_CHAT_MODEL")?.trim()
+      || "openai/gpt-5-mini",
+    maxTokens: Number(Deno.env.get("OPENROUTER_MEETING_MEMORY_MAX_TOKENS") ?? "3500"),
+    reasoningEffort: "low",
+    jsonSchema: { name: "project_meeting_memory", schema: MEETING_MEMORY_JSON_SCHEMA },
+    schemaDescription: `Extract one durable project-meeting memory object.
+Rules:
+- Use only the supplied meeting evidence. Do not invent a commitment.
+- Separate decisions, work already completed/being demonstrated, current-cycle focus, and explicit next-meeting deliverables.
+- A next-meeting deliverable is an artifact, result, decision, or demo the team committed to show or review at the next meeting. It is not every action item.
+- If an item is already complete, in demo, or awaiting client feedback, keep it under completed_or_demo and do not describe it as upcoming implementation work.
+- Use the deterministic date hint when supplied and set meeting_date_source=filename.
+- A weekly statement or a sequence of weekly meetings is cadence_signal=weekly; otherwise use unknown.
+- Keep evidence concise and specific.`,
+    systemPrompt: [
+      "You are an exacting project manager building compact temporal memory from meeting evidence.",
+      oxusIdentityGuidance({ projectName: args.projectName, clientName: args.clientName }),
+    ].join(" "),
+    userPrompt: [
+      `Source: ${args.sourceTitle}`,
+      `Deterministic meeting date hint: ${args.meetingDateHint ?? "none"}`,
+      args.existingReview ? `Earlier AI review (secondary evidence; it may contain mistaken classifications):\n${args.existingReview.slice(0, 8000)}` : "",
+      `Meeting transcript:\n${args.sourceText.slice(0, 70000)}`,
+    ].filter(Boolean).join("\n\n"),
+  });
+  return { memory: result.data, model: result.model, usage: result.usage, traceId: result.traceId, generationId: result.generationId };
 }
 
 export async function generateMemoryUpdate(args: {

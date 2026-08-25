@@ -28,6 +28,8 @@ import {
 
   formatProviderLabel,
 
+  invoiceFinancialCategory,
+
   type StripeInvoiceActionType,
 
 } from "@/lib/invoices";
@@ -53,13 +55,9 @@ type Tone = "urgent" | "warm" | "neutral";
 
 
 function getTone(inv: Invoice): Tone {
-
-  if (inv.status === "overdue") return "urgent";
-
+  if (invoiceFinancialCategory(inv) === "overdue") return "urgent";
   if (inv.status === "draft") return "neutral";
-
   return "warm";
-
 }
 
 

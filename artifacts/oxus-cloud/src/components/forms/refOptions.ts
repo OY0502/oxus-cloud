@@ -1,14 +1,38 @@
 import { useMemo } from "react";
-import { useClients, useContacts, useTechnologies, useProfiles } from "@/hooks/api";
+import { useClients, useContacts, useTechnologies, useProfiles, useCrmImportCandidates, useQuotes } from "@/hooks/api";
 import { profileDisplayName } from "@/lib/profiles";
 import type { SearchableOption } from "@/components/forms/SearchableSelect";
 
 export function useOrganizationOptions(): SearchableOption[] {
   const { data = [] } = useClients();
-  return useMemo(
-    () => data.map((c) => ({ value: c.id, label: c.name, sublabel: c.industry ?? c.website ?? undefined })),
-    [data],
-  );
+  const candidatesQuery = useCrmImportCandidates();
+  const quotesQuery = useQuotes();
+
+  return useMemo(() => {
+    const base = data.map((c) => ({
+      value: c.id,
+      label: c.name,
+      sublabel: c.industry ?? c.website ?? c.primary_domain ?? undefined,
+    }));
+
+    const fromQuotes = (quotesQuery.data ?? [])
+      .filter((q) => q.organization_id && !base.some((b) => b.value === q.organization_id))
+      .map((q) => ({
+        value: q.organization_id!,
+        label: q.company ?? "Proposal company",
+        sublabel: "From proposal",
+      }));
+
+    const suggested = (candidatesQuery.data?.candidates ?? [])
+      .filter((c) => c.entity_type === "company" && c.review_kind !== "existing_needs_review")
+      .map((c) => ({
+        value: `candidate:${c.id}`,
+        label: c.display_name,
+        sublabel: `Suggested · ${Math.round((c.confidence ?? 0) * 100)}%`,
+      }));
+
+    return [...base, ...fromQuotes, ...suggested];
+  }, [data, candidatesQuery.data, quotesQuery.data]);
 }
 
 export function useContactOptions(): SearchableOption[] {

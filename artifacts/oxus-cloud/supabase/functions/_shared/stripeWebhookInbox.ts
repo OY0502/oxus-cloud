@@ -10,6 +10,12 @@ export type StripeWebhookInboxRow = {
   attempt_count: number;
 };
 
+export type StripeWebhookClaimResult =
+  | { state: "claimed"; row: StripeWebhookInboxRow }
+  | { state: "terminal"; row: StripeWebhookInboxRow }
+  | { state: "busy"; row: StripeWebhookInboxRow }
+  | { state: "missing"; row: null };
+
 function extractObjectId(event: Stripe.Event): string | null {
   const obj = event.data?.object as { id?: string } | undefined;
   return typeof obj?.id === "string" ? obj.id : null;
@@ -20,16 +26,19 @@ export async function insertStripeWebhookInboxEvent(
   event: Stripe.Event,
   rawPayload: unknown,
 ): Promise<{ row: StripeWebhookInboxRow | null; duplicate: boolean }> {
-  const { data: existing } = await admin
+  const { data: existing, error: existingError } = await admin
     .from("stripe_webhook_events")
     .select("id, stripe_event_id, event_type, status, payload, attempt_count")
     .eq("stripe_event_id", event.id)
     .maybeSingle();
 
+  if (existingError) throw new Error(existingError.message);
+
   if (existing) {
     return {
       row: existing as StripeWebhookInboxRow,
-      duplicate: existing.status === "processed" || existing.status === "ignored",
+      duplicate:
+        existing.status === "processed" || existing.status === "ignored",
     };
   }
 
@@ -57,7 +66,9 @@ export async function insertStripeWebhookInboxEvent(
     if (error.code === "23505") {
       const { data: raced } = await admin
         .from("stripe_webhook_events")
-        .select("id, stripe_event_id, event_type, status, payload, attempt_count")
+        .select(
+          "id, stripe_event_id, event_type, status, payload, attempt_count",
+        )
         .eq("stripe_event_id", event.id)
         .maybeSingle();
       return {
@@ -74,34 +85,55 @@ export async function insertStripeWebhookInboxEvent(
 export async function claimStripeWebhookInboxEvent(
   admin: SupabaseClient,
   inboxId: string,
-): Promise<StripeWebhookInboxRow | null> {
+): Promise<StripeWebhookClaimResult> {
   const now = new Date().toISOString();
-  const { data: current } = await admin
+  const { data: beforeClaim, error: beforeClaimError } = await admin
     .from("stripe_webhook_events")
     .select("id, stripe_event_id, event_type, status, payload, attempt_count")
     .eq("id", inboxId)
     .maybeSingle();
 
-  if (!current) return null;
-  if (current.status === "processed" || current.status === "ignored") {
-    return current as StripeWebhookInboxRow;
+  if (beforeClaimError) throw new Error(beforeClaimError.message);
+  if (!beforeClaim) return { state: "missing", row: null };
+  if (beforeClaim.status === "processed" || beforeClaim.status === "ignored") {
+    return { state: "terminal", row: beforeClaim as StripeWebhookInboxRow };
+  }
+  if (beforeClaim.status === "processing") {
+    return { state: "busy", row: beforeClaim as StripeWebhookInboxRow };
   }
 
+  // Claim directly from a claimable state. This is a single conditional UPDATE,
+  // so concurrent deliveries cannot both acquire the same inbox row.
   const { data: claimed, error } = await admin
     .from("stripe_webhook_events")
     .update({
       status: "processing",
       processing_started_at: now,
-      attempt_count: Number(current.attempt_count ?? 0) + 1,
+      attempt_count: Number(beforeClaim.attempt_count ?? 0) + 1,
       error_message: null,
     })
     .eq("id", inboxId)
-    .in("status", ["pending", "received", "failed", "processing"])
+    .in("status", ["pending", "received", "failed"])
     .select("id, stripe_event_id, event_type, status, payload, attempt_count")
     .maybeSingle();
 
   if (error) throw new Error(error.message);
-  return (claimed ?? current) as StripeWebhookInboxRow;
+  if (claimed) {
+    return { state: "claimed", row: claimed as StripeWebhookInboxRow };
+  }
+
+  const { data: current, error: currentError } = await admin
+    .from("stripe_webhook_events")
+    .select("id, stripe_event_id, event_type, status, payload, attempt_count")
+    .eq("id", inboxId)
+    .maybeSingle();
+
+  if (currentError) throw new Error(currentError.message);
+  if (!current) return { state: "missing", row: null };
+  if (current.status === "processed" || current.status === "ignored") {
+    return { state: "terminal", row: current as StripeWebhookInboxRow };
+  }
+  return { state: "busy", row: current as StripeWebhookInboxRow };
 }
 
 export async function markStripeWebhookInboxProcessed(
@@ -111,17 +143,26 @@ export async function markStripeWebhookInboxProcessed(
   outcome: "processed" | "ignored",
 ): Promise<void> {
   const now = new Date().toISOString();
-  await admin.from("stripe_webhook_events").update({
-    status: outcome,
-    processed_at: now,
-    error_message: null,
-  }).eq("id", inboxId);
+  const { error: eventError } = await admin
+    .from("stripe_webhook_events")
+    .update({
+      status: outcome,
+      processed_at: now,
+      processing_started_at: null,
+      error_message: null,
+    })
+    .eq("id", inboxId);
+  if (eventError) throw new Error(eventError.message);
 
-  await admin.from("stripe_integration_state").update({
-    webhook_last_processed_at: now,
-    webhook_last_event_id: stripeEventId,
-    updated_at: now,
-  }).neq("id", "00000000-0000-0000-0000-000000000000");
+  const { error: stateError } = await admin
+    .from("stripe_integration_state")
+    .update({
+      webhook_last_processed_at: now,
+      webhook_last_event_id: stripeEventId,
+      updated_at: now,
+    })
+    .neq("id", "00000000-0000-0000-0000-000000000000");
+  if (stateError) throw new Error(stateError.message);
 }
 
 export async function markStripeWebhookInboxFailed(
@@ -130,11 +171,16 @@ export async function markStripeWebhookInboxFailed(
   message: string,
 ): Promise<void> {
   const now = new Date().toISOString();
-  await admin.from("stripe_webhook_events").update({
-    status: "failed",
-    processed_at: now,
-    error_message: message.slice(0, 1000),
-  }).eq("id", inboxId);
+  const { error } = await admin
+    .from("stripe_webhook_events")
+    .update({
+      status: "failed",
+      processed_at: now,
+      processing_started_at: null,
+      error_message: message.slice(0, 1000),
+    })
+    .eq("id", inboxId);
+  if (error) throw new Error(error.message);
 }
 
 export async function touchStripeWebhookReceived(
@@ -142,9 +188,13 @@ export async function touchStripeWebhookReceived(
   stripeEventId: string,
 ): Promise<void> {
   const now = new Date().toISOString();
-  await admin.from("stripe_integration_state").update({
-    webhook_last_received_at: now,
-    webhook_last_event_id: stripeEventId,
-    updated_at: now,
-  }).neq("id", "00000000-0000-0000-0000-000000000000");
+  const { error } = await admin
+    .from("stripe_integration_state")
+    .update({
+      webhook_last_received_at: now,
+      webhook_last_event_id: stripeEventId,
+      updated_at: now,
+    })
+    .neq("id", "00000000-0000-0000-0000-000000000000");
+  if (error) throw new Error(error.message);
 }

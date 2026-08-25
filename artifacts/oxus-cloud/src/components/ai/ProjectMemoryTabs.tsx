@@ -369,7 +369,7 @@ function OpenQuestionsTable({ projectId, questions }: { projectId: string; quest
 
         </div>
 
-        <div className="rounded-lg border border-border overflow-hidden">
+        <div className="min-w-0 overflow-hidden rounded-lg border border-border">
 
           <Table>
 
@@ -429,7 +429,7 @@ function OpenQuestionsTable({ projectId, questions }: { projectId: string; quest
 
                     </TableCell>
 
-                    <TableCell className="py-2 align-top text-right">
+                    <TableCell className="py-2 align-top text-left">
 
                       <Button
                         variant="ghost"

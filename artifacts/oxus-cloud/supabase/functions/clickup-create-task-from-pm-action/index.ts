@@ -1,18 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import {
-  clickupFetch,
-  dateToClickupDue,
-  ensureProjectClickupSpace,
-  fetchListStatuses,
-  matchListStatus,
-  minutesToClickupTimeEstimate,
-  oxusPriorityToClickup,
-  pickDefaultStatus,
-  ClickupAssigneeValidationError,
-  CLICKUP_ASSIGNEE_ACCESS_ERROR,
-  isClickupAssigneeApiError,
-  validateProjectAssignableAssigneeIds,
-} from "../_shared/clickup.ts";
+import { ClickupAssigneeValidationError } from "../_shared/clickup.ts";
+import { createProjectClickUpTask } from "../_shared/clickupTaskCreation.ts";
 import {
   ClickupAuthError,
   clickupAuthErrorResponse,
@@ -54,8 +42,9 @@ function getAnonKey(): string | null {
   }
 }
 
-function normalizePriority(value: unknown): string {
+function normalizePriority(value: unknown): string | null {
   if (value === "urgent" || value === "high" || value === "medium" || value === "low") return value;
+  if (value === "" || value === null || value === undefined) return null;
   return "medium";
 }
 
@@ -71,18 +60,17 @@ Deno.serve(async (req) => {
     const anonKey = getAnonKey();
     if (!supabaseUrl || !anonKey) return err("Missing Supabase environment.", 500, "CONFIG_ERROR");
 
-    const webhookEndpoint = Deno.env.get("CLICKUP_WEBHOOK_ENDPOINT")?.trim();
-    const webhookSecret = Deno.env.get("CLICKUP_WEBHOOK_SECRET")?.trim();
-
     let body: {
       pm_action_item_id?: string;
       title?: string;
       description?: string;
       assignee_ids?: string[];
       due_date?: string;
-      priority?: "low" | "medium" | "high" | "urgent";
+      start_date?: string;
+      priority?: "low" | "medium" | "high" | "urgent" | "";
       status?: string;
       time_estimate_minutes?: number;
+      tag_names?: string[];
     };
     try {
       body = await req.json();
@@ -97,7 +85,7 @@ Deno.serve(async (req) => {
     });
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: auth, error: authErr } = await supabase.auth.getUser(token);
+    const { data: auth } = await supabase.auth.getUser(token);
     let userId: string;
     try {
       userId = await assertInternalOxusAuthUser(auth.user);
@@ -115,12 +103,12 @@ Deno.serve(async (req) => {
 
     const projectId = pmAction.project_id as string;
 
-    const { data: project, error: projErr } = await supabase
+    const { data: project } = await supabase
       .from("projects")
       .select("id, name")
       .eq("id", projectId)
       .single();
-    if (projErr || !project) return err("Project not found.", 404, "NOT_FOUND", projErr?.message);
+    if (!project) return err("Project not found.", 404, "NOT_FOUND");
 
     let clickup;
     try {
@@ -135,25 +123,10 @@ Deno.serve(async (req) => {
       .select("*")
       .eq("pm_action_item_id", body.pm_action_item_id)
       .maybeSingle();
-
     if (existingByActionLink) {
       return json({
         pm_action_item: pmAction,
         clickup_task_link: existingByActionLink,
-        already_created: true,
-        message: "Already created in ClickUp.",
-      });
-    }
-
-    if (pmAction.clickup_task_id) {
-      const { data: existingByTaskId } = await supabase
-        .from("clickup_task_links")
-        .select("*")
-        .eq("clickup_task_id", pmAction.clickup_task_id)
-        .maybeSingle();
-      return json({
-        pm_action_item: pmAction,
-        clickup_task_link: existingByTaskId ?? null,
         already_created: true,
         message: "Already created in ClickUp.",
       });
@@ -167,9 +140,7 @@ Deno.serve(async (req) => {
       (typeof body.description === "string" && body.description.trim()) ||
       (typeof pmAction.suggested_task_description === "string" && pmAction.suggested_task_description.trim()) ||
       (typeof pmAction.description === "string" ? pmAction.description : null);
-    const priority = normalizePriority(
-      body.priority ?? pmAction.suggested_priority ?? pmAction.priority,
-    );
+    const priority = normalizePriority(body.priority ?? pmAction.suggested_priority ?? pmAction.priority);
 
     const defaultAssigneeIds = Array.isArray(pmAction.suggested_clickup_assignee_ids)
       ? pmAction.suggested_clickup_assignee_ids.filter((id): id is string => typeof id === "string" && id.trim())
@@ -184,27 +155,14 @@ Deno.serve(async (req) => {
       (typeof pmAction.suggested_due_date === "string" && pmAction.suggested_due_date.trim()) ||
       (typeof pmAction.selected_due_date === "string" && pmAction.selected_due_date.trim()) ||
       null;
-    // Date-only: no due-time support (PART 3).
-    const dueDateTime = false;
-    const requestedStatus = typeof body.status === "string" ? body.status.trim() : "";
-    const timeEstimateMs = minutesToClickupTimeEstimate(body.time_estimate_minutes);
-    const warnings: string[] = [];
-    let validatedAssigneeIds: string[];
-    try {
-      validatedAssigneeIds = await validateProjectAssignableAssigneeIds(supabase, projectId, assigneeIds);
-    } catch (e) {
-      if (e instanceof ClickupAssigneeValidationError) {
-        return err(e.message, 400, "ASSIGNEE_NOT_ASSIGNABLE");
-      }
-      throw e;
-    }
+    const startDate = typeof body.start_date === "string" && body.start_date.trim() ? body.start_date.trim() : null;
 
     await supabase
       .from("project_pm_action_items")
       .update({
-        selected_clickup_assignee_ids: validatedAssigneeIds,
+        selected_clickup_assignee_ids: assigneeIds,
         selected_due_date: dueDate,
-        selected_due_date_time: dueDateTime,
+        selected_due_date_time: false,
         clickup_sync_status: "syncing",
         clickup_sync_error: null,
       })
@@ -217,36 +175,13 @@ Deno.serve(async (req) => {
         .eq("id", body.pm_action_item_id);
     };
 
-    let spaceResult: Awaited<ReturnType<typeof ensureProjectClickupSpace>>;
-    try {
-      spaceResult = await ensureProjectClickupSpace({
-        supabase,
-        clickup,
-        projectId,
-        projectName: (project as { name: string }).name,
-        createdBy: userId,
-        webhookEndpoint,
-        webhookSecret,
-      });
-    } catch (e) {
-      await recordSyncError((e as Error).message);
-      return err("Failed to ensure ClickUp space.", 502, "CLICKUP_ERROR", (e as Error).message);
-    }
-
-    const link = spaceResult.link as Record<string, unknown>;
-    const listId = link.clickup_list_id as string;
-    const priorityInt = oxusPriorityToClickup(priority);
-
     const sourceMetadata = (pmAction.source_metadata ?? {}) as Record<string, unknown>;
     const markdownContent = buildPmActionClickupMarkdown({
       title: taskTitle,
       description: taskDescription,
       sourceType: typeof pmAction.source_type === "string" ? pmAction.source_type : pmAction.source,
       sourceApp: typeof pmAction.source_app === "string" ? pmAction.source_app : null,
-      sourceMessage:
-        typeof pmAction.source_message === "string"
-          ? pmAction.source_message
-          : null,
+      sourceMessage: typeof pmAction.source_message === "string" ? pmAction.source_message : null,
       channelName:
         typeof sourceMetadata.channel_name === "string"
           ? sourceMetadata.channel_name
@@ -260,59 +195,39 @@ Deno.serve(async (req) => {
       projectId,
     });
 
-    let clickupTask: Record<string, unknown>;
+    let created;
     try {
-      const statuses = await fetchListStatuses(clickup, listId);
-      const defaultStatus = pickDefaultStatus(statuses);
-      let resolvedStatus = defaultStatus;
-      if (requestedStatus) {
-        const { matched, exists } = matchListStatus(statuses, requestedStatus);
-        if (exists && matched) {
-          resolvedStatus = matched;
-        } else {
-          warnings.push(
-            `Requested status "${requestedStatus}" does not exist in the ClickUp list. Used "${
-              defaultStatus ?? "list default"
-            }" instead. Create the status in ClickUp or pick an existing one.`,
-          );
-        }
-      }
-
-      const taskBody: Record<string, unknown> = {
-        name: taskTitle,
-        markdown_content: markdownContent,
-      };
-      if (resolvedStatus) taskBody.status = resolvedStatus;
-      if (priorityInt !== undefined) taskBody.priority = priorityInt;
-      if (timeEstimateMs !== undefined) taskBody.time_estimate = timeEstimateMs;
-      if (validatedAssigneeIds.length > 0) {
-        taskBody.assignees = validatedAssigneeIds.map((id) => Number(id)).filter((id) => Number.isFinite(id));
-      }
-      if (dueDate) {
-        taskBody.due_date = dateToClickupDue(dueDate, dueDateTime);
-        taskBody.due_date_time = dueDateTime;
-      }
-      clickupTask = await clickupFetch(clickup, `/list/${listId}/task`, {
-        method: "POST",
-        body: JSON.stringify(taskBody),
-      }) as Record<string, unknown>;
+      created = await createProjectClickUpTask({
+        supabase,
+        clickup,
+        webhookEndpoint: Deno.env.get("CLICKUP_WEBHOOK_ENDPOINT")?.trim(),
+        webhookSecret: Deno.env.get("CLICKUP_WEBHOOK_SECRET")?.trim(),
+        existingTaskLinkQuery: null,
+        input: {
+          projectId,
+          actorUserId: userId,
+          sourceType: "pm_action",
+          sourceId: body.pm_action_item_id,
+          name: taskTitle,
+          markdownContent,
+          statusIdOrName: body.status,
+          assigneeUserIds: assigneeIds,
+          priority,
+          startDate,
+          dueDate,
+          timeEstimateMinutes: body.time_estimate_minutes,
+          tagNames: body.tag_names ?? [],
+          allowCreateTags: false,
+        },
+      });
     } catch (e) {
       const message = (e as Error).message;
       await recordSyncError(message);
-      if (isClickupAssigneeApiError(message)) {
-        return err(CLICKUP_ASSIGNEE_ACCESS_ERROR, 400, "ASSIGNEE_NOT_ASSIGNABLE", message);
+      if (e instanceof ClickupAssigneeValidationError) {
+        return err(e.message, 400, "ASSIGNEE_NOT_ASSIGNABLE");
       }
       return err("Failed to create task in ClickUp.", 502, "CLICKUP_ERROR", message);
     }
-
-    const clickupTaskId = String(clickupTask.id);
-    const clickupTaskUrl =
-      (typeof clickupTask.url === "string" ? clickupTask.url : null) ??
-      `https://app.clickup.com/t/${clickupTaskId}`;
-    const clickupStatus =
-      clickupTask.status && typeof clickupTask.status === "object"
-        ? String((clickupTask.status as Record<string, unknown>).status ?? "Open")
-        : "Open";
 
     const now = new Date().toISOString();
     const { data: taskLink, error: linkErr } = await supabase
@@ -321,15 +236,18 @@ Deno.serve(async (req) => {
         project_id: projectId,
         pm_action_item_id: body.pm_action_item_id,
         clickup_team_id: clickup.teamId,
-        clickup_space_id: link.clickup_space_id,
-        clickup_folder_id: link.clickup_folder_id,
-        clickup_list_id: listId,
-        clickup_task_id: clickupTaskId,
-        clickup_task_url: clickupTaskUrl,
+        clickup_space_id: created.projectClickupLink.clickup_space_id,
+        clickup_folder_id: created.projectClickupLink.clickup_folder_id,
+        clickup_list_id: created.projectClickupLink.clickup_list_id,
+        clickup_task_id: created.clickupTaskId,
+        clickup_task_url: created.clickupTaskUrl,
         clickup_task_name: taskTitle,
-        clickup_status: clickupStatus,
+        clickup_status:
+          (created.clickupTask.status as { status?: string } | undefined)?.status ??
+          created.resolvedStatus ??
+          "Open",
         clickup_priority: priority,
-        last_snapshot: clickupTask,
+        last_snapshot: created.clickupTask,
         last_synced_at: now,
         created_by: userId,
       })
@@ -343,7 +261,7 @@ Deno.serve(async (req) => {
     const relatedTaskIds = Array.isArray(pmAction.related_clickup_task_ids)
       ? [...(pmAction.related_clickup_task_ids as string[])]
       : [];
-    if (!relatedTaskIds.includes(clickupTaskId)) relatedTaskIds.push(clickupTaskId);
+    if (!relatedTaskIds.includes(created.clickupTaskId)) relatedTaskIds.push(created.clickupTaskId);
 
     const relatedTaskTitles = Array.isArray(pmAction.related_clickup_task_titles)
       ? [...(pmAction.related_clickup_task_titles as string[])]
@@ -353,14 +271,14 @@ Deno.serve(async (req) => {
     const { data: updatedAction } = await supabase
       .from("project_pm_action_items")
       .update({
-        clickup_task_id: clickupTaskId,
-        clickup_task_url: clickupTaskUrl,
+        clickup_task_id: created.clickupTaskId,
+        clickup_task_url: created.clickupTaskUrl,
         clickup_sync_status: "synced",
         clickup_synced_at: now,
         clickup_sync_error: null,
-        selected_clickup_assignee_ids: validatedAssigneeIds,
+        selected_clickup_assignee_ids: assigneeIds,
         selected_due_date: dueDate,
-        selected_due_date_time: dueDateTime,
+        selected_due_date_time: false,
         status: "done",
         execution_status: "succeeded",
         executed_at: now,
@@ -388,38 +306,39 @@ Deno.serve(async (req) => {
       event_title: "Created ClickUp task from PM action",
       event_summary: `Task "${taskTitle}" created in ClickUp from ${sourceSummary}.`,
       related_pm_action_item_id: body.pm_action_item_id,
-      related_clickup_task_id: clickupTaskId,
+      related_clickup_task_id: created.clickupTaskId,
       metadata: {
         clickup_task_link_id: taskLink.id,
-        assignee_ids: validatedAssigneeIds,
+        assignee_ids: assigneeIds,
         due_date: dueDate,
-        due_date_time: dueDateTime,
+        start_date: startDate,
         priority,
+        tag_names: created.resolvedTags,
       },
     });
 
     await supabase.from("project_clickup_timeline_events").insert({
       project_id: projectId,
       clickup_task_link_id: taskLink.id,
-      clickup_task_id: clickupTaskId,
+      clickup_task_id: created.clickupTaskId,
       event_type: "clickup_task_created",
       event_title: "Created ClickUp task from PM action",
       event_summary: `Task "${taskTitle}" created from PM action (${sourceSummary}).`,
       direction: "to_clickup",
       source: "oxus_action",
       raw_payload: {
-        clickup_task: clickupTask,
+        clickup_task: created.clickupTask,
         pm_action_item_id: body.pm_action_item_id,
-        assignee_ids: validatedAssigneeIds,
+        assignee_ids: assigneeIds,
         due_date: dueDate,
-        due_date_time: dueDateTime,
+        start_date: startDate,
       },
     });
 
     return json({
       pm_action_item: updatedAction ?? pmAction,
       clickup_task_link: taskLink,
-      warnings: warnings.length > 0 ? warnings : undefined,
+      warnings: created.warnings.length > 0 ? created.warnings : undefined,
     });
   } catch (e) {
     console.error("[UNEXPECTED_ERROR]", (e as Error).message);

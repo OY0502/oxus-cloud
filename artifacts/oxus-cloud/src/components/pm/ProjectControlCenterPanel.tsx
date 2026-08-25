@@ -1133,11 +1133,13 @@ export function ProjectControlCenterPanel({
   const createClickupTask = async (input: {
     title: string;
     description?: string;
-    priority: ProjectPmActionItem["priority"];
+    priority?: ProjectPmActionItem["priority"] | "";
     status?: string;
     assignee_ids: string[];
+    start_date?: string;
     due_date?: string;
     time_estimate_minutes?: number;
+    tag_names?: string[];
   }) => {
     if (!createClickupItem) return;
     try {
@@ -1149,8 +1151,10 @@ export function ProjectControlCenterPanel({
         priority: input.priority,
         status: input.status,
         assignee_ids: input.assignee_ids,
+        start_date: input.start_date,
         due_date: input.due_date,
         time_estimate_minutes: input.time_estimate_minutes,
+        tag_names: input.tag_names,
       });
       setCreateClickupItem(null);
       toast({
@@ -1412,7 +1416,6 @@ export function ProjectControlCenterPanel({
         onOpenChange={(open) => !open && setCreateClickupItem(null)}
         item={createClickupItem}
         projectId={projectId}
-        teamId={clickupLink?.clickup_team_id}
         busy={createClickupFromPmAction.isPending}
         onConfirm={createClickupTask}
       />

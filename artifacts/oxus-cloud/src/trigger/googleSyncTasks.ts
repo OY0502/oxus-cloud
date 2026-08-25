@@ -411,4 +411,76 @@ export const googleWorkerSmokeTestTask = task({
 
 });
 
+/** One-shot Calendar historical recovery — not scheduled. Continues until done. */
+export const googleCalendarHistoricalRecoveryTask = task({
+  id: GOOGLE_TASK_IDS.calendarHistoricalRecovery,
+  queue: { name: "google-calendar-historical-recovery", concurrencyLimit: 1 },
+  maxDuration: 3600,
+  run: async (payload: {
+    connection_id: string;
+    user_id: string;
+    operation_id?: string;
+    lookback_months?: number;
+    dry_run?: boolean;
+  }, { ctx }) => {
+    const { getServiceClient } = await import("../server/supabase");
+    const admin = getServiceClient();
+    const { data: connection } = await admin
+      .from("user_google_connections")
+      .select("id, user_id")
+      .eq("id", payload.connection_id)
+      .eq("user_id", payload.user_id)
+      .maybeSingle();
+    if (!connection) throw new Error("Google connection not found.");
+
+    const supabaseUrl = process.env.SUPABASE_URL?.trim();
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+    if (!supabaseUrl || !serviceKey) throw new Error("Missing Supabase env for calendar recovery.");
+
+    const operationId = payload.operation_id ?? ctx.run.id;
+    let done = false;
+    let batches = 0;
+    let lastResult: Record<string, unknown> = {};
+    const maxBatches = 200;
+
+    while (!done && batches < maxBatches) {
+      const direct = await fetch(`${supabaseUrl}/functions/v1/google-calendar-historical-recovery`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${serviceKey}`,
+          apikey: serviceKey,
+          "Content-Type": "application/json",
+          "X-Oxus-Admin-Repair": "calendar-historical-2026-07-16",
+        },
+        body: JSON.stringify({
+          connection_id: payload.connection_id,
+          operation_id: operationId,
+          lookback_months: payload.lookback_months ?? 36,
+          dry_run: !!payload.dry_run,
+          confirm: !payload.dry_run,
+        }),
+      });
+      const text = await direct.text();
+      if (!direct.ok) throw new Error(`calendar historical recovery failed: ${text.slice(0, 500)}`);
+      lastResult = JSON.parse(text) as Record<string, unknown>;
+      done = !!lastResult.done || !!payload.dry_run;
+      batches++;
+      console.info("[google-calendar-historical-recovery]", {
+        operation_id: operationId,
+        batch: batches,
+        calendar_id: lastResult.calendar_id,
+        events_stored: lastResult.events_stored,
+        sync_token_preserved: lastResult.sync_token_preserved,
+        done,
+      });
+    }
+
+    if (!payload.dry_run) {
+      await admin.rpc("recalculate_crm_interaction_dates", { p_owner_user_id: payload.user_id });
+    }
+
+    return { ok: true, batches, operation_id: operationId, last: lastResult };
+  },
+});
+
 

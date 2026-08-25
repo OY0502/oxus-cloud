@@ -15,6 +15,7 @@ import {
 import {
   useManageTeamMemberRate,
   useAllocateInvoicePayment,
+  useTeamPayablesSummary,
   useProjects,
   useUpsertProjectAssignment,
   useCreateTeamActivity,
@@ -29,6 +30,7 @@ import {
 } from "@/hooks/api";
 import { useToast } from "@/hooks/use-toast";
 import { contractorInvoiceOutstanding, isOpenContractorInvoice } from "@/lib/contractorInvoices";
+import { isOpenPayable, payableUiStateLabel } from "@/lib/teamMemberPayables";
 import { formatCurrency } from "@/lib/currency";
 import type { Contact, ContractorInvoice, PayoutProvider, TeamMemberRate } from "@/lib/types";
 import {
@@ -36,9 +38,12 @@ import {
   DEFAULT_RATE_FORM,
   rateFormToInput,
   rateFormValuesFromRate,
+  validateRateFormValues,
+  rateFormRequiresProjects,
   type RateFormValues,
 } from "./RateForm";
 import { formatRate } from "@/lib/team";
+import { rateProjectIds } from "@/lib/teamMemberRates";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertTriangle } from "lucide-react";
 
@@ -61,6 +66,7 @@ export function RateDialog({
   const manageRate = useManageTeamMemberRate();
   const { data: projects = [] } = useProjects();
   const [values, setValues] = useState<RateFormValues>(DEFAULT_RATE_FORM);
+  const [projectError, setProjectError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -106,6 +112,13 @@ export function RateDialog({
       toast({ title: "Enter a valid amount", variant: "destructive" });
       return;
     }
+    const validationError = validateRateFormValues(values);
+    if (validationError) {
+      setProjectError(validationError);
+      toast({ title: validationError, variant: "destructive" });
+      return;
+    }
+    setProjectError(null);
     const input = rateFormToInput(person.id, values);
     try {
       if (mode === "edit" && rate) {
@@ -118,7 +131,7 @@ export function RateDialog({
           rate_type: input.rate_type,
           amount: input.amount,
           currency: input.currency,
-          project_id: input.project_id,
+          project_ids: input.project_ids,
           work_type: input.work_type,
           is_default: input.is_default,
           effective_from: input.effective_from,
@@ -149,7 +162,7 @@ export function RateDialog({
           rate_type: input.rate_type,
           amount: input.amount,
           currency: input.currency,
-          project_id: input.project_id,
+          project_ids: input.project_ids,
           work_type: input.work_type,
           is_default: input.is_default,
           effective_from: input.effective_from,
@@ -168,6 +181,10 @@ export function RateDialog({
     }
   };
 
+  const saveDisabled =
+    !values.amount.trim() ||
+    (rateFormRequiresProjects(values.appliesTo) && values.projectIds.length === 0);
+
   return (
     <FormDialog
       open={open}
@@ -177,13 +194,14 @@ export function RateDialog({
       onSubmit={() => void submit()}
       submitting={manageRate.isPending}
       submitLabel={mode === "replace" ? "Schedule replacement" : "Save rate"}
-      disabled={!values.amount.trim()}
+      disabled={saveDisabled}
     >
       <RateFormFields
         values={values}
         onChange={patch}
         projects={projects}
         showEffectiveTo={mode === "edit"}
+        projectError={projectError}
       />
     </FormDialog>
   );
@@ -360,8 +378,8 @@ export function ContractorInvoiceDialog({
     <FormDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={isEdit ? "Contractor invoice" : "Add contractor invoice"}
-      description={`Accounts payable invoice from ${person.name} to OXUS.`}
+      title={isEdit ? "Member invoice" : "Add member invoice"}
+      description={`Supporting invoice submitted by ${person.name} to OXUS.`}
       onSubmit={() => void submit()}
       submitting={createInvoice.isPending || updateInvoice.isPending}
       submitLabel={isEdit ? "Save invoice" : "Add invoice"}
@@ -451,15 +469,18 @@ export function RecordPaymentDialog({
   onOpenChange,
   person,
   preselectedInvoiceId,
+  preselectedPayableId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   person: Contact;
   preselectedInvoiceId?: string | null;
+  preselectedPayableId?: string | null;
 }) {
   const { toast } = useToast();
   const allocatePayment = useAllocateInvoicePayment();
   const { data: invoicesData } = useContractorInvoices(person.id, { enabled: open });
+  const payablesQuery = useTeamPayablesSummary({ person_id: person.id, period: "lifetime" }, { enabled: open });
   const openInvoices = invoicesData ?? EMPTY_CONTRACTOR_INVOICES;
   const { data: projects = [] } = useProjects();
   const [amount, setAmount] = useState("");
@@ -471,16 +492,27 @@ export function RecordPaymentDialog({
   const [provider, setProvider] = useState<PayoutProvider>("manual");
   const [status, setStatus] = useState("paid");
   const [notes, setNotes] = useState("");
-  const [selected, setSelected] = useState<Record<string, string>>({});
+  const [selectedInvoices, setSelectedInvoices] = useState<Record<string, string>>({});
+  const [selectedPayables, setSelectedPayables] = useState<Record<string, string>>({});
 
   const payableInvoices = useMemo(
     () => openInvoices.filter(isOpenContractorInvoice),
     [openInvoices],
   );
 
+  const openPayables = useMemo(
+    () => (payablesQuery.data?.payables ?? []).filter((p) => isOpenPayable(p.ui_state)),
+    [payablesQuery.data],
+  );
+
   const payableInvoiceKey = useMemo(
     () => payableInvoices.map((i) => i.id).join(","),
     [payableInvoices],
+  );
+
+  const openPayableKey = useMemo(
+    () => openPayables.map((p) => p.id).join(","),
+    [openPayables],
   );
 
   useEffect(() => {
@@ -494,12 +526,13 @@ export function RecordPaymentDialog({
     setProvider("manual");
     setStatus("paid");
     setNotes("");
-    setSelected({});
+    setSelectedInvoices({});
+    setSelectedPayables({});
   }, [open]);
 
   useEffect(() => {
     if (!open || !preselectedInvoiceId || !payableInvoiceKey) return;
-    setSelected((prev) => {
+    setSelectedInvoices((prev) => {
       if (prev[preselectedInvoiceId]) return prev;
       const inv = payableInvoices.find((i) => i.id === preselectedInvoiceId);
       if (!inv) return prev;
@@ -507,15 +540,36 @@ export function RecordPaymentDialog({
     });
   }, [open, preselectedInvoiceId, payableInvoiceKey]);
 
-  const allocTotal = Object.entries(selected).reduce((s, [, v]) => s + (parseFloat(v) || 0), 0);
+  useEffect(() => {
+    if (!open || !preselectedPayableId || !openPayableKey) return;
+    setSelectedPayables((prev) => {
+      if (prev[preselectedPayableId]) return prev;
+      const payable = openPayables.find((p) => p.id === preselectedPayableId);
+      if (!payable) return prev;
+      return { [payable.id]: String(payable.remaining_amount) };
+    });
+  }, [open, preselectedPayableId, openPayableKey]);
+
+  const invoiceAllocTotal = Object.entries(selectedInvoices).reduce((s, [, v]) => s + (parseFloat(v) || 0), 0);
+  const payableAllocTotal = Object.entries(selectedPayables).reduce((s, [, v]) => s + (parseFloat(v) || 0), 0);
+  const allocTotal = invoiceAllocTotal + payableAllocTotal;
   const paymentAmount = parseFloat(amount) || 0;
   const unallocated = Math.max(0, paymentAmount - allocTotal);
 
   const toggleInvoice = (invoice: ContractorInvoice, checked: boolean) => {
-    setSelected((prev) => {
+    setSelectedInvoices((prev) => {
       const next = { ...prev };
       if (checked) next[invoice.id] = String(contractorInvoiceOutstanding(invoice));
       else delete next[invoice.id];
+      return next;
+    });
+  };
+
+  const togglePayable = (payable: import("@/lib/types").TeamMemberPayableEnriched, checked: boolean) => {
+    setSelectedPayables((prev) => {
+      const next = { ...prev };
+      if (checked) next[payable.id] = String(payable.remaining_amount);
+      else delete next[payable.id];
       return next;
     });
   };
@@ -530,10 +584,16 @@ export function RecordPaymentDialog({
       toast({ title: "Allocations exceed payment amount", variant: "destructive" });
       return;
     }
-    const allocations = Object.entries(selected)
+    const allocations = Object.entries(selectedInvoices)
       .filter(([, v]) => parseFloat(v) > 0)
       .map(([contractor_invoice_id, v]) => ({
         contractor_invoice_id,
+        allocated_amount: parseFloat(v),
+      }));
+    const payable_allocations = Object.entries(selectedPayables)
+      .filter(([, v]) => parseFloat(v) > 0)
+      .map(([payable_id, v]) => ({
+        payable_id,
         allocated_amount: parseFloat(v),
       }));
     try {
@@ -549,6 +609,7 @@ export function RecordPaymentDialog({
         status,
         notes: notes || null,
         allocations,
+        payable_allocations,
       });
       toast({ title: "Payment recorded" });
       onOpenChange(false);
@@ -566,7 +627,7 @@ export function RecordPaymentDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="Record payment"
-      description={`Log an outgoing payment to ${person.name}. Optionally allocate to open contractor invoices.`}
+      description={`Log an outgoing payment to ${person.name}. Allocate to open payables first.`}
       onSubmit={() => void submit()}
       submitting={allocatePayment.isPending}
       submitLabel="Record payment"
@@ -631,25 +692,53 @@ export function RecordPaymentDialog({
         />
       </div>
 
+      {openPayables.length > 0 && (
+        <div className="space-y-2 rounded-lg border border-border/60 p-3">
+          <Label className="text-sm">Allocate to payables</Label>
+          <div className="space-y-2 max-h-40 overflow-y-auto">
+            {openPayables.map((payable) => (
+              <div key={payable.id} className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={payable.id in selectedPayables}
+                  onCheckedChange={(c) => togglePayable(payable, !!c)}
+                />
+                <span className="flex-1 min-w-0 truncate">
+                  {payable.title ?? payable.description ?? "Payable"} · {formatCurrency(payable.remaining_amount, payable.currency)}
+                  <span className="text-muted-foreground ml-1">({payableUiStateLabel(payable.ui_state)})</span>
+                </span>
+                {payable.id in selectedPayables && (
+                  <Input
+                    className="h-8 w-24"
+                    type="number"
+                    value={selectedPayables[payable.id] ?? ""}
+                    onChange={(e) => setSelectedPayables((p) => ({ ...p, [payable.id]: e.target.value }))}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {payableInvoices.length > 0 && (
         <div className="space-y-2 rounded-lg border border-border/60 p-3">
-          <Label className="text-sm">Allocate to invoices</Label>
+          <Label className="text-sm">Allocate to supporting invoices (optional)</Label>
           <div className="space-y-2 max-h-40 overflow-y-auto">
             {payableInvoices.map((inv) => (
               <div key={inv.id} className="flex items-center gap-2 text-sm">
                 <Checkbox
-                  checked={inv.id in selected}
+                  checked={inv.id in selectedInvoices}
                   onCheckedChange={(c) => toggleInvoice(inv, !!c)}
                 />
                 <span className="flex-1 min-w-0 truncate">
                   {inv.invoice_number ?? inv.id.slice(0, 8)} · {formatCurrency(contractorInvoiceOutstanding(inv), inv.currency)}
                 </span>
-                {inv.id in selected && (
+                {inv.id in selectedInvoices && (
                   <Input
                     className="h-8 w-24"
                     type="number"
-                    value={selected[inv.id] ?? ""}
-                    onChange={(e) => setSelected((p) => ({ ...p, [inv.id]: e.target.value }))}
+                    value={selectedInvoices[inv.id] ?? ""}
+                    onChange={(e) => setSelectedInvoices((p) => ({ ...p, [inv.id]: e.target.value }))}
                   />
                 )}
               </div>
@@ -718,7 +807,9 @@ export function AssignProjectDialog({
   }, [open, assignment]);
 
   const applicableRates = rates.filter(
-    (r) => r.status === "active" && (!r.project_id || r.project_id === projectId),
+    (r) =>
+      r.status === "active" &&
+      (rateProjectIds(r).length === 0 || rateProjectIds(r).includes(projectId)),
   );
 
   const submit = async () => {
@@ -930,7 +1021,7 @@ export function DeleteTeamMemberDialog({
             <div className="font-medium">{person.name}</div>
             <div className="text-muted-foreground">{person.email ?? "No email"}</div>
             <div className="text-muted-foreground">
-              {deps?.person.engagement ?? "—"}
+              {deps?.person.person_status === "inactive" ? "Inactive" : "Active"}
               {hasAuth ? " · Has workspace login" : " · No workspace login"}
             </div>
           </div>

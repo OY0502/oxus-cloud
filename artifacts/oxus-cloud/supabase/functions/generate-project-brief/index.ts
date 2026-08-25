@@ -5,6 +5,9 @@ import {
   mergeRefreshedStringArrays,
 } from "../_shared/memoryMerge.ts";
 import { reconcileProjectAttentionItems } from "../_shared/agent/attentionReconciliation.ts";
+import { getServiceRoleSupabase } from "../_shared/clickup-auth.ts";
+import { embedProjectKnowledgeChunks } from "../_shared/agent/retrieval.ts";
+import { chunkKnowledgeText } from "../_shared/knowledgeChunking.ts";
 
 type DetectedSourceType =
   | "meeting_transcript"
@@ -932,17 +935,41 @@ Deno.serve(async (req) => {
       return errorResponse("Failed to store project knowledge source.", 500, "DB_ERROR", sourceError.message);
     }
 
-    const chunkRows = chunks.map((content, index) => ({
+    const retrievalChunks = chunkKnowledgeText(sourceText, {
+      targetChars: Number(Deno.env.get("AI_RETRIEVAL_CHUNK_SIZE_CHARS") ?? "2600"),
+      overlapChars: Number(Deno.env.get("AI_RETRIEVAL_CHUNK_OVERLAP_CHARS") ?? "320"),
+    });
+    const chunkRows = retrievalChunks.map((chunk, index) => ({
       project_id: projectId,
       source_id: source.id,
       chunk_index: index,
-      content,
+      content: chunk.content,
+      section_path: chunk.sectionPath,
       category: "source",
-      metadata: { char_count: content.length },
+      metadata: {
+        source_type: storedSourceType,
+        source_title: body.source_title?.trim() || body.file_name || null,
+        section_path: chunk.sectionPath,
+        char_start: chunk.charStart,
+        char_end: chunk.charEnd,
+        token_estimate: chunk.tokenEstimate,
+        char_count: chunk.content.length,
+      },
     }));
     const { error: chunkError } = await supabase.from("project_knowledge_chunks").insert(chunkRows);
     if (chunkError) {
       return errorResponse("Failed to store project knowledge chunks.", 500, "DB_ERROR", chunkError.message);
+    }
+
+    try {
+      await embedProjectKnowledgeChunks({
+        admin: getServiceRoleSupabase(),
+        projectId,
+        sourceId: String(source.id),
+        syncPinecone: true,
+      });
+    } catch (indexError) {
+      console.warn("[generate-project-brief] Knowledge indexing failed:", (indexError as Error).message);
     }
 
     const { data: brief, error: briefError } = await supabase

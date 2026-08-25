@@ -28,6 +28,7 @@ function err(message: string, status: number, code: string, details?: string) {
 
 const TRIGGER_TASK_MAP: Record<string, string> = {
   create_clickup_task: "create-clickup-task-from-agent",
+  add_clickup_comment: "create-clickup-task-from-agent",
   create_clickup_doc: "create-clickup-doc-from-agent",
   link_clickup_doc_to_task: "link-clickup-doc-to-task",
   sync_clickup_docs: "sync-clickup-project-docs",

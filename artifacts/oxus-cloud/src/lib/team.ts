@@ -1,6 +1,7 @@
 import type { Availability, Contact, CompanyPerson, ProjectWithAssignees, RateType, TeamMemberRate } from "@/lib/types";
 import { formatCurrency } from "@/lib/currency";
 import { getDefaultRate } from "@/lib/teamMemberRates";
+
 /** Team-specific fields stored in contacts.metadata */
 export interface TeamMemberMetadata {
   start_date?: string | null;
@@ -64,21 +65,20 @@ export function personStatusVariant(
   return "neutral";
 }
 
-export function engagementVariant(): "neutral" {
-  return "neutral";
+/** company_people relationship types that mark someone as on the Team roster */
+export function isTeamRelationship(relationshipType: string): boolean {
+  return (
+    relationshipType === "team_member" ||
+    relationshipType === "employee" ||
+    relationshipType === "contractor"
+  );
 }
 
-export function engagementLabel(contact: Contact, companyPeople: CompanyPerson[]): string {
-  const rel = companyPeople.find(
-    (r) =>
-      r.person_id === contact.id &&
-      (r.relationship_type === "employee" || r.relationship_type === "contractor"),
-  );
-  if (rel?.relationship_type === "employee") return "Employee";
-  if (rel?.relationship_type === "contractor") return "Contractor";
-  if (contact.employment_type === "employee") return "Employee";
-  if (contact.employment_type === "contractor" || contact.type === "contractor") return "Contractor";
-  return contact.type;
+/** Display label for contacts.type — maps legacy "contractor" to Team Member */
+export function contactTypeLabel(type: string | null | undefined): string {
+  if (type === "contractor") return "Team Member";
+  if (!type) return "—";
+  return type.charAt(0).toUpperCase() + type.slice(1);
 }
 
 export function isPersonInactive(contact: Contact): boolean {
@@ -94,11 +94,6 @@ export function deactivatedAtLabel(contact: Contact): string | null {
   } catch {
     return at.slice(0, 10);
   }
-}
-
-export function rosterEngagementLabel(contact: Contact, companyPeople: CompanyPerson[]): string {
-  if (isPersonInactive(contact)) return "Inactive";
-  return engagementLabel(contact, companyPeople);
 }
 
 export function rosterAvailabilityLabel(contact: Contact): string {
@@ -119,10 +114,7 @@ export function isTeamPerson(
   companyPeople: CompanyPerson[],
 ): boolean {
   for (const rel of companyPeople) {
-    if (
-      rel.person_id === contactId &&
-      (rel.relationship_type === "employee" || rel.relationship_type === "contractor")
-    ) {
+    if (rel.person_id === contactId && isTeamRelationship(rel.relationship_type)) {
       return true;
     }
   }
@@ -159,6 +151,8 @@ export function activeProjectsForPerson(
 ): ProjectWithAssignees[] {
   return projects.filter(
     (p) =>
+      !p.archived_at &&
+      !p.is_draft &&
       (p.status === "in-progress" || p.status === "planning") &&
       (p.team_contacts ?? []).some((c: Contact) => c.id === personId),
   );
@@ -171,13 +165,24 @@ export function projectNamesCell(projects: { name: string }[], max = 2): string 
   return extra > 0 ? `${names.join(", ")} +${extra}` : names.join(", ");
 }
 
-export type EngagementFilter = "all" | "employee" | "contractor" | "inactive";
+export type StatusFilter = "active" | "inactive";
 export type AvailabilityFilter = "all" | Availability;
+
+export function paidYtdRank(
+  personId: string,
+  roster: { person: { id: string }; paid_ytd: number }[],
+): { rank: number; total: number; paidYtd: number } | null {
+  if (roster.length === 0) return null;
+  const row = roster.find((r) => r.person.id === personId);
+  if (!row) return null;
+  const rank = roster.filter((r) => r.paid_ytd > row.paid_ytd).length + 1;
+  return { rank, total: roster.length, paidYtd: row.paid_ytd };
+}
 
 export function filterTeamRoster(
   contacts: Contact[],
   teamPersonIds: Set<string>,
-  engagement: EngagementFilter,
+  statusFilter: StatusFilter,
   availability: AvailabilityFilter,
   projectId: string | null,
   search: string,
@@ -193,19 +198,17 @@ export function filterTeamRoster(
   return contacts
     .filter((c) => teamPersonIds.has(c.id))
     .filter((c) => {
-      if (engagement === "inactive") return c.person_status === "inactive";
+      if (statusFilter === "inactive") return c.person_status === "inactive";
       if (c.person_status === "inactive") {
         return q.length > 0 && matchesSearch(c);
-      }
-      if (engagement === "employee") return c.employment_type === "employee";
-      if (engagement === "contractor") {
-        return c.employment_type === "contractor" || c.type === "contractor";
       }
       return true;
     })
     .filter((c) => {
       if (availability === "all") return true;
-      if (c.person_status === "inactive") return engagement === "inactive" || (q.length > 0 && matchesSearch(c));
+      if (c.person_status === "inactive") {
+        return statusFilter === "inactive" || (q.length > 0 && matchesSearch(c));
+      }
       return c.availability === availability;
     })
     .filter((c) => {

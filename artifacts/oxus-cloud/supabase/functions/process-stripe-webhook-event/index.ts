@@ -1,6 +1,9 @@
 import type Stripe from "npm:stripe@17.7.0";
 import { getServiceRoleSupabase } from "../_shared/clickup-auth.ts";
-import { authenticateInternalWorker, internalWorkerAuthErrorResponse } from "../_shared/internalWorkerAuth.ts";
+import {
+  authenticateInternalWorker,
+  internalWorkerAuthErrorResponse,
+} from "../_shared/internalWorkerAuth.ts";
 import { createStripeClient } from "../_shared/stripe.ts";
 import {
   claimStripeWebhookInboxEvent,
@@ -11,7 +14,8 @@ import { processStripeWebhookEvent } from "../_shared/stripeWebhookProcessor.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-oxus-internal-secret",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-oxus-internal-secret",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -23,16 +27,21 @@ function json(body: unknown, status = 200) {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS")
+    return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed." }, 405);
 
   const auth = await authenticateInternalWorker(req);
   if (!auth.ok) {
-    return internalWorkerAuthErrorResponse(auth.code, crypto.randomUUID(), corsHeaders);
+    return internalWorkerAuthErrorResponse(
+      auth.code,
+      crypto.randomUUID(),
+      corsHeaders,
+    );
   }
 
   try {
-    const body = await req.json().catch(() => ({})) as {
+    const body = (await req.json().catch(() => ({}))) as {
       inbox_id?: string;
       stripe_event_id?: string;
     };
@@ -53,36 +62,66 @@ Deno.serve(async (req) => {
       return json({ error: "inbox_id or stripe_event_id is required." }, 400);
     }
 
-    const row = await claimStripeWebhookInboxEvent(admin, inboxId);
-    if (!row) return json({ error: "Webhook inbox event not found." }, 404);
+    const claim = await claimStripeWebhookInboxEvent(admin, inboxId);
+    if (claim.state === "missing") {
+      return json({ error: "Webhook inbox event not found." }, 404);
+    }
 
-    if (row.status === "processed" || row.status === "ignored") {
+    if (claim.state === "terminal") {
       return json({
         ok: true,
         duplicate: true,
-        outcome: row.status,
-        stripe_event_id: row.stripe_event_id,
+        outcome: claim.row.status,
+        stripe_event_id: claim.row.stripe_event_id,
       });
     }
 
+    if (claim.state === "busy") {
+      return json(
+        {
+          ok: true,
+          accepted: true,
+          busy: true,
+          stripe_event_id: claim.row.stripe_event_id,
+        },
+        202,
+      );
+    }
+
+    const row = claim.row;
+
     const payload = row.payload as Stripe.Event | null;
     if (!payload?.id) {
-      await markStripeWebhookInboxFailed(admin, inboxId, "Missing event payload.");
+      await markStripeWebhookInboxFailed(
+        admin,
+        inboxId,
+        "Missing event payload.",
+      );
       return json({ error: "Missing event payload." }, 422);
     }
 
     const stripe = createStripeClient();
     if (!stripe) {
-      await markStripeWebhookInboxFailed(admin, inboxId, "Stripe client unavailable.");
+      await markStripeWebhookInboxFailed(
+        admin,
+        inboxId,
+        "Stripe client unavailable.",
+      );
       return json({ error: "Stripe client unavailable." }, 500);
     }
 
     try {
       const result = await processStripeWebhookEvent(admin, payload, stripe);
-      await markStripeWebhookInboxProcessed(admin, inboxId, row.stripe_event_id, result.outcome);
+      await markStripeWebhookInboxProcessed(
+        admin,
+        inboxId,
+        row.stripe_event_id,
+        result.outcome,
+      );
       return json({ ok: true, ...result });
     } catch (processErr) {
-      const message = processErr instanceof Error ? processErr.message : "Processing failed.";
+      const message =
+        processErr instanceof Error ? processErr.message : "Processing failed.";
       await markStripeWebhookInboxFailed(admin, inboxId, message);
       return json({ error: message }, 500);
     }

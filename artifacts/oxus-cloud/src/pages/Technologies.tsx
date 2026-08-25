@@ -138,9 +138,9 @@ export function Technologies() {
       id: "actions",
       header: "",
       resizable: false,
-      className: "w-[110px] text-right",
+      defaultWidth: 110,
       cell: (item: Technology) => (
-        <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-start gap-1" onClick={(e) => e.stopPropagation()}>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(item)}><Pencil className="h-4 w-4" /></Button>
           <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => setToDelete(item)}><Trash2 className="h-4 w-4" /></Button>
         </div>

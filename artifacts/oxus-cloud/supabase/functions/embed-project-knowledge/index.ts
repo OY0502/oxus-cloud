@@ -68,6 +68,7 @@ Deno.serve(async (req) => {
       projectId,
       sourceId: body.source_id,
       force: body.force,
+      syncPinecone: true,
     });
 
     return json({

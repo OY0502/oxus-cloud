@@ -117,7 +117,7 @@ export async function assessTeamMemberDeletion(
   }
   if (summary.contractor_invoices > 0) {
     blockers.push(
-      `${summary.contractor_invoices} contractor invoice${summary.contractor_invoices === 1 ? "" : "s"}`,
+      `${summary.contractor_invoices} team member invoice${summary.contractor_invoices === 1 ? "" : "s"}`,
     );
   }
   if (summary.deals > 0) {
@@ -139,7 +139,7 @@ export async function assessTeamMemberDeletion(
   }
   if (summary.payouts > 0) will_preserve.push("Payment and payout history (blocks deletion)");
   if (summary.contractor_invoices > 0) {
-    will_preserve.push("Contractor invoice records (blocks deletion)");
+    will_preserve.push("Team member invoice records (blocks deletion)");
   }
   if (summary.deals > 0) will_preserve.push("CRM deal links (blocks deletion)");
   if (blockers.length > 0) {

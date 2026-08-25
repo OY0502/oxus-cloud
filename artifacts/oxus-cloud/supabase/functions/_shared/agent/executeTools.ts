@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
-import { resolveUserClickupForProject } from "../clickup-auth.ts";
-import { addClickupTaskComment, ensureProjectClickupSpace, updateClickupTask } from "../clickup.ts";
+import { getClickupBaseUrl, resolveUserClickupForProject } from "../clickup-auth.ts";
+import { addClickupTaskComment, ensureProjectClickupSpace, fetchClickupTask, updateClickupTask } from "../clickup.ts";
+import { removeMentionSyntax } from "./linkedReferences.ts";
+import { createProjectClickUpTask } from "../clickupTaskCreation.ts";
 import {
   createClickupDoc,
   normalizeClickupDocPayload,
@@ -46,46 +48,37 @@ export async function executeCreateClickupTaskFromToolRun(args: {
   const title = String(args.payload.title ?? "").trim();
   if (!title) throw new Error("ClickUp task title is required.");
 
-  const { clickup, link } = await loadProjectClickupLink(args);
+  const { clickup } = await resolveUserClickupForProject(args.userId, args.projectId);
+  const sourceId = String(args.payload.source_id ?? args.payload.tool_run_id ?? crypto.randomUUID());
 
-  const listId = String(
-    args.payload.list_id ??
-      (args.payload.destination as { id?: string } | undefined)?.id ??
-      link.clickup_list_id ??
-      "",
-  );
-  if (!listId) throw new Error("ClickUp task destination list is not configured.");
-
-  const body: Record<string, unknown> = {
-    name: title,
-    description: String(args.payload.description ?? ""),
-  };
-
-  if (Array.isArray(args.payload.assignee_ids) && args.payload.assignee_ids.length > 0) {
-    body.assignees = args.payload.assignee_ids;
-  }
-  if (args.payload.due_date) {
-    body.due_date = new Date(String(args.payload.due_date)).getTime();
-    body.due_date_time = args.payload.due_date_time === true;
-  }
-  const priorityMap: Record<string, number> = { urgent: 1, high: 2, medium: 3, low: 4 };
-  const pr = String(args.payload.priority ?? "medium");
-  if (priorityMap[pr]) body.priority = priorityMap[pr];
-
-  const response = await fetch(`${clickup.baseUrl}/list/${listId}/task`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${clickup.apiToken}`,
+  const created = await createProjectClickUpTask({
+    supabase: args.admin,
+    clickup,
+    webhookEndpoint: Deno.env.get("CLICKUP_WEBHOOK_ENDPOINT")?.trim(),
+    webhookSecret: Deno.env.get("CLICKUP_WEBHOOK_SECRET")?.trim(),
+    existingTaskLinkQuery: null,
+    input: {
+      projectId: args.projectId,
+      actorUserId: args.userId,
+      sourceType: "agent",
+      sourceId,
+      name: title,
+      description: String(args.payload.description ?? ""),
+      statusIdOrName: typeof args.payload.status === "string" ? args.payload.status : undefined,
+      assigneeUserIds: Array.isArray(args.payload.assignee_ids)
+        ? args.payload.assignee_ids.map((id) => String(id))
+        : [],
+      priority: typeof args.payload.priority === "string" ? args.payload.priority : null,
+      startDate: typeof args.payload.start_date === "string" ? args.payload.start_date : null,
+      dueDate: typeof args.payload.due_date === "string" ? args.payload.due_date : null,
+      timeEstimateMinutes:
+        typeof args.payload.time_estimate_minutes === "number" ? args.payload.time_estimate_minutes : null,
+      tagNames: Array.isArray(args.payload.tag_names)
+        ? args.payload.tag_names.map((tag) => String(tag))
+        : [],
+      allowCreateTags: false,
     },
-    body: JSON.stringify(body),
   });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`ClickUp task create failed (${response.status}): ${text.slice(0, 800)}`);
-
-  const task = JSON.parse(text) as { id?: string; url?: string; name?: string };
-  const taskId = String(task.id ?? "");
-  const taskUrl = typeof task.url === "string" ? task.url : `https://app.clickup.com/t/${taskId}`;
 
   await args.admin.from("project_timeline_events").insert({
     project_id: args.projectId,
@@ -93,12 +86,84 @@ export async function executeCreateClickupTaskFromToolRun(args: {
     event_type: "clickup_task_created",
     event_title: title,
     event_summary: "ClickUp task created by project agent",
-    related_clickup_task_id: taskId,
-    source_url: taskUrl,
-    metadata: { via: "agent" },
+    related_clickup_task_id: created.clickupTaskId,
+    source_url: created.clickupTaskUrl,
+    metadata: { via: "agent", warnings: created.warnings },
   });
 
-  return { clickup_task_id: taskId, url: taskUrl, title: task.name ?? title };
+  return {
+    clickup_task_id: created.clickupTaskId,
+    url: created.clickupTaskUrl,
+    title,
+    warnings: created.warnings,
+  };
+}
+
+export async function executeAddClickupCommentFromToolRun(args: {
+  admin: SupabaseClient;
+  projectId: string;
+  userId: string;
+  payload: Record<string, unknown>;
+}): Promise<Record<string, unknown>> {
+  const taskId = String(args.payload.task_id ?? "").trim();
+  const rawComment = String(args.payload.comment_text ?? "").trim();
+  if (!taskId) throw new Error("ClickUp task ID is required.");
+  if (!rawComment) throw new Error("ClickUp comment text is required.");
+
+  const allowClientMentions = args.payload.allow_client_mentions === true;
+  const comment = (allowClientMentions ? rawComment : removeMentionSyntax(rawComment)).slice(0, 8000);
+  if (!comment) throw new Error("The ClickUp comment is empty after safety checks.");
+
+  const botToken = Deno.env.get("CLICKUP_BOT_API_TOKEN")?.trim()
+    || Deno.env.get("CLICKUP_API_TOKEN")?.trim();
+  const connected = botToken ? null : await resolveUserClickupForProject(args.userId, args.projectId);
+  const clickup = botToken
+    ? { apiToken: botToken, baseUrl: getClickupBaseUrl() }
+    : connected!.clickup;
+  const task = await fetchClickupTask(clickup, taskId) as Record<string, unknown>;
+  const taskSpaceId = String(((task.space ?? {}) as Record<string, unknown>).id ?? "");
+  const { data: projectLink } = await args.admin
+    .from("project_clickup_links")
+    .select("clickup_space_id")
+    .eq("project_id", args.projectId)
+    .maybeSingle();
+  const { data: taskLink } = await args.admin
+    .from("clickup_task_links")
+    .select("id")
+    .eq("project_id", args.projectId)
+    .eq("clickup_task_id", taskId)
+    .maybeSingle();
+  const linkedSpaceId = String(projectLink?.clickup_space_id ?? "");
+  if (!taskLink && (!linkedSpaceId || taskSpaceId !== linkedSpaceId)) {
+    throw new Error("That ClickUp task is outside this project.");
+  }
+
+  const result = await addClickupTaskComment(clickup, taskId, comment);
+  const taskName = String(task.name ?? args.payload.task_name ?? taskId);
+  const taskUrl = String(task.url ?? args.payload.task_url ?? `https://app.clickup.com/t/${taskId}`);
+  await args.admin.from("project_timeline_events").insert({
+    project_id: args.projectId,
+    source_type: "clickup",
+    event_type: "clickup_comment_added",
+    event_title: `Comment added to ${taskName}`,
+    event_summary: comment.slice(0, 500),
+    related_clickup_task_id: taskId,
+    source_url: taskUrl,
+    metadata: {
+      via: "project_chat",
+      actor_mode: botToken ? "bot" : "connected_user",
+      client_mentions_allowed: allowClientMentions,
+      source_links: Array.isArray(args.payload.source_links) ? args.payload.source_links : [],
+    },
+  });
+
+  return {
+    clickup_task_id: taskId,
+    clickup_comment_id: result?.id ?? null,
+    url: taskUrl,
+    task_name: taskName,
+    actor_mode: botToken ? "bot" : "connected_user",
+  };
 }
 
 export async function executeCreateClickupDocFromToolRun(args: {

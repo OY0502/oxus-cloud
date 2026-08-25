@@ -2,12 +2,17 @@ import type { StatusVariant } from "@/components/StatusBadge";
 import type { InvoiceWithItems } from "@/lib/types";
 import { formatEUR, formatCurrency, EUR_UNAVAILABLE } from "@/lib/currency";
 import { invoiceTotalEur, invoiceAmountDueEur, invoiceAmountPaidEur, formatInvoiceEurDisplay } from "@/lib/invoiceEur";
+import {
+  classifyInvoiceFinancialState,
+  invoiceNeedsAttention as classificationNeedsAttention,
+  type InvoiceFinancialCategory,
+} from "@/lib/invoiceClassification";
 import { formatDistanceToNow } from "date-fns";
 
 /** Real current date for invoice calculations (do not hardcode). */
 export const TODAY = new Date();
 
-export type InvoiceStatus = "draft" | "sent" | "viewed" | "partial" | "overdue" | "paid";
+export type InvoiceStatus = "draft" | "sent" | "viewed" | "partial" | "overdue" | "paid" | "uncollectible" | "void";
 
 export interface InvoiceLineItem {
   description: string;
@@ -66,6 +71,8 @@ export const INVOICE_STATUS: Record<InvoiceStatus, StatusConfig> = {
   partial: { label: "Partially Paid", variant: "warning", dot: "bg-warning", accent: "text-warning" },
   overdue: { label: "Overdue", variant: "danger", dot: "bg-danger", accent: "text-danger" },
   paid: { label: "Paid", variant: "success", dot: "bg-success", accent: "text-success" },
+  uncollectible: { label: "Uncollectible", variant: "neutral", dot: "bg-muted-foreground/50", accent: "text-muted-foreground" },
+  void: { label: "Void", variant: "neutral", dot: "bg-muted-foreground/50", accent: "text-muted-foreground" },
 };
 
 export const LIFECYCLE_STAGES: InvoiceStatus[] = ["draft", "sent", "viewed", "partial", "overdue", "paid"];
@@ -88,9 +95,8 @@ export function remaining(inv: Invoice): number {
 }
 
 export function isDueSoon(inv: Invoice, withinDays = 7): boolean {
-  if (inv.status === "paid" || inv.status === "draft") return false;
-  const d = daysUntilDue(inv);
-  return d >= 0 && d <= withinDays;
+  const state = classifyInvoiceFinancialState(inv);
+  return state.countsTowardDueSoon && state.daysUntilDue != null && state.daysUntilDue >= 0 && state.daysUntilDue <= withinDays;
 }
 
 export function isAttentionDismissed(inv: Invoice): boolean {
@@ -99,18 +105,20 @@ export function isAttentionDismissed(inv: Invoice): boolean {
 
 export function needsAttention(inv: Invoice): boolean {
   if (isAttentionDismissed(inv)) return false;
-  if (inv.status === "paid") return false;
-  const stripe = (inv.stripeStatus ?? "").toLowerCase();
-  if (stripe === "void" || stripe === "deleted" || stripe === "uncollectible") return false;
-  return inv.status === "overdue" || inv.status === "draft" || isDueSoon(inv);
+  return classificationNeedsAttention(inv);
 }
 
 export function attentionRank(inv: Invoice): number {
-  if (inv.status === "overdue") return 0;
-  if (isDueSoon(inv)) return 1;
-  if (inv.status === "partial") return 2;
-  if (inv.status === "draft") return 3;
+  const category: InvoiceFinancialCategory = classifyInvoiceFinancialState(inv).category;
+  if (category === "overdue") return 0;
+  if (category === "due_soon") return 1;
+  if (category === "partial") return 2;
+  if (category === "draft") return 3;
   return 4;
+}
+
+export function invoiceFinancialCategory(inv: Invoice): InvoiceFinancialCategory {
+  return classifyInvoiceFinancialState(inv).category;
 }
 
 export function remainingEur(inv: Invoice): number | null {
@@ -246,8 +254,8 @@ function stripeLifecycle(inv: Invoice): string {
   const ss = (inv.stripeStatus ?? "").toLowerCase();
   if (ss === "draft" || inv.status === "draft") return "draft";
   if (ss === "paid" || inv.status === "paid") return "paid";
-  if (ss === "void") return "void";
-  if (ss === "uncollectible") return "uncollectible";
+  if (ss === "void" || inv.status === "void") return "void";
+  if (ss === "uncollectible" || inv.status === "uncollectible") return "uncollectible";
   if (ss === "open" || ["sent", "viewed", "overdue", "partial"].includes(inv.status)) return "open";
   return ss || inv.status;
 }

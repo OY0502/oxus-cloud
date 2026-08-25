@@ -3,25 +3,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertCircle, Globe, Loader2, RefreshCw, Sparkles } from "lucide-react";
-import { ProjectThumbnail } from "@/components/projects/ProjectThumbnail";
+import { ProjectAvatar } from "@/components/projects/ProjectAvatar";
 import { useEnrichProjectFromWebsite } from "@/hooks/api";
 import { useToast } from "@/hooks/use-toast";
 import type { ProjectWithAssignees } from "@/lib/types";
 
-/** Company logo from Firecrawl enrichment, falling back to the project thumbnail. */
+/** Project avatar using the canonical logo priority chain. */
 export function CompanyLogo({ project }: { project: ProjectWithAssignees }) {
-  const [errored, setErrored] = useState(false);
-  if (project.company_logo_url && !errored) {
-    return (
-      <img
-        src={project.company_logo_url}
-        alt={`${project.company_enriched_name ?? project.name} logo`}
-        className="h-16 w-16 rounded-2xl object-contain bg-white border border-border/60 p-1.5"
-        onError={() => setErrored(true)}
-      />
-    );
-  }
-  return <ProjectThumbnail name={project.name} imagePath={project.image_path} size="md" className="h-16 w-16 rounded-2xl" />;
+  return <ProjectAvatar project={project} size="lg" />;
 }
 
 /** Small status badge for the project header row. */

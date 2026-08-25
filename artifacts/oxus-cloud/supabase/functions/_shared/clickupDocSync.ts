@@ -3,6 +3,7 @@ import { clickupAuthorizationHeader } from "./clickup.ts";
 import type { ClickupApiEnv } from "./clickup.ts";
 import type { ClickupHierarchyRow } from "./clickupHierarchy.ts";
 import { getClickupProjectHierarchy } from "./clickupHierarchy.ts";
+import { chunkKnowledgeText } from "./knowledgeChunking.ts";
 import {
   buildClickupDocScope,
   classifyClickupDocScope,
@@ -31,7 +32,7 @@ export type ClickupDocSyncResult = {
   memory_update_queued: boolean;
   embedding_queued: boolean;
   embedding_enabled?: boolean;
-  retrieval_mode?: "vector" | "fallback";
+  retrieval_mode?: "pinecone_hybrid" | "vector" | "fallback";
   trigger_run_ids: string[];
   warnings: string[];
   source_ids: string[];
@@ -42,12 +43,6 @@ export type ClickupDocSyncResult = {
 };
 
 export type { ClickupProjectLink };
-
-function chunkText(text: string, size: number): string[] {
-  const chunks: string[] = [];
-  for (let i = 0; i < text.length; i += size) chunks.push(text.slice(i, i + size));
-  return chunks;
-}
 
 async function sha256Hex(text: string): Promise<string> {
   const data = new TextEncoder().encode(text);
@@ -179,8 +174,9 @@ async function upsertDocChunks(args: {
   markdown: string;
   isUpdate: boolean;
 }): Promise<{ created: number; updated: number; deleted_or_replaced: number }> {
-  const chunkSize = Number(Deno.env.get("AI_CHUNK_SIZE_CHARS") ?? "10000");
-  const chunks = chunkText(args.markdown, chunkSize);
+  const chunkSize = Number(Deno.env.get("AI_RETRIEVAL_CHUNK_SIZE_CHARS") ?? "2600");
+  const chunkOverlap = Number(Deno.env.get("AI_RETRIEVAL_CHUNK_OVERLAP_CHARS") ?? "320");
+  const chunks = chunkKnowledgeText(args.markdown, { targetChars: chunkSize, overlapChars: chunkOverlap });
   if (chunks.length === 0) return { created: 0, updated: 0, deleted_or_replaced: 0 };
 
   let deletedOrReplaced = 0;
@@ -194,16 +190,21 @@ async function upsertDocChunks(args: {
   }
 
   const { error } = await args.admin.from("project_knowledge_chunks").insert(
-    chunks.map((content, index) => ({
+    chunks.map((chunk, index) => ({
       project_id: args.projectId,
       source_id: args.sourceId,
       chunk_index: index,
-      content,
+      content: chunk.content,
+      section_path: chunk.sectionPath,
       category: "clickup_doc",
       metadata: {
         source_type: "clickup_doc",
         doc_title: args.docTitle,
-        char_count: content.length,
+        section_path: chunk.sectionPath,
+        char_start: chunk.charStart,
+        char_end: chunk.charEnd,
+        token_estimate: chunk.tokenEstimate,
+        char_count: chunk.content.length,
       },
     })),
   );

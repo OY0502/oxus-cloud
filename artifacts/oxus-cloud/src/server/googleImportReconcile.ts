@@ -416,6 +416,32 @@ export async function reconcileStaleGoogleImports(options?: { staleMs?: number; 
 
 
 
+    // Queued/starting without a Trigger.dev run ID past grace: mark dispatch failure, do not revive.
+    if (
+      isActive
+      && !run.trigger_run_id
+      && (run.status === "queued" || run.status === "starting")
+    ) {
+      const now = new Date().toISOString();
+      const result = await recordReconciliation(admin, run, "dispatch_failed_no_run_id", {
+        status: "failed",
+        progress_stage: "failed",
+        error_code: "GOOGLE_SYNC_DISPATCH_FAILED",
+        error: "Google sync never received a Trigger.dev run ID and was marked failed.",
+        dispatch_status: "dispatch_failed",
+        action_required: true,
+        recovery_status: "needs_attention",
+        failed_at: now,
+        completed_at: now,
+        last_heartbeat_at: now,
+      });
+      reconciled.push({ import_run_id: run.id, outcome: result.outcome, mutated: result.mutated });
+      if (result.mutated) repairs += 1;
+      continue;
+    }
+
+
+
     if (await hasActiveSourceRuns(admin, run.id)) {
 
       const result = await recordReconciliation(admin, run, "skip_active_source_runs");

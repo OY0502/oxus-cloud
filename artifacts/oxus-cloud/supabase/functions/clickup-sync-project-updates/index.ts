@@ -59,6 +59,25 @@ Deno.serve(async (req) => {
     }
     if (!body.project_id) return err("project_id is required.", 400, "INVALID_INPUT");
 
+    const { getServiceRoleSupabase: getAdmin } = await import("../_shared/clickup-auth.ts");
+    const {
+      getProjectArchiveState,
+      isProjectArchived,
+      PROJECT_ARCHIVED_SKIP_MESSAGE,
+    } = await import("../_shared/projectArchive.ts");
+    const archiveAdmin = getAdmin();
+    const projectState = await getProjectArchiveState(archiveAdmin, body.project_id);
+    if (isProjectArchived(projectState)) {
+      console.log(`[clickup-sync-project-updates] ${PROJECT_ARCHIVED_SKIP_MESSAGE}`);
+      return json({
+        skipped: true,
+        reason: PROJECT_ARCHIVED_SKIP_MESSAGE,
+        imported_events_count: 0,
+        checked_tasks_count: 0,
+        comments_imported_count: 0,
+      });
+    }
+
     const supabase = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
       auth: { persistSession: false },

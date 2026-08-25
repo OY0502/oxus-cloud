@@ -1,5 +1,27 @@
 /** Shared ClickUp API helpers for Supabase Edge Functions. */
 
+import {
+  buildOxusCreateSpacePayload,
+  CLICKUP_TEMPLATE_VERSION,
+} from "./clickupTemplate.ts";
+import {
+  auditProjectClickupSetup,
+  persistClickupSetupAudit,
+} from "./clickupProjectSetup.ts";
+import { provisionDeliveryListInSpace } from "./clickupSetupProvision.ts";
+
+export {
+  CLICKUP_PRIORITY_OPTIONS,
+  dateToClickupDue,
+  dateToClickupStart,
+  minutesToClickupTimeEstimate,
+  normalizeOxusPriority,
+  normalizeTagNames,
+  oxusPriorityToClickup,
+  parseTimeEstimateInput,
+  validateTaskDateRange,
+} from "./clickupTaskFields.ts";
+
 export const CLICKUP_WEBHOOK_EVENTS = [
   "taskCommentPosted",
   "taskCommentUpdated",
@@ -63,26 +85,6 @@ export async function clickupFetch(
   }
 }
 
-// Map OXUS priority string → ClickUp priority integer (or undefined for default).
-// ClickUp fixed scale: 1=Urgent, 2=High, 3=Normal, 4=Low.
-export function oxusPriorityToClickup(priority: string | null | undefined): number | undefined {
-  switch (priority) {
-    case "urgent": return 1;
-    case "high":   return 2;
-    case "medium": return 3;
-    case "low":    return 4;
-    default:       return undefined;
-  }
-}
-
-/** ClickUp's fixed, non-list-specific priority options for UI dropdowns. */
-export const CLICKUP_PRIORITY_OPTIONS = [
-  { value: "urgent", label: "Urgent", clickup_value: 1 },
-  { value: "high", label: "High", clickup_value: 2 },
-  { value: "medium", label: "Normal", clickup_value: 3 },
-  { value: "low", label: "Low", clickup_value: 4 },
-] as const;
-
 export type ClickupListStatus = {
   status: string;
   type?: string;
@@ -128,12 +130,6 @@ export function matchListStatus(
   if (!want) return { exists: false };
   const hit = statuses.find((s) => s.status.trim().toLowerCase() === want);
   return { matched: hit?.status, exists: !!hit };
-}
-
-/** Convert a whole-minute time estimate to ClickUp's millisecond `time_estimate`. */
-export function minutesToClickupTimeEstimate(minutes: number | null | undefined): number | undefined {
-  if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes <= 0) return undefined;
-  return Math.round(minutes * 60000);
 }
 
 /** Resolve the default/open status name for a ClickUp list (statuses are list-specific). */
@@ -218,44 +214,6 @@ export async function listClickupTeamSpaces(
     .sort((a: ClickupSpaceOption, b: ClickupSpaceOption) => a.name.localeCompare(b.name));
 }
 
-async function provisionDeliveryListInSpace(
-  clickup: { apiToken: string; teamId: string; baseUrl: string },
-  spaceId: string,
-): Promise<{ folderId: string; listId: string; folderName: string; listName: string }> {
-  const folderName = "Delivery";
-  const listName = "Tasks";
-
-  const foldersResp = await clickupFetch(clickup, `/space/${spaceId}/folder?archived=false`);
-  const folders = Array.isArray(foldersResp?.folders) ? foldersResp.folders : [];
-  let folderId = folders.find((f: { name?: string }) => f.name === folderName)?.id;
-  if (!folderId) {
-    const folderResp = await clickupFetch(clickup, `/space/${spaceId}/folder`, {
-      method: "POST",
-      body: JSON.stringify({ name: folderName }),
-    });
-    folderId = folderResp.id;
-  }
-  const folderIdStr = String(folderId);
-
-  const listsResp = await clickupFetch(clickup, `/folder/${folderIdStr}/list?archived=false`);
-  const lists = Array.isArray(listsResp?.lists) ? listsResp.lists : [];
-  let listId = lists.find((l: { name?: string }) => l.name === listName)?.id;
-  if (!listId) {
-    const listResp = await clickupFetch(clickup, `/folder/${folderIdStr}/list`, {
-      method: "POST",
-      body: JSON.stringify({ name: listName }),
-    });
-    listId = listResp.id;
-  }
-
-  return {
-    folderId: folderIdStr,
-    listId: String(listId),
-    folderName,
-    listName,
-  };
-}
-
 async function registerClickupSpaceWebhook(args: {
   clickup: { apiToken: string; teamId: string; baseUrl: string };
   spaceId: string;
@@ -331,6 +289,7 @@ async function upsertProjectClickupLink(args: {
     list_url: `https://app.clickup.com/${args.clickup.teamId}/v/li/${args.listId}`,
     status: "active",
     last_error: null,
+    clickup_template_version: CLICKUP_TEMPLATE_VERSION,
     metadata: args.webhookMetadata,
     created_by: args.createdBy,
   };
@@ -358,6 +317,65 @@ async function upsertProjectClickupLink(args: {
   });
 
   return link as Record<string, unknown>;
+}
+
+async function finalizeProjectClickupSetup(args: {
+  supabase: any;
+  clickup: { apiToken: string; teamId: string; baseUrl: string };
+  projectId: string;
+  link: Record<string, unknown>;
+  actorUserId: string;
+}): Promise<Record<string, unknown>> {
+  const audit = await auditProjectClickupSetup({
+    clickup: args.clickup,
+    link: {
+      project_id: args.projectId,
+      clickup_team_id: args.clickup.teamId,
+      clickup_space_id: (args.link.clickup_space_id as string | null) ?? null,
+      clickup_folder_id: (args.link.clickup_folder_id as string | null) ?? null,
+      clickup_list_id: (args.link.clickup_list_id as string | null) ?? null,
+      space_name: (args.link.space_name as string | null) ?? null,
+      folder_name: (args.link.folder_name as string | null) ?? null,
+      list_name: (args.link.list_name as string | null) ?? null,
+      clickup_template_version: CLICKUP_TEMPLATE_VERSION,
+    },
+    supabase: args.supabase,
+  });
+
+  const now = new Date().toISOString();
+  await args.supabase
+    .from("project_clickup_links")
+    .update({
+      clickup_template_version: CLICKUP_TEMPLATE_VERSION,
+      clickup_setup_status: audit.status,
+      clickup_setup_audited_at: now,
+      clickup_setup_updated_at: now,
+      clickup_setup_snapshot: audit,
+      clickup_setup_warnings: audit.warnings,
+      clickup_setup_error: null,
+      clickup_setup_updated_by: args.actorUserId,
+    })
+    .eq("project_id", args.projectId);
+
+  await persistClickupSetupAudit({
+    supabase: args.supabase,
+    projectId: args.projectId,
+    link: {
+      project_id: args.projectId,
+      clickup_team_id: args.clickup.teamId,
+      clickup_space_id: (args.link.clickup_space_id as string | null) ?? null,
+      clickup_folder_id: (args.link.clickup_folder_id as string | null) ?? null,
+      clickup_list_id: (args.link.clickup_list_id as string | null) ?? null,
+      space_name: (args.link.space_name as string | null) ?? null,
+      folder_name: (args.link.folder_name as string | null) ?? null,
+      list_name: (args.link.list_name as string | null) ?? null,
+      clickup_template_version: CLICKUP_TEMPLATE_VERSION,
+    },
+    audit,
+    actorUserId: args.actorUserId,
+  });
+
+  return { ...args.link, clickup_setup_status: audit.status, clickup_setup_snapshot: audit };
 }
 
 export async function linkProjectToExistingClickupSpace(args: {
@@ -421,7 +439,15 @@ export async function linkProjectToExistingClickupSpace(args: {
     timelineSummary: `Space: ${spaceName} → ${folderName} → ${listName}`,
   });
 
-  return { link, created: true };
+  const finalized = await finalizeProjectClickupSetup({
+    supabase,
+    clickup,
+    projectId,
+    link,
+    actorUserId: createdBy,
+  });
+
+  return { link: finalized, created: true };
 }
 
 /**
@@ -495,7 +521,7 @@ export async function ensureProjectClickupSpace(args: {
   try {
     const spaceResp = await clickupFetch(clickup, `/team/${clickup.teamId}/space`, {
       method: "POST",
-      body: JSON.stringify({ name: spaceName, multiple_assignees: true, features: {} }),
+      body: JSON.stringify(buildOxusCreateSpacePayload(spaceName)),
     });
     spaceId = String(spaceResp.id);
   } catch (err) {
@@ -553,18 +579,15 @@ export async function ensureProjectClickupSpace(args: {
     timelineSummary: `Space: ${spaceName} → ${folderName} → ${listName}`,
   });
 
-  return { link, created: true };
-}
+  const finalized = await finalizeProjectClickupSetup({
+    supabase,
+    clickup,
+    projectId,
+    link,
+    actorUserId: createdBy,
+  });
 
-/** Convert YYYY-MM-DD (or ISO datetime) to ClickUp due_date ms timestamp. */
-export function dateToClickupDue(dateStr: string, dueDateTime = false): number {
-  if (dueDateTime) return new Date(dateStr).getTime();
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr.trim());
-  if (match) {
-    const [, y, m, d] = match;
-    return Date.UTC(Number(y), Number(m) - 1, Number(d), 23, 59, 59, 999);
-  }
-  return new Date(dateStr).getTime();
+  return { link: finalized, created: true };
 }
 
 export async function validateCachedAssigneeIds(

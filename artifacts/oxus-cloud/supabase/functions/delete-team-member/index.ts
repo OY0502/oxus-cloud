@@ -49,12 +49,6 @@ Deno.serve(async (req) => {
     if (!person) return json({ error: "Team member not found." }, 404);
 
     const assessment = await assessTeamMemberDeletion(admin, person);
-    const engagement =
-      person.employment_type === "employee"
-        ? "Employee"
-        : person.employment_type === "contractor" || person.type === "contractor"
-          ? "Contractor"
-          : person.type;
 
     if (body.action === "check_dependencies" || !body.action) {
       return json({
@@ -62,7 +56,6 @@ Deno.serve(async (req) => {
           id: person.id,
           name: person.name,
           email: person.email,
-          engagement,
           person_status: person.person_status,
         },
         ...assessment,

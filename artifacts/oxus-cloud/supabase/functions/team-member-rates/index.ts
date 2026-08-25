@@ -3,7 +3,11 @@ import {
   InternalOxusAuthError,
   internalOxusAuthErrorResponse,
 } from "../_shared/internalOxusAuth.ts";
-import { validateCurrency } from "../_shared/teamMemberRates.ts";
+import {
+  validateCurrency,
+  enrichTeamMemberRates,
+  parseRateConflictError,
+} from "../_shared/teamMemberRates.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -26,7 +30,69 @@ type Action =
   | "set_default"
   | "delete"
   | "check_usage"
-  | "resolve";
+  | "resolve"
+  | "check_conflicts";
+
+function asProjectIds(body: Record<string, unknown>): string[] | null {
+  if (Array.isArray(body.project_ids)) {
+    return body.project_ids.filter((id): id is string => typeof id === "string" && !!id);
+  }
+  if (typeof body.project_id === "string" && body.project_id) {
+    return [body.project_id];
+  }
+  return null;
+}
+
+async function loadEnrichedRates(
+  db: Awaited<ReturnType<typeof assertSuperAdminUser>>["supabase"],
+  personId: string,
+) {
+  const { data: rates, error: ratesErr } = await db
+    .from("team_member_rates")
+    .select("*")
+    .eq("person_id", personId)
+    .order("effective_from", { ascending: false });
+  if (ratesErr) throw new Error(ratesErr.message);
+
+  const rateIds = (rates ?? []).map((r) => r.id);
+  if (rateIds.length === 0) return [];
+
+  const { data: links, error: linksErr } = await db
+    .from("team_member_rate_projects")
+    .select("rate_id, project_id, projects(id, name, archived_at)")
+    .in("rate_id", rateIds);
+  if (linksErr) throw new Error(linksErr.message);
+
+  return enrichTeamMemberRates(
+    (rates ?? []) as Parameters<typeof enrichTeamMemberRates>[0],
+    (links ?? []) as Parameters<typeof enrichTeamMemberRates>[1],
+  );
+}
+
+async function loadEnrichedRate(
+  db: Awaited<ReturnType<typeof assertSuperAdminUser>>["supabase"],
+  rateId: string,
+) {
+  const { data: rate, error } = await db
+    .from("team_member_rates")
+    .select("*")
+    .eq("id", rateId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!rate) throw new Error("Rate not found");
+
+  const { data: links, error: linksErr } = await db
+    .from("team_member_rate_projects")
+    .select("rate_id, project_id, projects(id, name, archived_at)")
+    .eq("rate_id", rateId);
+  if (linksErr) throw new Error(linksErr.message);
+
+  const [enriched] = enrichTeamMemberRates(
+    [rate] as Parameters<typeof enrichTeamMemberRates>[0],
+    (links ?? []) as Parameters<typeof enrichTeamMemberRates>[1],
+  );
+  return enriched;
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -36,8 +102,8 @@ Deno.serve(async (req) => {
     const auth = await assertSuperAdminUser(req);
     const body = await req.json() as Record<string, unknown>;
     const action = body.action as Action;
-    // Use the caller's JWT client for RPCs so auth.uid() and is_super_admin() work inside SECURITY DEFINER functions.
     const db = auth.supabase;
+    const projectIds = asProjectIds(body);
 
     switch (action) {
       case "create": {
@@ -48,16 +114,22 @@ Deno.serve(async (req) => {
           p_rate_type: body.rate_type,
           p_amount: body.amount,
           p_currency: currency,
-          p_project_id: body.project_id ?? null,
+          p_project_id: null,
           p_work_type: body.work_type ?? null,
           p_is_default: body.is_default ?? false,
           p_effective_from: body.effective_from ?? new Date().toISOString().slice(0, 10),
           p_effective_to: body.effective_to ?? null,
           p_description: body.description ?? null,
           p_notes: body.notes ?? null,
+          p_project_ids: projectIds?.length ? projectIds : null,
         });
-        if (error) throw new Error(error.message);
-        return json({ rate: data });
+        if (error) {
+          const conflict = parseRateConflictError(error.message);
+          if (conflict) return json(conflict, 409);
+          throw new Error(error.message);
+        }
+        const rate = await loadEnrichedRate(db, (data as { id: string }).id);
+        return json({ rate });
       }
 
       case "update": {
@@ -69,16 +141,22 @@ Deno.serve(async (req) => {
           p_rate_type: body.rate_type ?? null,
           p_amount: body.amount ?? null,
           p_currency: body.currency ?? null,
-          p_project_id: body.project_id ?? null,
+          p_project_id: null,
           p_work_type: body.work_type ?? null,
           p_is_default: body.is_default ?? null,
           p_effective_from: body.effective_from ?? null,
           p_effective_to: body.effective_to ?? null,
           p_notes: body.notes ?? null,
           p_allow_used: body.allow_used ?? false,
+          p_project_ids: projectIds,
         });
-        if (error) throw new Error(error.message);
-        return json({ rate: data });
+        if (error) {
+          const conflict = parseRateConflictError(error.message);
+          if (conflict) return json(conflict, 409);
+          throw new Error(error.message);
+        }
+        const rate = await loadEnrichedRate(db, (data as { id: string }).id);
+        return json({ rate });
       }
 
       case "end": {
@@ -87,7 +165,8 @@ Deno.serve(async (req) => {
           p_effective_to: body.effective_to ?? new Date().toISOString().slice(0, 10),
         });
         if (error) throw new Error(error.message);
-        return json({ rate: data });
+        const rate = await loadEnrichedRate(db, (data as { id: string }).id);
+        return json({ rate });
       }
 
       case "replace": {
@@ -103,7 +182,8 @@ Deno.serve(async (req) => {
           p_notes: body.notes ?? null,
         });
         if (error) throw new Error(error.message);
-        return json({ rate: data });
+        const rate = await loadEnrichedRate(db, (data as { id: string }).id);
+        return json({ rate });
       }
 
       case "set_default": {
@@ -111,7 +191,8 @@ Deno.serve(async (req) => {
           p_rate_id: body.rate_id,
         });
         if (error) throw new Error(error.message);
-        return json({ rate: data });
+        const rate = await loadEnrichedRate(db, (data as { id: string }).id);
+        return json({ rate });
       }
 
       case "delete": {
@@ -130,20 +211,28 @@ Deno.serve(async (req) => {
         return json({ is_used: !!data });
       }
 
+      case "check_conflicts": {
+        const { data, error } = await db.rpc("check_team_member_rate_conflicts", {
+          p_id: body.rate_id ?? null,
+          p_person_id: body.person_id,
+          p_project_ids: projectIds?.length ? projectIds : null,
+          p_work_type: body.work_type ?? null,
+          p_is_default: body.is_default ?? false,
+          p_effective_from: body.effective_from ?? new Date().toISOString().slice(0, 10),
+          p_effective_to: body.effective_to ?? null,
+        });
+        if (error) throw new Error(error.message);
+        return json(data);
+      }
+
       case "resolve": {
         const personId = body.person_id as string;
         if (!personId) return json({ error: "person_id is required." }, 400);
 
-        const { data: rates, error: ratesErr } = await db
-          .from("team_member_rates")
-          .select("*")
-          .eq("person_id", personId)
-          .order("effective_from", { ascending: false });
-        if (ratesErr) throw new Error(ratesErr.message);
-
+        const enrichedRates = await loadEnrichedRates(db, personId);
         const { resolveTeamMemberRate } = await import("../_shared/teamMemberRates.ts");
         const result = resolveTeamMemberRate({
-          rates: (rates ?? []) as Parameters<typeof resolveTeamMemberRate>[0]["rates"],
+          rates: enrichedRates,
           projectId: (body.project_id as string) ?? null,
           workType: (body.work_type as string) ?? null,
           effectiveDate: (body.effective_date as string) ?? undefined,

@@ -28,7 +28,7 @@ function dayLabel(date: Date): string {
   return format(date, "MMM d, yyyy");
 }
 
-function sourceBadge(source: ProjectTimelineSourceType) {
+function sourceBadge(source: ProjectTimelineSourceType, compact = false) {
   const labels: Record<string, string> = {
     slack: "Slack",
     clickup: "ClickUp",
@@ -37,82 +37,116 @@ function sourceBadge(source: ProjectTimelineSourceType) {
     ai: "AI",
   };
   return (
-    <Badge variant="outline" className="text-[9px] h-4 px-1 capitalize">
+    <Badge variant="outline" className={compact ? "h-5 px-1.5 text-[11px] font-medium capitalize" : "h-4 px-1 text-[9px] capitalize"}>
       {labels[source] ?? source.replace(/_/g, " ")}
     </Badge>
   );
 }
 
-function TimelineRow({ event }: { event: ProjectTimelineEvent }) {
-  const [expanded, setExpanded] = useState(false);
+function eventHref(event: ProjectTimelineEvent): string {
+  if (event.source_url) return event.source_url;
+  if (event.related_clickup_task_id) {
+    return `https://app.clickup.com/t/${encodeURIComponent(event.related_clickup_task_id)}`;
+  }
+  if (event.related_slack_channel_id) {
+    const metadata = event.metadata && typeof event.metadata === "object" && !Array.isArray(event.metadata)
+      ? event.metadata as Record<string, unknown>
+      : {};
+    const rawTs = typeof metadata.slack_ts === "string"
+      ? metadata.slack_ts
+      : typeof metadata.slack_thread_ts === "string"
+        ? metadata.slack_thread_ts
+        : "";
+    const messagePath = rawTs ? `/p${rawTs.replace(".", "")}` : "";
+    return `https://slack.com/archives/${encodeURIComponent(event.related_slack_channel_id)}${messagePath}`;
+  }
+  return `/projects/${event.project_id}`;
+}
+
+function informativeEventText(event: ProjectTimelineEvent): string {
+  const summary = event.event_summary?.trim();
+  if (!summary) return event.event_title;
+
+  if (event.source_type === "clickup" && /status/i.test(event.event_type)) {
+    const match = summary.match(/^"([^"]+)" status changed from "([^"]+)"\s*(?:→|to)\s*"([^"]+)"/i);
+    if (match) return `Task “${match[1]}” changed from ${match[2]} to ${match[3]}.`;
+  }
+
+  if (event.source_type === "clickup" && /comment/i.test(event.event_type)) {
+    const taskName = summary.match(/(?:Comment (?:on|posted on|updated on)) "([^"]+)"/i)?.[1];
+    const comment = event.event_body?.trim();
+    if (comment && taskName) {
+      const preview = comment.length > 180 ? `${comment.slice(0, 180)}…` : comment;
+      const verb = /updated/i.test(event.event_type) ? "updated" : "added";
+      return `Comment “${preview}” was ${verb} on task “${taskName}”.`;
+    }
+  }
+
+  return summary.replace(/\s+by\s+[^.]+$/i, "").replace(/\s*→\s*/g, " to ");
+}
+
+function TimelineRow({ event, compact = false }: { event: ProjectTimelineEvent; compact?: boolean }) {
   const when = event.source_created_at ?? event.created_at;
   const metadata =
     event.metadata && typeof event.metadata === "object" && !Array.isArray(event.metadata)
       ? (event.metadata as Record<string, unknown>)
       : {};
+  const href = eventHref(event);
+  const external = /^https?:\/\//i.test(href);
 
   return (
-    <div className="py-2 border-b border-border/60 last:border-0">
+    <a
+      href={href}
+      target={external ? "_blank" : undefined}
+      rel={external ? "noreferrer" : undefined}
+      className={compact
+        ? "group block border-b border-border/60 py-2.5 transition-colors last:border-0 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info/30"
+        : "group block border-b border-border/60 py-2 transition-colors last:border-0 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info/30"}
+      aria-label={`Open activity: ${informativeEventText(event)}`}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-1">
-            {sourceBadge(event.source_type)}
+            {sourceBadge(event.source_type, compact)}
             {(event.priority === "high" || event.priority === "urgent") && (
               <Badge variant="destructive" className="text-[9px] h-4 px-1 capitalize">
                 {event.priority}
               </Badge>
             )}
-            {event.signal_type && (
+            {event.signal_type && !compact && (
               <Badge variant="secondary" className="text-[9px] h-4 px-1">
                 {event.signal_type.replace(/_/g, " ")}
               </Badge>
             )}
           </div>
-          <p className="text-xs font-medium leading-snug">{event.event_title}</p>
-          {event.event_summary && (
-            <p className="text-[11px] text-muted-foreground line-clamp-2">{event.event_summary}</p>
-          )}
+          <p className={compact ? "line-clamp-3 text-sm font-medium leading-5" : "text-xs font-medium leading-snug"}>
+            {informativeEventText(event)}
+          </p>
         </div>
-        {event.source_url && (
-          <a
-            href={event.source_url}
-            target="_blank"
-            rel="noreferrer"
-            className="shrink-0 text-muted-foreground hover:text-foreground"
-            aria-label="Open source"
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-          </a>
-        )}
+        <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
       </div>
-      <p className="text-[10px] text-muted-foreground mt-1">
+      <p className={compact ? "mt-1 text-xs text-muted-foreground" : "mt-1 text-[10px] text-muted-foreground"}>
         {format(new Date(when), "h:mm a")} · {formatDistanceToNow(new Date(when), { addSuffix: true })}
         {event.actor_name && ` · ${event.actor_name}`}
       </p>
-      {(event.event_body || Object.keys(metadata).length > 0) && (
-        <button
-          type="button"
-          className="mt-1 text-[10px] text-muted-foreground hover:text-foreground"
-          onClick={() => setExpanded((value) => !value)}
-        >
-          {expanded ? "Hide details" : "View details"}
-        </button>
+      {!compact && (event.event_body || Object.keys(metadata).length > 0) && (
+        <span className="mt-1 inline-block text-[10px] text-muted-foreground">
+          Open source for details
+        </span>
       )}
-      {expanded && (
-        <div className="mt-1 rounded-md bg-muted/30 p-2 text-[11px] space-y-1">
-          {event.event_body && (
-            <p className="whitespace-pre-wrap text-foreground/90">{event.event_body}</p>
-          )}
-          {typeof metadata.channel_name === "string" && (
-            <p className="text-muted-foreground">Channel: #{metadata.channel_name}</p>
-          )}
-        </div>
-      )}
-    </div>
+    </a>
   );
 }
 
-export function ProjectTimelinePanel({ projectId, limit = 12 }: { projectId: string; limit?: number }) {
+export function ProjectTimelinePanel({
+  projectId,
+  limit = 12,
+  compact = false,
+}: {
+  projectId: string;
+  limit?: number;
+  compact?: boolean;
+}) {
   const [sourceFilter, setSourceFilter] = useState<ProjectTimelineFilters["sourceType"]>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const filters = useMemo<ProjectTimelineFilters>(
@@ -120,7 +154,23 @@ export function ProjectTimelinePanel({ projectId, limit = 12 }: { projectId: str
     [sourceFilter, typeFilter],
   );
   const { data: timeline = [], isLoading, refetch, isFetching } = useProjectTimelineEvents(projectId, filters);
-  const events = timeline.slice(0, limit);
+  const distinctTimeline = useMemo(() => {
+    const seen = new Set<string>();
+    return timeline.filter((event) => {
+      const key = event.source_type === "clickup"
+        ? [
+            event.related_clickup_task_id ?? event.source_id,
+            event.event_type,
+            event.source_created_at ?? event.created_at,
+            event.event_body ?? "",
+          ].join("|")
+        : event.id;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [timeline]);
+  const events = distinctTimeline.slice(0, limit);
 
   const groups = useMemo(() => {
     const map = new Map<string, ProjectTimelineEvent[]>();
@@ -133,8 +183,8 @@ export function ProjectTimelinePanel({ projectId, limit = 12 }: { projectId: str
   }, [events]);
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-start justify-between gap-2">
+    <div className={compact ? "flex min-h-0 flex-1 flex-col gap-2" : "space-y-3"}>
+      {!compact && <div className="flex items-start justify-between gap-2">
         <div>
           <h4 className="text-sm font-semibold">Project Timeline</h4>
           <p className="text-xs text-muted-foreground">
@@ -150,15 +200,15 @@ export function ProjectTimelinePanel({ projectId, limit = 12 }: { projectId: str
         >
           <RefreshCw className={`h-3 w-3 ${isFetching ? "animate-spin" : ""}`} />
         </Button>
-      </div>
+      </div>}
 
-      <div className="flex flex-wrap gap-1">
+      <div className={`flex flex-wrap gap-1 ${compact ? "shrink-0" : ""}`}>
         {SOURCE_FILTERS.map((filter) => (
           <Button
             key={filter.id ?? "all"}
             size="sm"
             variant={sourceFilter === filter.id ? "secondary" : "outline"}
-            className="h-6 px-2 text-[10px]"
+            className={compact ? "h-7 px-2.5 text-xs" : "h-6 px-2 text-[10px]"}
             onClick={() => setSourceFilter(filter.id)}
           >
             {filter.label}
@@ -166,7 +216,7 @@ export function ProjectTimelinePanel({ projectId, limit = 12 }: { projectId: str
         ))}
       </div>
 
-      <div className="flex flex-wrap gap-1">
+      {!compact && <div className="flex flex-wrap gap-1">
         {TYPE_FILTERS.map((filter) => (
           <Button
             key={filter.id}
@@ -178,7 +228,7 @@ export function ProjectTimelinePanel({ projectId, limit = 12 }: { projectId: str
             {filter.label}
           </Button>
         ))}
-      </div>
+      </div>}
 
       {isLoading ? (
         <p className="text-xs text-muted-foreground">Loading…</p>
@@ -191,20 +241,20 @@ export function ProjectTimelinePanel({ projectId, limit = 12 }: { projectId: str
           </p>
         </div>
       ) : (
-        <div className="rounded-lg border border-border bg-card px-3 py-1 max-h-[420px] overflow-y-auto">
+        <div className={compact ? "min-h-0 flex-1 overflow-y-auto border-t border-border/70" : "max-h-[420px] overflow-y-auto rounded-lg border border-border bg-card px-3 py-1"}>
           {groups.map(([label, groupEvents]) => (
             <div key={label}>
-              <p className="sticky top-0 bg-card py-1 section-label text-[10px]">
+              <p className={compact ? "pt-3 text-xs font-medium text-muted-foreground" : "sticky top-0 bg-card py-1 section-label text-[10px]"}>
                 {label}
               </p>
               {groupEvents.map((event) => (
-                <TimelineRow key={event.id} event={event} />
+                <TimelineRow key={event.id} event={event} compact={compact} />
               ))}
             </div>
           ))}
-          {timeline.length > limit && (
+          {distinctTimeline.length > limit && (
             <p className="text-[10px] text-muted-foreground py-2 text-center">
-              +{timeline.length - limit} older event(s)
+              +{distinctTimeline.length - limit} older event(s)
             </p>
           )}
         </div>

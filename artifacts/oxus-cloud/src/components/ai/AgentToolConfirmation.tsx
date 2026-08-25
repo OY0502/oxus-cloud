@@ -1,8 +1,13 @@
 import React, { useMemo, useState } from "react";
-import { AlertCircle, Check, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, ChevronUp, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  ClickupTaskConfirmationFields,
+  clickupTaskFormToPayload,
+  type ClickupTaskFormValues,
+} from "@/components/clickup/ClickupTaskConfirmationFields";
 import { isActionableAgentToolRun, isStaleAgentToolRun } from "@/lib/agentToolRunUtils";
 import {
   CLICKUP_DOC_MIN_CONTENT_LENGTH,
@@ -31,6 +36,7 @@ type Props = {
   ) => Promise<void>;
   onCancelWorkflow?: (workflow: WorkflowGroup) => Promise<void>;
   agentRunId?: string;
+  presentation?: "default" | "chat";
 };
 
 export function AgentToolConfirmationList({
@@ -41,6 +47,7 @@ export function AgentToolConfirmationList({
   onConfirmWorkflow,
   onCancelWorkflow,
   agentRunId,
+  presentation = "default",
 }: Props) {
   const scoped = useMemo(
     () => (agentRunId ? toolRuns.filter((r) => r.agent_run_id === agentRunId) : toolRuns),
@@ -60,7 +67,7 @@ export function AgentToolConfirmationList({
   const runningCount = visible.filter((r) => r.status === "running" && !isStaleAgentToolRun(r)).length;
 
   return (
-    <div className="space-y-3">
+    <div className={presentation === "chat" ? "space-y-2.5" : "space-y-3"}>
       <p className="text-sm font-semibold text-foreground">
         {runningCount > 0
           ? "Tool actions in progress"
@@ -78,6 +85,7 @@ export function AgentToolConfirmationList({
           onCancelWorkflow={onCancelWorkflow}
           onConfirm={onConfirm}
           onCancel={onCancel}
+          presentation={presentation}
         />
       ))}
 
@@ -88,6 +96,7 @@ export function AgentToolConfirmationList({
           busy={busy}
           onConfirm={onConfirm}
           onCancel={onCancel}
+          presentation={presentation}
         />
       ))}
     </div>
@@ -101,6 +110,7 @@ function WorkflowConfirmationGroup({
   onCancelWorkflow,
   onConfirm,
   onCancel,
+  presentation,
 }: {
   workflow: WorkflowGroup;
   busy?: boolean;
@@ -108,6 +118,7 @@ function WorkflowConfirmationGroup({
   onCancelWorkflow?: Props["onCancelWorkflow"];
   onConfirm: Props["onConfirm"];
   onCancel: Props["onCancel"];
+  presentation: NonNullable<Props["presentation"]>;
 }) {
   const [stepOverrides, setStepOverrides] = useState<Record<string, Record<string, unknown>>>({});
   const isRunning = workflow.runs.some((r) => r.status === "running" && !isStaleAgentToolRun(r));
@@ -161,6 +172,7 @@ function WorkflowConfirmationGroup({
             }}
             onConfirm={onConfirm}
             onCancel={onCancel}
+            presentation={presentation}
           />
         ))}
       </div>
@@ -210,6 +222,7 @@ function AgentToolConfirmationCard({
   stepKey,
   hideActions,
   onOverrideChange,
+  presentation = "default",
 }: {
   toolRun: AgentToolRun;
   busy?: boolean;
@@ -220,18 +233,20 @@ function AgentToolConfirmationCard({
   stepKey?: string;
   hideActions?: boolean;
   onOverrideChange?: (overrides: Record<string, unknown>) => void;
+  presentation?: NonNullable<Props["presentation"]>;
 }) {
   const payload = (toolRun.input_payload ?? {}) as Record<string, unknown>;
   const [title, setTitle] = useState(() => docTitleFromPayload(payload));
   const [description, setDescription] = useState(() => docContentFromPayload(payload));
-  const [dueDate, setDueDate] = useState(payloadField(payload, "due_date_hint") || payloadField(payload, "due_date"));
-  const [priority, setPriority] = useState(payloadField(payload, "priority") || "medium");
+  const [commentText, setCommentText] = useState(() => payloadField(payload, "comment_text"));
+  const [taskValues, setTaskValues] = useState<ClickupTaskFormValues>(() => taskValuesFromPayload(payload));
+  const [expanded, setExpanded] = useState(presentation !== "chat");
 
   React.useEffect(() => {
     setTitle(docTitleFromPayload(payload));
     setDescription(docContentFromPayload(payload));
-    setDueDate(payloadField(payload, "due_date_hint") || payloadField(payload, "due_date"));
-    setPriority(payloadField(payload, "priority") || "medium");
+    setCommentText(payloadField(payload, "comment_text"));
+    setTaskValues(taskValuesFromPayload(payload));
   }, [toolRun.id, toolRun.status, toolRun.input_payload]);
 
   const emitOverrides = (next: Record<string, unknown>) => {
@@ -240,6 +255,7 @@ function AgentToolConfirmationCard({
 
   const isDoc = toolRun.tool_name === "create_clickup_doc";
   const isTask = toolRun.tool_name === "create_clickup_task";
+  const isComment = toolRun.tool_name === "add_clickup_comment";
   const isLink = toolRun.tool_name === "link_clickup_doc_to_task";
   const isFolderTool = [
     "create_clickup_folder",
@@ -258,18 +274,26 @@ function AgentToolConfirmationCard({
   const docContentMissing = isDoc && !isRunning && !isClickupDocContentValid(description);
   const docContentTooShort = isDoc && !isRunning && description.trim().length > 0 && !isClickupDocContentValid(description);
   const canConfirmDoc = !isDoc || isClickupDocContentValid(description);
-  const canConfirmTask = !isTask || title.trim().length > 0;
-  const canConfirm = canConfirmDoc && canConfirmTask;
+  const taskPayload = useMemo(
+    () => (isTask ? clickupTaskFormToPayload(taskValues) : null),
+    [isTask, taskValues],
+  );
+  const canConfirmTask = !isTask || (!!taskPayload?.title && !taskPayload.error);
+  const canConfirmComment = !isComment || commentText.trim().length > 0;
+  const canConfirm = canConfirmDoc && canConfirmTask && canConfirmComment;
+  const showEditor = presentation !== "chat" || expanded || isFailed || isStaleRunning;
 
   React.useEffect(() => {
     if (!onOverrideChange) return;
     if (isDoc) onOverrideChange({ title, content_markdown: description });
-    else if (isTask) onOverrideChange({ title, description, due_date: dueDate || undefined, priority });
-  }, [toolRun.id, title, description, dueDate, priority, isDoc, isTask, onOverrideChange]);
+    else if (isTask && taskPayload && !taskPayload.error) onOverrideChange(taskPayload);
+    else if (isComment) onOverrideChange({ comment_text: commentText });
+  }, [toolRun.id, title, description, commentText, taskValues, taskPayload, isDoc, isTask, isComment, onOverrideChange]);
 
   const buildOverrides = (): Record<string, unknown> => {
     if (isDoc) return { title, content_markdown: description };
-    if (isTask) return { title, description, due_date: dueDate || undefined, priority };
+    if (isTask) return taskPayload ?? {};
+    if (isComment) return { comment_text: commentText };
     return {};
   };
 
@@ -281,10 +305,12 @@ function AgentToolConfirmationCard({
         isFailed || isStaleRunning
           ? "border-destructive/30 bg-destructive/5"
           : isRunning
-            ? "border-soft-violet/30 bg-soft-violet/5"
+            ? "border-info/30 bg-info-muted/45"
             : compact
               ? ""
-              : "border-amber-500/30 bg-amber-500/5"
+              : presentation === "chat"
+                ? "border-border border-l-2 border-l-warning bg-card"
+                : "border-warning/30 bg-warning-muted/45"
       }`}
     >
       <div className="flex items-center justify-between gap-2">
@@ -292,7 +318,7 @@ function AgentToolConfirmationCard({
           {stepIndex != null && <span className="text-muted-foreground mr-1.5">Step {stepIndex}.</span>}
           {toolDisplayName(toolRun.tool_name)}
         </p>
-        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{toolRun.status.replace(/_/g, " ")}</span>
+        <span className="rounded-full bg-warning-muted px-2 py-0.5 text-xs font-medium text-warning-foreground">{toolRun.status.replace(/_/g, " ")}</span>
       </div>
 
       {isRunning && (
@@ -336,17 +362,52 @@ function AgentToolConfirmationCard({
         </div>
       )}
 
-      {(isTask || isDoc) && !isRunning && (
+      {(isTask || isDoc || isComment) && !isRunning && !showEditor && (
+        <div className="space-y-2">
+          <div>
+            <p className="text-sm font-semibold leading-5 text-foreground">
+              {isComment
+                ? `Comment on ${payloadField(payload, "task_name") || "ClickUp task"}`
+                : (isTask ? taskValues.title : title) || "Untitled action"}
+            </p>
+            {(isComment ? commentText : isTask ? taskValues.description : description) && (
+              <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                {isComment ? commentText : isTask ? taskValues.description : description}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            {destination?.path && <span className="truncate">{destination.path}</span>}
+            {isTask && taskValues.priority && <span className="capitalize">{taskValues.priority} priority</span>}
+            {isTask && taskValues.dueDate && <span>Due {taskValues.dueDate.slice(0, 10)}</span>}
+            {isComment && payload.allow_client_mentions !== true && <span>Client mentions off</span>}
+          </div>
+          <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-1.5 text-xs text-muted-foreground" onClick={() => setExpanded(true)}>
+            Review & edit <ChevronDown className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      )}
+
+      {(isTask || isDoc || isComment) && !isRunning && showEditor && (
         <>
-          <Input
-            value={title}
-            onChange={(e) => {
-              setTitle(e.target.value);
-              emitOverrides(isDoc ? { title: e.target.value, content_markdown: description } : { title: e.target.value, description });
-            }}
-            placeholder="Title"
-            className="h-8 text-sm"
-          />
+          {presentation === "chat" && !isFailed && !isStaleRunning && (
+            <div className="flex justify-end">
+              <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-1.5 text-xs text-muted-foreground" onClick={() => setExpanded(false)}>
+                Collapse <ChevronUp className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
+          {isDoc && (
+            <Input
+              value={title}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                emitOverrides({ title: e.target.value, content_markdown: description });
+              }}
+              placeholder="Title"
+              className="h-8 text-sm"
+            />
+          )}
           {isDoc && destination?.path && (
             <div className="rounded-md border border-border/60 bg-muted/30 p-2 text-xs space-y-1">
               <p className="font-medium text-foreground">Suggested destination</p>
@@ -360,29 +421,24 @@ function AgentToolConfirmationCard({
               {sourceContext.request_text.length > 160 ? "…" : ""}
             </p>
           )}
-          {isTask && destination?.path && (
-            <p className="text-xs text-muted-foreground">Destination list: {destination.path}</p>
-          )}
           {docContentMissing && (
             <div className="flex gap-2 text-xs text-destructive">
               <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
               <p>Document content was not generated. Re-run the agent or paste markdown before confirming.</p>
             </div>
           )}
-          <Textarea
-            value={description}
-            onChange={(e) => {
-              setDescription(e.target.value);
-              emitOverrides(
-                isDoc
-                  ? { title, content_markdown: e.target.value }
-                  : { title, description: e.target.value, due_date: dueDate || undefined, priority },
-              );
-            }}
-            rows={isDoc ? 8 : 3}
-            placeholder={isDoc ? "Markdown document content" : "Description"}
-            className={`text-sm ${docContentMissing ? "border-destructive/50" : ""}`}
-          />
+          {isDoc && (
+            <Textarea
+              value={description}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                emitOverrides({ title, content_markdown: e.target.value });
+              }}
+              rows={8}
+              placeholder="Markdown document content"
+              className={`text-sm ${docContentMissing ? "border-destructive/50" : ""}`}
+            />
+          )}
           {isDoc && (
             <p className={`text-[10px] ${docContentTooShort ? "text-amber-600" : "text-muted-foreground"}`}>
               {description.trim().length} characters
@@ -390,24 +446,48 @@ function AgentToolConfirmationCard({
             </p>
           )}
           {isTask && (
-            <div className="flex flex-wrap gap-2">
-              <Input
-                type="date"
-                value={dueDate.slice(0, 10)}
-                onChange={(e) => {
-                  setDueDate(e.target.value);
-                  emitOverrides({ title, description, due_date: e.target.value || undefined, priority });
-                }}
-                className="h-8 text-sm w-40"
+            <>
+              <ClickupTaskConfirmationFields
+                projectId={toolRun.project_id}
+                open={showEditor}
+                values={taskValues}
+                onChange={setTaskValues}
+                busy={busy}
               />
-              <Input
-                value={priority}
-                onChange={(e) => {
-                  setPriority(e.target.value);
-                  emitOverrides({ title, description, due_date: dueDate || undefined, priority: e.target.value });
+              {taskPayload?.error && <p className="text-xs text-destructive">{taskPayload.error}</p>}
+            </>
+          )}
+          {isComment && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-muted/25 px-3 py-2 text-xs">
+                <div className="min-w-0">
+                  <p className="font-medium text-foreground">{payloadField(payload, "task_name") || "ClickUp task"}</p>
+                  <p className="text-muted-foreground">
+                    {payload.allow_client_mentions === true
+                      ? "Mentions were explicitly requested"
+                      : "Client tags and @mentions are disabled"}
+                  </p>
+                </div>
+                {/^https?:\/\//i.test(payloadField(payload, "task_url")) && (
+                  <a
+                    href={payloadField(payload, "task_url")}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex shrink-0 items-center gap-1 font-medium text-info hover:underline"
+                  >
+                    Open task <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
+              </div>
+              <Textarea
+                value={commentText}
+                onChange={(event) => {
+                  setCommentText(event.target.value);
+                  emitOverrides({ comment_text: event.target.value });
                 }}
-                placeholder="Priority"
-                className="h-8 text-sm w-32"
+                rows={7}
+                placeholder="ClickUp comment"
+                className="text-sm leading-6"
               />
             </div>
           )}
@@ -444,7 +524,7 @@ function AgentToolConfirmationCard({
                 </>
               ) : (
                 <>
-                  <Check className="h-3.5 w-3.5" /> Confirm
+                  <Check className="h-3.5 w-3.5" /> {isComment ? "Confirm & post" : "Confirm"}
                 </>
               )}
             </Button>
@@ -458,6 +538,33 @@ function AgentToolConfirmationCard({
 function payloadField(payload: Record<string, unknown>, key: string): string {
   const val = payload[key];
   return typeof val === "string" ? val : "";
+}
+
+function taskValuesFromPayload(payload: Record<string, unknown>): ClickupTaskFormValues {
+  const priority = payloadField(payload, "priority").toLowerCase();
+  const assigneeIds = Array.isArray(payload.assignee_ids)
+    ? payload.assignee_ids.map(String).filter(Boolean)
+    : [];
+  const tagNames = Array.isArray(payload.tag_names)
+    ? payload.tag_names.map(String).filter(Boolean)
+    : [];
+  const estimateMinutes = typeof payload.time_estimate_minutes === "number"
+    ? payload.time_estimate_minutes
+    : Number(payload.time_estimate_minutes);
+
+  return {
+    title: docTitleFromPayload(payload),
+    description: docContentFromPayload(payload),
+    priority: ["urgent", "high", "medium", "low"].includes(priority)
+      ? priority as ClickupTaskFormValues["priority"]
+      : "medium",
+    status: payloadField(payload, "status"),
+    assigneeIds,
+    startDate: payloadField(payload, "start_date").slice(0, 10),
+    dueDate: (payloadField(payload, "due_date_hint") || payloadField(payload, "due_date")).slice(0, 10),
+    estimateInput: Number.isFinite(estimateMinutes) && estimateMinutes > 0 ? `${estimateMinutes}m` : "",
+    tagNames,
+  };
 }
 
 type ProjectAgentRunResultDiagnostics = {

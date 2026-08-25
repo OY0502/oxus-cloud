@@ -4,7 +4,7 @@ import {
   InternalOxusAuthError,
   internalOxusAuthErrorResponse,
 } from "../_shared/internalOxusAuth.ts";
-import { resolveTeamMemberRate } from "../_shared/teamMemberRates.ts";
+import { enrichTeamMemberRates, resolveTeamMemberRate } from "../_shared/teamMemberRates.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,8 +44,24 @@ Deno.serve(async (req) => {
 
     if (error) throw new Error(error.message);
 
+    const rateIds = (rates ?? []).map((r) => r.id);
+    let links: Parameters<typeof enrichTeamMemberRates>[1] = [];
+    if (rateIds.length > 0) {
+      const { data: linkRows, error: linksErr } = await admin
+        .from("team_member_rate_projects")
+        .select("rate_id, project_id, projects(id, name, archived_at)")
+        .in("rate_id", rateIds);
+      if (linksErr) throw new Error(linksErr.message);
+      links = (linkRows ?? []) as Parameters<typeof enrichTeamMemberRates>[1];
+    }
+
+    const enrichedRates = enrichTeamMemberRates(
+      (rates ?? []) as Parameters<typeof enrichTeamMemberRates>[0],
+      links,
+    );
+
     const result = resolveTeamMemberRate({
-      rates: (rates ?? []) as Parameters<typeof resolveTeamMemberRate>[0]["rates"],
+      rates: enrichedRates,
       projectId: body.project_id ?? null,
       workType: body.work_type ?? null,
       effectiveDate: body.effective_date,

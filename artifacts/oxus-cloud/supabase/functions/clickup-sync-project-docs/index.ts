@@ -52,6 +52,22 @@ Deno.serve(async (req) => {
     const projectId = body.project_id?.trim();
     if (!projectId) return err("project_id is required.", 400, "INVALID_INPUT");
 
+    {
+      const {
+        getProjectArchiveState,
+        isProjectArchived,
+        PROJECT_ARCHIVED_SKIP_MESSAGE,
+      } = await import("../_shared/projectArchive.ts");
+      const archiveCheck = await getProjectArchiveState(getServiceRoleSupabase(), projectId);
+      if (isProjectArchived(archiveCheck)) {
+        console.log(`[clickup-sync-project-docs] ${PROJECT_ARCHIVED_SKIP_MESSAGE}`);
+        return json({
+          skipped: true,
+          reason: PROJECT_ARCHIVED_SKIP_MESSAGE,
+        });
+      }
+    }
+
     let userId = body.user_id?.trim();
     if (!serviceRole) {
       let auth;

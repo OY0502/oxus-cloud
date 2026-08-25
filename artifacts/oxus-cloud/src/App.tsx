@@ -13,12 +13,14 @@ import { Calendar } from "@/pages/Calendar";
 import { Team } from "@/pages/Team";
 import { CRM, Contacts } from "@/pages/CRM";
 import { CompanyDetail } from "@/pages/CompanyDetail";
+import { PersonDetail } from "@/pages/PersonDetail";
 import { TeamMemberDetail } from "@/pages/TeamMemberDetail";
 import { CreateInvoicePage } from "@/pages/CreateInvoicePage";
 import { Technologies } from "@/pages/Technologies";
 import { QuoteForm } from "@/pages/QuoteForm";
 import { QuoteDetail } from "@/pages/QuoteDetail";
 import { ProjectWizard } from "@/pages/ProjectWizard";
+import { ProjectEdit } from "@/pages/ProjectEdit";
 import { ProjectDetail } from "@/pages/ProjectDetail";
 import { Invoices } from "@/pages/Invoices";
 import { Finance } from "@/pages/Finance";
@@ -84,12 +86,13 @@ function Router() {
       <Route path="/quotes/:id" component={protectedSuperAdminPage(QuoteDetail)} />
       <Route path="/projects" component={protectedPage(Projects)} />
       <Route path="/projects/new" component={protectedPage(ProjectWizard)} />
-      <Route path="/projects/:id/edit" component={protectedPage(ProjectWizard)} />
+      <Route path="/projects/:id/edit" component={protectedPage(ProjectEdit)} />
       <Route path="/projects/:id" component={protectedPage(ProjectDetail)} />
       <Route path="/calendar" component={protectedPage(Calendar)} />
       <Route path="/team" component={protectedPage(Team)} />
       <Route path="/team/:id" component={protectedPage(TeamMemberDetail)} />
       <Route path="/crm" component={protectedPage(CRM)} />
+      <Route path="/crm/people/:id" component={protectedPage(PersonDetail)} />
       <Route path="/contacts" component={protectedPage(Contacts)} />
       <Route path="/companies/:id" component={protectedSuperAdminPage(CompanyDetail)} />
       <Route path="/clients" component={protectedPage(CRM)} />

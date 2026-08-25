@@ -37,6 +37,41 @@ Deno.serve(async (req) => {
 
     const admin = getServiceRoleSupabase();
     const projectId = body.project_id?.trim();
+
+    if (projectId) {
+      const {
+        getProjectArchiveState,
+        isProjectArchived,
+        PROJECT_ARCHIVED_SKIP_MESSAGE,
+      } = await import("../_shared/projectArchive.ts");
+      const archiveCheck = await getProjectArchiveState(admin, projectId);
+      if (isProjectArchived(archiveCheck)) {
+        console.log(`[process-ai-jobs] ${PROJECT_ARCHIVED_SKIP_MESSAGE}`);
+        return json({
+          skipped: true,
+          reason: PROJECT_ARCHIVED_SKIP_MESSAGE,
+          processed_count: 0,
+          failed_count: 0,
+          actions_created_count: 0,
+          actions_updated_count: 0,
+          actions_auto_resolved_count: 0,
+          actions_skipped_count: 0,
+          actions_suppressed_count: 0,
+          timeline_events_created_count: 0,
+          timeline_events_updated_count: 0,
+          threads_checked: 0,
+          duplicates_avoided: 0,
+          noise_skipped_count: 0,
+          signals_checked: 0,
+          signals_new: 0,
+          signals_already_processed: 0,
+          reasons: [PROJECT_ARCHIVED_SKIP_MESSAGE],
+          job_ids: [],
+          suppression_reasons: [],
+        });
+      }
+    }
+
     if (projectId && isTriggerDevConfigured() && body.async !== false) {
       try {
         const triggered = await triggerDevTask("process-project-signals", {

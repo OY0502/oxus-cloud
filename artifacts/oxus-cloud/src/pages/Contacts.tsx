@@ -16,6 +16,7 @@ import { TableSkeleton, EmptyState, ErrorState } from "@/components/states/Query
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import type { Contact, Client } from "@/lib/types";
+import { contactTypeLabel } from "@/lib/team";
 import { formatDistanceToNow } from "date-fns";
 
 type Tab = "people" | "organizations";
@@ -108,7 +109,7 @@ export function Contacts() {
         </div>
       ),
     },
-    { id: "type", header: "Type", cell: (item: Contact) => <StatusBadge status={item.type} variant={getTypeVariant(item.type)} /> },
+    { id: "type", header: "Type", cell: (item: Contact) => <StatusBadge status={contactTypeLabel(item.type)} variant={getTypeVariant(item.type)} /> },
     {
       id: "company",
       header: "Company",
@@ -240,7 +241,7 @@ export function Contacts() {
                 <Building2 className="w-4 h-4 text-muted-foreground" />
                 <span className="text-muted-foreground text-sm">{selectedContact?.company ?? "—"}</span>
                 <span className="text-muted-foreground text-sm mx-1">•</span>
-                <StatusBadge status={selectedContact?.type || ""} variant={getTypeVariant(selectedContact?.type || "")} className="text-[10px] py-0 px-1.5 h-4" />
+                <StatusBadge status={contactTypeLabel(selectedContact?.type || "")} variant={getTypeVariant(selectedContact?.type || "")} className="text-[10px] py-0 px-1.5 h-4" />
               </div>
             </div>
           </div>

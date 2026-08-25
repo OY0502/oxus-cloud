@@ -80,10 +80,10 @@ export function CreateClientDialog({ open, onOpenChange }: DialogProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Contact — one place to add clients, contractors and agents.
-//   * client     → relationship + source (CRM fields)
-//   * contractor → role, rate, availability, location, tech stack (team fields)
-//   * agent      → basic third-party contact (e.g. external support)
+// Contact — one place to add clients, team members and agents.
+//   * client       → relationship + source (CRM fields)
+//   * contractor   → role, rate, availability, location, tech stack (team fields; UI: Team Member)
+//   * agent        → basic third-party contact (e.g. external support)
 // ---------------------------------------------------------------------------
 export function CreateContactDialog({
   open,
@@ -104,18 +104,17 @@ export function CreateContactDialog({
   // client fields
   const [strength, setStrength] = useState<"strong" | "medium" | "weak" | "new">("new");
   const [source, setSource] = useState("");
-  // contractor fields
+  // team member fields (contacts.type = contractor)
   const [jobTitle, setJobTitle] = useState("");
   const [rate, setRate] = useState("");
   const [availability, setAvailability] = useState<"full" | "partial" | "busy" | "unavailable">("full");
   const [location, setLocation] = useState("");
-  const [employment, setEmployment] = useState<"employee" | "contractor">("contractor");
   const [stack, setStack] = useState<string[]>([]);
 
   const reset = () => {
     setName(""); setType(defaultType); setClientId(""); setCompany(""); setEmail(""); setEmailValid(true);
     setPhone(""); setNotes(""); setStrength("new"); setSource("");
-    setJobTitle(""); setRate(""); setAvailability("full"); setLocation(""); setEmployment("contractor"); setStack([]);
+    setJobTitle(""); setRate(""); setAvailability("full"); setLocation(""); setStack([]);
   };
 
   const submit = async () => {
@@ -130,12 +129,11 @@ export function CreateContactDialog({
         relationship_strength: type === "client" ? strength : "new",
         source: type === "client" ? source || null : null,
         notes: notes || null,
-        // contractor-only fields
+        // team-member fields (legacy contacts.type = contractor)
         job_title: type === "contractor" ? jobTitle || null : null,
         hourly_rate: type === "contractor" && rate ? Number(rate) : null,
         availability: type === "contractor" ? availability : null,
         location: type === "contractor" ? location || null : null,
-        employment_type: type === "contractor" ? employment : null,
         stack: type === "contractor" ? stack : [],
       });
       toast({ title: "Contact added", description: name });
@@ -151,7 +149,7 @@ export function CreateContactDialog({
       <TextField label="Full name" value={name} onChange={setName} required placeholder="Jane Doe" />
       <SelectField label="Contact type" value={type} onChange={setType} required options={[
         { value: "client", label: "Client" },
-        { value: "contractor", label: "Contractor" },
+        { value: "contractor", label: "Team Member" },
         { value: "agent", label: "Agent" },
       ]} />
 
@@ -180,14 +178,9 @@ export function CreateContactDialog({
             <TextField label="Role / title" value={jobTitle} onChange={setJobTitle} placeholder="Frontend Engineer" />
             <TextField label="Location" value={location} onChange={setLocation} placeholder="Berlin, Germany" />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <SelectField label="Engagement" value={employment} onChange={setEmployment} options={[
-              { value: "contractor", label: "Contractor" }, { value: "employee", label: "Employee" },
-            ]} />
-            <SelectField label="Availability" value={availability} onChange={setAvailability} options={[
-              { value: "full", label: "Full" }, { value: "partial", label: "Partial" }, { value: "busy", label: "Busy" }, { value: "unavailable", label: "Unavailable" },
-            ]} />
-          </div>
+          <SelectField label="Availability" value={availability} onChange={setAvailability} options={[
+            { value: "full", label: "Available" }, { value: "partial", label: "Partial" }, { value: "busy", label: "Fully allocated" }, { value: "unavailable", label: "Unavailable" },
+          ]} />
           <NumberField label="Hourly rate (€)" value={rate} onChange={setRate} placeholder="80" />
           <Field label="Tech stack">
             <TagInput value={stack} onChange={setStack} placeholder="React, TypeScript…" />

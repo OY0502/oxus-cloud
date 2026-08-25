@@ -47,6 +47,7 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
     signOut,
   } = useAuth();
   const [location] = useLocation();
+  const search = useSearch();
   const signedOutRef = useRef(false);
 
   useEffect(() => {
@@ -64,7 +65,8 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
   }
 
   if (!session) {
-    const next = encodeURIComponent(location || "/");
+    const returnPath = search ? `${location}?${search}` : (location || "/");
+    const next = encodeURIComponent(returnPath);
     return <Redirect to={`/login?next=${next}`} />;
   }
 
@@ -151,15 +153,23 @@ export function RedirectIfAuthenticated({
 }: {
   children: React.ReactNode;
 }) {
-  const { session, initializing, isRecovering, accessState, role, user } = useAuth();
+  const { session, initializing, isRecovering, accessState, role, refreshSession } = useAuth();
   const search = useSearch();
+  const recoveryAttemptedRef = useRef(false);
+
+  useEffect(() => {
+    if (initializing || session || recoveryAttemptedRef.current) return;
+    const params = new URLSearchParams(search);
+    if (!params.get("next")) return;
+    recoveryAttemptedRef.current = true;
+    void refreshSession().catch(() => undefined);
+  }, [initializing, session, search, refreshSession]);
 
   if (initializing || (session && !isAccessResolved(accessState))) {
     return <FullScreenLoader />;
   }
 
-  const emailAllowed = user?.email ? isAllowedInternalEmail(user.email) : false;
-  if (session && !isRecovering && accessState === "allowed" && (emailAllowed || role)) {
+  if (session && !isRecovering && accessState === "allowed") {
     const params = new URLSearchParams(search);
     const next = params.get("next");
     return <Redirect to={resolveAuthenticatedDestination(role, next)} />;
@@ -184,13 +194,16 @@ export function RedirectIfAuthenticated({
  */
 export function useAutoKickOut() {
   const { session, initializing } = useAuth();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
+  const search = useSearch();
 
   useEffect(() => {
     if (!initializing && !session) {
-      setLocation("/login");
+      const returnPath = search ? `${location}?${search}` : (location || "/");
+      const next = encodeURIComponent(returnPath);
+      setLocation(`/login?next=${next}`);
     }
-  }, [session, initializing, setLocation]);
+  }, [session, initializing, setLocation, location, search]);
 }
 
 /**

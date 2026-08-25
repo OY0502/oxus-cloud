@@ -264,6 +264,33 @@ Deno.serve(async (req) => {
     const limit = Math.min(Math.max(body.limit ?? 50, 10), 100);
 
     const admin = getServiceRoleSupabase();
+
+    {
+      const {
+        getProjectArchiveState,
+        isProjectArchived,
+        PROJECT_ARCHIVED_SKIP_MESSAGE,
+      } = await import("../_shared/projectArchive.ts");
+      const archiveCheck = await getProjectArchiveState(admin, projectId);
+      if (isProjectArchived(archiveCheck) && body.reprocess !== true) {
+        console.log(`[slack-sync-project-channel] ${PROJECT_ARCHIVED_SKIP_MESSAGE}`);
+        return json({
+          skipped: true,
+          reason: PROJECT_ARCHIVED_SKIP_MESSAGE,
+          imported_count: 0,
+          thread_replies_imported_count: 0,
+          skipped_count: 0,
+          events_upserted_count: 0,
+          signals_upserted_count: 0,
+          meaningful_signals_count: 0,
+          signal_threads_upserted_count: 0,
+          jobs_queued_count: 0,
+          latest_messages_preview: [],
+          warnings: [PROJECT_ARCHIVED_SKIP_MESSAGE],
+        });
+      }
+    }
+
     let query = admin
       .from("project_slack_links")
       .select("*")

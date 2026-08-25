@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { isEmbeddingsEnabled, embeddingsDisabledReason } from "./agent/embeddings.ts";
 import { embedProjectKnowledgeChunks } from "./agent/retrieval.ts";
+import { isPineconeConfigured, pineconeConfig } from "./agent/pinecone.ts";
 import { shouldQueueTriggerDevTasks, triggerDevTask } from "./agent/triggerDev.ts";
 import {
   recordClickupDocsSyncTimelineEvent,
@@ -21,10 +22,15 @@ export async function queueClickupDocsPostProcessing(args: {
     "memory_update_queued" | "embedding_queued" | "trigger_run_ids" | "embedding_enabled" | "retrieval_mode"
   >
 > {
-  const hasContentChanges = args.syncResult.docs_imported + args.syncResult.docs_updated > 0;
+  const hasContentChanges =
+    args.syncResult.docs_imported + args.syncResult.docs_updated + args.syncResult.docs_marked_out_of_scope > 0;
   const triggerRunIds: string[] = [...args.syncResult.trigger_run_ids];
   const embeddingsEnabled = isEmbeddingsEnabled();
-  const retrievalMode = embeddingsEnabled ? "vector" : "fallback";
+  const retrievalMode = embeddingsEnabled && isPineconeConfigured() && pineconeConfig().retrievalMode === "primary"
+    ? "pinecone_hybrid"
+    : embeddingsEnabled
+    ? "vector"
+    : "fallback";
 
   if (!embeddingsEnabled) {
     args.syncResult.warnings.push(
@@ -55,6 +61,7 @@ export async function queueClickupDocsPostProcessing(args: {
       await embedProjectKnowledgeChunks({
         admin: args.admin,
         projectId: args.projectId,
+        syncPinecone: true,
       });
     }
     await mergeClickupDocsIntoProjectMemory({

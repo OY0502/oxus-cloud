@@ -24,12 +24,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useAutoKickOut();
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
+    <div className="flex min-h-screen min-w-0 overflow-x-hidden bg-background text-foreground">
       <Sidebar />
-      <main className="flex-1 ml-64 flex flex-col min-h-screen">
+      <main className="flex-1 ml-64 flex flex-col min-h-screen min-w-0 overflow-x-hidden">
         <TopBar title={currentTitle} />
         
-        <div className="flex-1 p-8 overflow-x-hidden">
+        <div className="flex-1 min-w-0 p-8 overflow-x-hidden">
           <AnimatePresence mode="wait">
             <motion.div
               key={location}
@@ -37,7 +37,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2, ease: "easeOut" }}
-              className="h-full flex flex-col"
+              className="h-full min-w-0 flex flex-col"
             >
               {children}
             </motion.div>

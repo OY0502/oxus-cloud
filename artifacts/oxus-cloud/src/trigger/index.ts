@@ -1,4 +1,4 @@
-import { task } from "@trigger.dev/sdk";
+import { schedules, task } from "@trigger.dev/sdk";
 import { getServiceClient, invokeAgentWorker } from "../server/supabase";
 import "./googleSyncTasks";
 
@@ -6,7 +6,9 @@ async function workerPost(functionName: string, body: Record<string, unknown>) {
   const resp = await invokeAgentWorker(functionName, body);
   const text = await resp.text();
   if (!resp.ok) {
-    throw new Error(`${functionName} failed (${resp.status}): ${text.slice(0, 800)}`);
+    throw new Error(
+      `${functionName} failed (${resp.status}): ${text.slice(0, 800)}`,
+    );
   }
   return JSON.parse(text) as Record<string, unknown>;
 }
@@ -15,10 +17,75 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error ?? "Unknown agent error");
+}
+
+async function publishFinalAgentFailure(
+  payload: {
+    project_id: string;
+    agent_run_id: string;
+    chat?: boolean;
+    chat_session_id?: string;
+  },
+  error: unknown,
+) {
+  const admin = getServiceClient();
+  const message = errorMessage(error);
+  await admin
+    .from("project_agent_runs")
+    .update({
+      status: "failed",
+      result_summary: message.slice(0, 500),
+      completed_at: new Date().toISOString(),
+      raw_response: { error: message },
+    })
+    .eq("id", payload.agent_run_id);
+
+  if (!payload.chat) return;
+  let failureSessionId = payload.chat_session_id;
+  if (!failureSessionId) {
+    const { data: run } = await admin
+      .from("project_agent_runs")
+      .select("chat_session_id")
+      .eq("id", payload.agent_run_id)
+      .maybeSingle();
+    failureSessionId = typeof run?.chat_session_id === "string" ? run.chat_session_id : undefined;
+  }
+  const failedMessage = {
+    content: "I couldn't finish that request after retrying. Your message is saved, so you can send it again.",
+    metadata: { status: "failed", retry_exhausted: true },
+  };
+  const { data: existingMessage } = await admin
+    .from("project_chat_messages")
+    .select("id")
+    .eq("agent_run_id", payload.agent_run_id)
+    .eq("role", "assistant")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (existingMessage?.id) {
+    await admin.from("project_chat_messages").update(failedMessage).eq("id", existingMessage.id);
+  } else if (failureSessionId) {
+    await admin.from("project_chat_messages").insert({
+      project_id: payload.project_id,
+      chat_session_id: failureSessionId,
+      user_id: null,
+      role: "assistant",
+      agent_run_id: payload.agent_run_id,
+      ...failedMessage,
+    });
+  }
+}
+
 export const triggerSmokeTestTask = task({
   id: "trigger-smoke-test",
   run: async (payload: { message: string; source?: string }) => {
-    console.info("[trigger-smoke-test]", payload.message, payload.source ?? "unknown");
+    console.info(
+      "[trigger-smoke-test]",
+      payload.message,
+      payload.source ?? "unknown",
+    );
     await sleep(2000);
     return { ok: true, message: payload.message, at: new Date().toISOString() };
   },
@@ -33,8 +100,14 @@ export const projectAgentRunTask = task({
     input_text?: string;
     uploaded_file_ids?: string[];
     mode?: string;
+    chat?: boolean;
+    chat_session_id?: string;
+    chat_action?: "clarification_response";
   }) => {
-    const result = await workerPost("project-agent-run-worker", payload);
+    const result = await workerPost("project-agent-run-worker", {
+      ...payload,
+      retry_managed: true,
+    });
     if ((result as { error?: string }).error) {
       throw new Error(String((result as { error?: string }).error));
     }
@@ -44,11 +117,18 @@ export const projectAgentRunTask = task({
     });
     return result;
   },
+  onFailure: async ({ payload, error }) => {
+    await publishFinalAgentFailure(payload, error);
+  },
 });
 
 export const processProjectSignalsTask = task({
   id: "process-project-signals",
-  run: async (payload: { project_id: string; user_id?: string; limit?: number }) => {
+  run: async (payload: {
+    project_id: string;
+    user_id?: string;
+    limit?: number;
+  }) => {
     return workerPost("process-ai-jobs", {
       project_id: payload.project_id,
       limit: payload.limit,
@@ -61,14 +141,18 @@ export const processProjectSignalsTask = task({
 export const syncSlackProjectChannelTask = task({
   id: "sync-slack-project-channel",
   run: async (payload: { project_id: string; user_id: string }) => {
-    return workerPost("slack-sync-project-channel", { project_id: payload.project_id });
+    return workerPost("slack-sync-project-channel", {
+      project_id: payload.project_id,
+    });
   },
 });
 
 export const syncClickupProjectUpdatesTask = task({
   id: "sync-clickup-project-updates",
   run: async (payload: { project_id: string; user_id: string }) => {
-    return workerPost("clickup-sync-project-updates", { project_id: payload.project_id });
+    return workerPost("clickup-sync-project-updates", {
+      project_id: payload.project_id,
+    });
   },
 });
 
@@ -110,7 +194,12 @@ export const syncClickupProjectDocsTask = task({
 
 export const syncClickupHierarchyTask = task({
   id: "sync-clickup-hierarchy",
-  run: async (payload: { project_id: string; user_id: string; tool_run_id?: string; force?: boolean }) => {
+  run: async (payload: {
+    project_id: string;
+    user_id: string;
+    tool_run_id?: string;
+    force?: boolean;
+  }) => {
     const admin = getServiceClient();
     if (payload.tool_run_id) {
       await admin
@@ -147,7 +236,10 @@ export const enrichProjectFromWebsiteTask = task({
     proposal_id?: string | null;
     force?: boolean;
   }) => {
-    const result = await workerPost("enrich-project-from-website", payload) as {
+    const result = (await workerPost(
+      "enrich-project-from-website",
+      payload,
+    )) as {
       error?: string;
       status?: string;
       pages_scraped?: number;
@@ -174,9 +266,25 @@ export const enrichProjectFromWebsiteTask = task({
 
 export const embedProjectKnowledgeTask = task({
   id: "embed-project-knowledge",
-  run: async (payload: { project_id: string; source_id?: string; force?: boolean }) => {
+  run: async (payload: {
+    project_id: string;
+    source_id?: string;
+    force?: boolean;
+  }) => {
     return workerPost("embed-project-knowledge", payload);
   },
+});
+
+export const processPineconeKnowledgeOutboxTask = schedules.task({
+  id: "process-pinecone-knowledge-outbox",
+  cron: {
+    // Normal ingestion syncs immediately. This worker drains retries and
+    // namespace/source deletions that survived an external outage.
+    pattern: "*/5 * * * *",
+    timezone: "UTC",
+    environments: ["PRODUCTION", "STAGING"],
+  },
+  run: async () => workerPost("pinecone-chat-memory", { action: "process_outbox" }),
 });
 
 export const mergeProjectMemoryFromDocsTask = task({
@@ -327,9 +435,35 @@ export const processStripeWebhookEventTask = task({
   },
 });
 
+export const recoverStripeWebhookEventsTask = schedules.task({
+  id: "recover-stripe-webhook-events",
+  cron: {
+    // The webhook dispatches immediately. This is only a low-frequency safety
+    // net for a stored event whose async processor crashed.
+    pattern: "17 */6 * * *",
+    timezone: "UTC",
+    environments: ["PRODUCTION", "STAGING"],
+  },
+  run: async () => {
+    const result = await workerPost("stripe-webhook-recovery", {
+      action: "retry",
+      limit: 50,
+    });
+    if ((result as { error?: string }).error) {
+      throw new Error(String((result as { error?: string }).error));
+    }
+    return result;
+  },
+});
+
 export const reconcileStripeInvoicePaymentsTask = task({
   id: "reconcile-stripe-invoice-payments",
-  run: async (payload?: { month?: string; invoice_id?: string; force?: boolean; limit?: number }) => {
+  run: async (payload?: {
+    month?: string;
+    invoice_id?: string;
+    force?: boolean;
+    limit?: number;
+  }) => {
     const result = await workerPost("stripe-reconcile-invoice-payments", {
       month: payload?.month,
       invoice_id: payload?.invoice_id,
@@ -346,7 +480,11 @@ export const reconcileStripeInvoicePaymentsTask = task({
 
 export const crmEnrichCompanyTask = task({
   id: "crm-enrich-company",
-  run: async (payload: { company_id: string; user_id: string; website?: string | null }) => {
+  run: async (payload: {
+    company_id: string;
+    user_id: string;
+    website?: string | null;
+  }) => {
     return workerPost("crm-enrich-company", payload);
   },
 });
@@ -367,7 +505,12 @@ export const reconcileCrmImportQualityTask = task({
 
 export const resolveCompanyLogoTask = task({
   id: "resolve-company-logo",
-  run: async (payload: { company_id: string; domain?: string; website_url?: string; force_refresh?: boolean }) => {
+  run: async (payload: {
+    company_id: string;
+    domain?: string;
+    website_url?: string;
+    force_refresh?: boolean;
+  }) => {
     return workerPost("resolve-company-logo", payload);
   },
 });

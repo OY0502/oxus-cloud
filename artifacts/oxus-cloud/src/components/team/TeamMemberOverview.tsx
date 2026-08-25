@@ -12,13 +12,11 @@ import {
 } from "@/components/ui/select";
 import { TagInput } from "@/components/forms/Inputs";
 import { StatusBadge } from "@/components/StatusBadge";
-import { useUpdateTeamMember, useCreateTeamActivity, useCompanyPeople } from "@/hooks/api";
+import { useUpdateTeamMember, useCreateTeamActivity } from "@/hooks/api";
 import { useToast } from "@/hooks/use-toast";
 import {
   availabilityLabel,
   availabilityVariant,
-  engagementLabel,
-  engagementVariant,
   mergeTeamMetadata,
   parseTeamMetadata,
   personStatusVariant,
@@ -58,7 +56,6 @@ export function TeamMemberOverview({
   const { toast } = useToast();
   const updateMember = useUpdateTeamMember();
   const logActivity = useCreateTeamActivity();
-  const { data: companyPeople = [] } = useCompanyPeople();
   const meta = parseTeamMetadata(person);
   const inactive = isPersonInactive(person);
 
@@ -72,7 +69,6 @@ export function TeamMemberOverview({
   const [phone, setPhone] = useState(person.phone ?? "");
   const [location, setLocation] = useState(person.location ?? "");
   const [jobTitle, setJobTitle] = useState(person.job_title ?? "");
-  const [employment, setEmployment] = useState(person.employment_type ?? "contractor");
   const [status, setStatus] = useState(person.person_status ?? "active");
   const [availability, setAvailability] = useState<Availability>((person.availability as Availability) ?? "full");
   const [stack, setStack] = useState<string[]>(person.stack ?? []);
@@ -92,7 +88,6 @@ export function TeamMemberOverview({
     setPhone(person.phone ?? "");
     setLocation(person.location ?? "");
     setJobTitle(person.job_title ?? "");
-    setEmployment(person.employment_type ?? "contractor");
     setStatus(person.person_status ?? "active");
     setAvailability((person.availability as Availability) ?? "full");
     setStack(person.stack ?? []);
@@ -118,7 +113,6 @@ export function TeamMemberOverview({
     setPhone(person.phone ?? "");
     setLocation(person.location ?? "");
     setJobTitle(person.job_title ?? "");
-    setEmployment(person.employment_type ?? "contractor");
     setStatus(person.person_status ?? "active");
     setAvailability((person.availability as Availability) ?? "full");
     setStack(person.stack ?? []);
@@ -142,7 +136,6 @@ export function TeamMemberOverview({
           phone: phone.trim() || null,
           location: location.trim() || null,
           job_title: jobTitle.trim() || null,
-          employment_type: employment,
           person_status: status,
           availability,
           stack,
@@ -203,16 +196,6 @@ export function TeamMemberOverview({
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1">
-            <Label>Engagement</Label>
-            <Select value={employment} onValueChange={setEmployment}>
-              <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="employee">Employee</SelectItem>
-                <SelectItem value="contractor">Contractor</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
             <Label>Status</Label>
             <Select value={status} onValueChange={setStatus}>
               <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
@@ -222,8 +205,6 @@ export function TeamMemberOverview({
               </SelectContent>
             </Select>
           </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1">
             <Label>Availability</Label>
             <Select value={availability} onValueChange={(v) => setAvailability(v as Availability)}>
@@ -236,16 +217,16 @@ export function TeamMemberOverview({
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1"><Label>Weekly available hours</Label><Input className="h-9 text-sm" type="number" value={weeklyHours} onChange={(e) => setWeeklyHours(e.target.value)} /></div>
         </div>
         <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1"><Label>Weekly available hours</Label><Input className="h-9 text-sm" type="number" value={weeklyHours} onChange={(e) => setWeeklyHours(e.target.value)} /></div>
           <div className="space-y-1"><Label>Capacity %</Label><Input className="h-9 text-sm" type="number" value={capacityPercent} onChange={(e) => setCapacityPercent(e.target.value)} /></div>
-          <div className="space-y-1"><Label>Default currency</Label><Input className="h-9 text-sm" value={defaultCurrency} onChange={(e) => setDefaultCurrency(e.target.value)} /></div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1"><Label>Start date</Label><Input className="h-9 text-sm" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></div>
           <div className="space-y-1"><Label>End date</Label><Input className="h-9 text-sm" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></div>
         </div>
+        <div className="space-y-1"><Label>Default currency</Label><Input className="h-9 text-sm" value={defaultCurrency} onChange={(e) => setDefaultCurrency(e.target.value)} /></div>
         <div className="space-y-1"><Label>Technology stack</Label><TagInput value={stack} onChange={setStack} placeholder="React, TypeScript…" /></div>
         <div className="space-y-1"><Label>Notes</Label><Textarea className="text-sm" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} /></div>
         {showFinancials && (
@@ -269,9 +250,6 @@ export function TeamMemberOverview({
           <TeamDetailItem label="Phone">{person.phone ?? "—"}</TeamDetailItem>
           <TeamDetailItem label="Location">{person.location ?? "—"}</TeamDetailItem>
           <TeamDetailItem label="Role">{person.job_title ?? "—"}</TeamDetailItem>
-          <TeamDetailItem label="Engagement">
-            <StatusBadge status={engagementLabel(person, companyPeople)} variant={engagementVariant()} />
-          </TeamDetailItem>
           <TeamDetailItem label="Start date">{meta.start_date ?? "—"}</TeamDetailItem>
           <TeamDetailItem label="Status">
             <StatusBadge
@@ -317,8 +295,11 @@ export function TeamMemberOverview({
               <TeamDetailItem label="Paid this year">
                 <span className="font-serif tabular-nums">{formatEUR(summary?.paid_ytd ?? 0)}</span>
               </TeamDetailItem>
-              <TeamDetailItem label="Outstanding invoices">
-                <span className="font-serif tabular-nums">{formatEUR(summary?.outstanding_invoices ?? 0)}</span>
+              <TeamDetailItem label="Outstanding payables">
+                <span className="font-serif tabular-nums">{formatEUR(summary?.outstanding_payables ?? summary?.outstanding_invoices ?? 0)}</span>
+              </TeamDetailItem>
+              <TeamDetailItem label="Ready to pay">
+                <span className="font-serif tabular-nums">{formatEUR(summary?.ready_to_pay ?? 0)}</span>
               </TeamDetailItem>
             </>
           )}

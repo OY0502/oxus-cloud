@@ -70,7 +70,11 @@ Deno.serve(async (req) => {
     let verificationError: Error | null = null;
     for (const secret of webhookSecrets) {
       try {
-        event = stripe.webhooks.constructEvent(rawBody, signature, secret);
+        event = await stripe.webhooks.constructEventAsync(
+          rawBody,
+          signature,
+          secret,
+        );
         break;
       } catch (e) {
         verificationError = e as Error;

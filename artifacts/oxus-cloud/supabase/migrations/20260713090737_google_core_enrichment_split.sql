@@ -1,0 +1,2 @@
+-- No-op placeholder retained for migration history compatibility.
+-- Superseded by 20260713150000_google_core_enrichment_split.sql.

@@ -1,0 +1,2 @@
+-- No-op placeholder retained for migration history compatibility.
+-- Superseded by 0030_pm_action_dismissal_suppression.sql.

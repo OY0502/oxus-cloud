@@ -37,8 +37,10 @@ import {
   useDismissInvoiceAttention,
   usePaidRevenueReconciliation,
   useReconcileStripePayments,
+  usePaidRevenueExclusions,
 } from "@/hooks/api";
 import { PaidRevenueBreakdownDialog } from "@/components/invoices/PaidRevenueBreakdownDialog";
+import { OverdueReceivablesBreakdownDialog } from "@/components/invoices/OverdueReceivablesBreakdownDialog";
 import { TableSkeleton, CardGridSkeleton, EmptyState, ErrorState } from "@/components/states/QueryStates";
 import {
   type Invoice,
@@ -61,7 +63,13 @@ import {
   type StripeInvoiceActionType,
 } from "@/lib/invoices";
 import { countMissingFxConversions, invoiceTotalEur, formatInvoiceEurDisplay } from "@/lib/invoiceEur";
-import { formatMinorEur } from "@/lib/paymentReconciliation";
+import {
+  isOverdueReceivable,
+  sumDueSoonReceivablesEur,
+  sumOutstandingReceivablesEur,
+  sumOverdueReceivablesEur,
+} from "@/lib/invoiceClassification";
+import { formatMinorEur, summarizePaidRevenueRows } from "@/lib/paymentReconciliation";
 import { getReportingMonthKey, paidTimestampInReportingMonth } from "@/lib/reportingTimezone";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -89,12 +97,19 @@ export function Invoices() {
   const reportingMonth = getReportingMonthKey();
   const { data: rows = [], isLoading, isError, error, refetch } = useInvoices();
   const { data: paidRevenue, isLoading: paidRevenueLoading, refetch: refetchPaidRevenue } = usePaidRevenueReconciliation(reportingMonth);
+  const { excludedIds, toggleExclusion, includeAll } = usePaidRevenueExclusions(reportingMonth);
+  const paidRevenueSummary = useMemo(() => {
+    if (!paidRevenue?.rows.length) return paidRevenue?.summary ?? null;
+    const included = paidRevenue.rows.filter((row) => !excludedIds.has(row.id));
+    return summarizePaidRevenueRows(included, reportingMonth);
+  }, [paidRevenue?.rows, paidRevenue?.summary, excludedIds, reportingMonth]);
   const syncStripe = useStripeSyncInvoices();
   const reconcilePayments = useReconcileStripePayments();
   const stripeAction = useStripeInvoiceAction();
   const dismissAttention = useDismissInvoiceAttention();
   const { toast } = useToast();
   const [paidBreakdownOpen, setPaidBreakdownOpen] = useState(false);
+  const [overdueBreakdownOpen, setOverdueBreakdownOpen] = useState(false);
 
   const invoices = useMemo<Invoice[]>(() => rows.map(invoiceFromRow), [rows]);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
@@ -114,29 +129,23 @@ export function Invoices() {
   const clients = useMemo(() => Array.from(new Set(invoices.map((i) => i.client))).sort(), [invoices]);
 
   const metrics = useMemo(() => {
-    const owedStatuses: InvoiceStatus[] = ["sent", "viewed", "partial", "overdue"];
-    const outstanding = invoices
-      .filter((i) => owedStatuses.includes(i.status))
-      .reduce((s, i) => s + (remainingEur(i) ?? 0), 0);
-    const overdue = invoices
-      .filter((i) => i.status === "overdue")
-      .reduce((s, i) => s + (remainingEur(i) ?? 0), 0);
-    const dueThisWeek = invoices
-      .filter((i) => isDueSoon(i, 7))
-      .reduce((s, i) => s + (remainingEur(i) ?? 0), 0);
+    const outstanding = sumOutstandingReceivablesEur(invoices).total;
+    const overdue = sumOverdueReceivablesEur(invoices).total;
+    const dueThisWeek = sumDueSoonReceivablesEur(invoices, 7).total;
+    const overdueCount = invoices.filter(isOverdueReceivable).length;
     const paidInvoices = invoices.filter((i) => i.status === "paid");
     const legacyReferencePaidThisMonth = paidInvoices
       .filter((i) => paidTimestampInReportingMonth(i.paidAt, i.paidDate, reportingMonth))
       .reduce((s, i) => s + (invoiceTotalEur(i) ?? 0), 0);
-    const paidThisMonth = paidRevenue?.summary.hasData
-      ? paidRevenue.summary.grossEurMinor / 100
+    const paidThisMonth = paidRevenueSummary?.hasData
+      ? paidRevenueSummary.grossEurMinor / 100
       : legacyReferencePaidThisMonth;
-    const paidThisMonthNet = paidRevenue?.summary.hasData ? paidRevenue.summary.netEurMinor / 100 : null;
+    const paidThisMonthNet = paidRevenueSummary?.hasData ? paidRevenueSummary.netEurMinor / 100 : null;
     const delays = paidInvoices.map((i) => daysBetween(new Date(i.paidAt ?? i.paidDate ?? i.dueDate), new Date(i.dueDate)));
     const avgDelay = delays.length ? Math.round(delays.reduce((a, b) => a + b, 0) / delays.length) : 0;
     const missingFxCount = countMissingFxConversions(invoices);
-    return { outstanding, overdue, dueThisWeek, paidThisMonth, paidThisMonthNet, legacyReferencePaidThisMonth, avgDelay, missingFxCount };
-  }, [invoices, paidRevenue, reportingMonth]);
+    return { outstanding, overdue, overdueCount, dueThisWeek, paidThisMonth, paidThisMonthNet, legacyReferencePaidThisMonth, avgDelay, missingFxCount };
+  }, [invoices, paidRevenueSummary, reportingMonth]);
 
   const paymentTiming = useMemo(() => formatPaymentTiming(metrics.avgDelay), [metrics.avgDelay]);
 
@@ -147,7 +156,7 @@ export function Invoices() {
 
   const filteredInvoices = useMemo(() => {
     return invoices.filter((inv) => {
-      if (overdueOnly && inv.status !== "overdue") return false;
+      if (overdueOnly && !isOverdueReceivable(inv)) return false;
       if (statusFilter !== "all" && inv.status !== statusFilter) return false;
       if (clientFilter !== "all" && inv.client !== clientFilter) return false;
       if (dateRange !== "all") {
@@ -266,17 +275,29 @@ export function Invoices() {
         <>
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-5">
             <MetricCard title="Outstanding Balance" value={formatMoney(metrics.outstanding)} className="bg-primary text-primary-foreground border-primary" valueClassName="text-primary-foreground" icon={<Wallet className="h-5 w-5 text-primary-foreground/50" />} />
-            <MetricCard title="Overdue Amount" value={formatMoney(metrics.overdue)} valueClassName="text-danger" icon={<AlertTriangle className="h-5 w-5" />} />
+            <MetricCard
+              title="Overdue Amount"
+              value={formatMoney(metrics.overdue)}
+              valueClassName="text-danger"
+              icon={<AlertTriangle className="h-5 w-5" />}
+              subtitle={metrics.overdueCount > 0
+                ? `${metrics.overdueCount} invoice${metrics.overdueCount === 1 ? "" : "s"} — click for breakdown`
+                : "No active overdue receivables — click for details"}
+              onClick={() => setOverdueBreakdownOpen(true)}
+              className="transition-colors hover:border-danger/40"
+            />
             <MetricCard title="Due This Week" value={formatMoney(metrics.dueThisWeek)} valueClassName="text-warning" icon={<CalendarClock className="h-5 w-5" />} />
             <MetricCard
               title="Paid This Month"
               value={formatMoney(metrics.paidThisMonth)}
               valueClassName="text-success"
               icon={<TrendingUp className="h-5 w-5" />}
-              subtitle={metrics.paidThisMonthNet != null && paidRevenue?.summary.fullyReconciled
+              subtitle={metrics.paidThisMonthNet != null && paidRevenueSummary?.fullyReconciled
                 ? `Net received: ${formatMoney(metrics.paidThisMonthNet)}`
-                : paidRevenue?.summary.hasData
-                  ? "Click for gross/fee breakdown"
+                : paidRevenueSummary?.hasData
+                  ? excludedIds.size > 0
+                    ? `${excludedIds.size} payment${excludedIds.size === 1 ? "" : "s"} excluded — click for breakdown`
+                    : "Click for gross/fee breakdown"
                   : "Reference EUR — click to reconcile from Stripe"}
               onClick={() => setPaidBreakdownOpen(true)}
               className="transition-colors hover:border-success/40"
@@ -380,7 +401,6 @@ export function Invoices() {
                 {
                   id: "amount_orig",
                   header: "Amount (Orig)",
-                  className: "text-right",
                   defaultWidth: 130,
                   cell: (i: Invoice) => (
                     <span className="font-semibold tabular-nums">{formatInvoiceAmount(i)}</span>
@@ -389,7 +409,6 @@ export function Invoices() {
                 {
                   id: "amount_eur",
                   header: "Amount (EUR)",
-                  className: "text-right",
                   defaultWidth: 130,
                   cell: (i: Invoice) => {
                     const eur = formatInvoiceEurDisplay(i);
@@ -480,12 +499,21 @@ export function Invoices() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <OverdueReceivablesBreakdownDialog
+        open={overdueBreakdownOpen}
+        onOpenChange={setOverdueBreakdownOpen}
+        invoices={invoices}
+        missingFxCount={metrics.missingFxCount}
+        onViewInvoice={(inv) => setSelectedInvoiceId(inv.id)}
+        onStripeAction={handleStripeAction}
+      />
+
       <PaidRevenueBreakdownDialog
         open={paidBreakdownOpen}
         onOpenChange={setPaidBreakdownOpen}
         monthKey={reportingMonth}
         rows={paidRevenue?.rows ?? []}
-        summary={paidRevenue?.summary ?? {
+        summary={paidRevenueSummary ?? {
           reportingMonth,
           grossEurMinor: 0,
           stripeFeesEurMinor: 0,
@@ -499,6 +527,9 @@ export function Invoices() {
           fullyReconciled: false,
           hasData: false,
         }}
+        excludedIds={excludedIds}
+        onToggleExclusion={toggleExclusion}
+        onIncludeAll={includeAll}
         isLoading={paidRevenueLoading}
         isRefreshing={reconcilePayments.isPending}
         onRefresh={() => {

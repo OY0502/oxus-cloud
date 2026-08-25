@@ -90,6 +90,10 @@ import { formatCurrency } from "@/lib/currency";
 
 import { Download, ExternalLink, RotateCcw } from "lucide-react";
 
+import { useAuth } from "@/contexts/AuthContext";
+
+import { InvoiceTeamCompensationSection } from "@/components/invoices/InvoiceTeamCompensationSection";
+
 
 
 interface InvoiceDetailDrawerProps {
@@ -115,6 +119,8 @@ export function InvoiceDetailDrawer({ invoice, open, onOpenChange, onStripeActio
   const updateProject = useUpdateInvoiceProject();
 
   const restoreAttention = useRestoreInvoiceAttention();
+
+  const { isSuperAdmin } = useAuth();
 
   const { toast } = useToast();
 
@@ -486,6 +492,12 @@ export function InvoiceDetailDrawer({ invoice, open, onOpenChange, onStripeActio
 
 
 
+          {isSuperAdmin && (
+            <InvoiceTeamCompensationSection invoice={invoice} canManage />
+          )}
+
+
+
           <div>
 
             <h4 className="mb-2 text-sm font-semibold">Line Items</h4>
@@ -498,11 +510,11 @@ export function InvoiceDetailDrawer({ invoice, open, onOpenChange, onStripeActio
 
                   <span className="col-span-6 font-medium truncate">{item.description}</span>
 
-                  <span className="col-span-2 text-muted-foreground text-right tabular-nums">×{item.quantity}</span>
+                  <span className="col-span-2 text-muted-foreground tabular-nums">×{item.quantity}</span>
 
-                  <span className="col-span-2 text-muted-foreground text-right tabular-nums">{formatCurrency(item.unitAmount, currencyCode)}</span>
+                  <span className="col-span-2 text-muted-foreground tabular-nums">{formatCurrency(item.unitAmount, currencyCode)}</span>
 
-                  <span className="col-span-2 text-right font-medium tabular-nums">{formatCurrency(item.amount, currencyCode)}</span>
+                  <span className="col-span-2 font-medium tabular-nums">{formatCurrency(item.amount, currencyCode)}</span>
 
                 </div>
 

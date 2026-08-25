@@ -45,6 +45,11 @@ verify_jwt = false
 [functions.embed-project-knowledge]
 verify_jwt = false
 
+# Super-admin/service-role setup, backfill, outbox processing, and diagnostics
+# for Pinecone project-knowledge retrieval. The function performs custom auth.
+[functions.pinecone-chat-memory]
+verify_jwt = false
+
 [functions.confirm-agent-tool-run-worker]
 verify_jwt = false
 
@@ -69,13 +74,26 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.stripe-webhook-recovery]
-verify_jwt = true
+# Supports both super-admin JWTs and backend credentials in function-level auth.
+verify_jwt = false
 
 [functions.stripe-rotate-webhook-secret]
 verify_jwt = false
 
+# Manual, super-admin-only Wise diagnostics. No cron or background polling.
+[functions.wise-invoice-probe]
+verify_jwt = false
+
 [functions.google-check-interrupted-imports]
 verify_jwt = true
+
+# One-shot admin repair dispatch — authenticates with service role in function body.
+[functions.google-admin-dispatch-import]
+verify_jwt = false
+
+# Calendar-only historical recovery — service role + repair header in function body.
+[functions.google-calendar-historical-recovery]
+verify_jwt = false
 
 # PandaDoc webhooks are called by PandaDoc servers without a user JWT.
 # Authenticity is verified via HMAC-SHA256 shared-key signature query param.

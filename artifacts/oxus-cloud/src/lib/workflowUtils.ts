@@ -67,6 +67,7 @@ export function groupToolRunsByWorkflow(runs: AgentToolRun[]): {
 export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   create_clickup_doc: "Create ClickUp Doc",
   create_clickup_task: "Create ClickUp Task",
+  add_clickup_comment: "Add ClickUp Comment",
   link_clickup_doc_to_task: "Link document to task",
   sync_clickup_docs: "Sync ClickUp Docs",
   sync_clickup_hierarchy: "Sync ClickUp Structure",

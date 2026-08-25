@@ -23,6 +23,7 @@ export type AgentToolName =
   | "update_project_memory"
   | "create_proposed_tasks"
   | "create_clickup_task"
+  | "add_clickup_comment"
   | "create_clickup_doc"
   | "link_clickup_doc_to_task"
   | "sync_clickup_docs"
@@ -59,10 +60,52 @@ export type AgentPlanToolCall = {
   requires_confirmation: boolean;
 };
 
+export type MeetingDeliverableStatus =
+  | "planned"
+  | "in_progress"
+  | "ready_for_demo"
+  | "blocked"
+  | "done";
+
+export type ProjectMeetingMemory = {
+  title: string;
+  meeting_date: string | null;
+  meeting_date_source: "transcript" | "filename" | "inferred" | "unknown";
+  next_meeting_date: string | null;
+  cadence_signal: "weekly" | "other" | "unknown";
+  summary: string;
+  decisions: string[];
+  completed_or_demo: string[];
+  current_week_focus: string[];
+  next_meeting_deliverables: Array<{
+    title: string;
+    evidence: string;
+    owner: string | null;
+    status: MeetingDeliverableStatus;
+    confidence: number;
+  }>;
+  feedback: string[];
+  open_questions: string[];
+  participants: string[];
+  confidence: number;
+};
+
+export type ProjectFactUpdate = {
+  fact_key: string;
+  subject: string;
+  statement: string;
+  state: string | null;
+  effective_date: string | null;
+  explicit_user_fact: boolean;
+  confidence: number;
+};
+
 export type AgentPlan = {
   detected_intent: string;
   answer?: string | null;
   memory_updates?: Record<string, unknown>;
+  meeting_memory?: ProjectMeetingMemory | null;
+  fact_updates?: ProjectFactUpdate[];
   proposed_tasks?: Array<Record<string, unknown>>;
   clarification_questions?: Array<{
     question: string;
@@ -87,7 +130,7 @@ export type RetrievalChunk = {
 
 export type AgentDiagnostics = {
   model?: string;
-  retrieval_mode?: "vector" | "fallback";
+  retrieval_mode?: "pinecone_hybrid" | "vector" | "fallback";
   chunks_retrieved_count?: number;
   trigger_run_id?: string;
   trigger_enabled?: boolean;
@@ -107,12 +150,36 @@ export type AgentDiagnostics = {
   embeddings_enabled?: boolean;
   embedding_provider?: string;
   embedding_skip_reason?: string;
+  pinecone_configured?: boolean;
+  pinecone_used?: boolean;
+  pinecone_queried?: boolean;
+  pinecone_matches?: number;
+  pinecone_candidates?: number;
+  pinecone_reranked?: number;
+  pinecone_mode?: "off" | "shadow" | "primary";
+  pinecone_shadow_overlap?: number;
+  pinecone_error?: string;
+  pinecone_index?: string;
+  pinecone_namespace?: string;
+  retrieval_query?: string;
+  openrouter_prompt_tokens?: number;
+  openrouter_completion_tokens?: number;
+  openrouter_total_tokens?: number;
+  openrouter_cached_tokens?: number;
+  openrouter_cost?: number;
   runtime?: string;
   trigger_configured?: boolean;
   tool_calls_planned_count?: number;
   pending_tool_runs_count?: number;
   workflow_step_count?: number;
   clickup_connected?: boolean;
+  file_review?: boolean;
+  clickup_tasks_checked?: number;
+  clickup_task_snapshot_source?: "live" | "cached" | "unavailable";
+  meeting_memories_loaded?: number;
+  meeting_memories_backfilled?: number;
+  operating_cadence_days?: number;
+  project_facts_saved?: number;
   // Accurate tool-call accounting (used to decide the external-action warning).
   total_tool_calls_planned?: number;
   safe_tool_calls_planned?: number;
@@ -141,4 +208,7 @@ export type ProjectAgentRunInput = {
   input_text?: string;
   uploaded_file_ids?: string[];
   mode?: AgentMode;
+  chat?: boolean;
+  chat_session_id?: string;
+  chat_action?: "clarification_response";
 };

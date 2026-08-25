@@ -221,11 +221,13 @@ export function ProjectIntelligencePanel({ projectId }: { projectId: string }) {
     options: {
       title: string;
       description?: string;
-      priority: AiProposedTask["priority"];
+      priority?: AiProposedTask["priority"] | "";
       status?: string;
       assignee_ids: string[];
+      start_date?: string;
       due_date?: string;
       time_estimate_minutes?: number;
+      tag_names?: string[];
     },
 
   ) => {
@@ -248,9 +250,13 @@ export function ProjectIntelligencePanel({ projectId }: { projectId: string }) {
 
         assignee_ids: options.assignee_ids,
 
+        start_date: options.start_date,
+
         due_date: options.due_date,
 
         time_estimate_minutes: options.time_estimate_minutes,
+
+        tag_names: options.tag_names,
 
       });
 
@@ -504,8 +510,6 @@ export function ProjectIntelligencePanel({ projectId }: { projectId: string }) {
           task={createClickupTask}
 
           projectId={projectId}
-
-          teamId={clickupLink?.clickup_team_id}
 
           busy={tasksBusy}
 

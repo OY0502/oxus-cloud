@@ -20,5 +20,5 @@ export async function loadActiveKnowledgeSourceIds(
     .select("id")
     .eq("project_id", projectId)
     .eq("sync_status", "active");
-  return new Set((data ?? []).map((row) => String(row.id)));
+  return new Set(((data ?? []) as Array<{ id: unknown }>).map((row) => String(row.id)));
 }

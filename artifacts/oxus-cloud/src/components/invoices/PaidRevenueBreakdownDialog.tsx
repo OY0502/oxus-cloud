@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
@@ -32,6 +33,9 @@ interface PaidRevenueBreakdownDialogProps {
   monthKey: string;
   rows: InvoicePaymentReconciliation[];
   summary: PaidRevenueSummary;
+  excludedIds: Set<string>;
+  onToggleExclusion: (id: string) => void;
+  onIncludeAll?: () => void;
   isLoading?: boolean;
   onRefresh?: () => void;
   isRefreshing?: boolean;
@@ -50,42 +54,62 @@ function sourceVariant(basis: InvoicePaymentReconciliation["amount_basis"]) {
   }
 }
 
-function PaymentRow({ row }: { row: InvoicePaymentReconciliation }) {
+function PaymentRow({
+  row,
+  excluded,
+  onToggleExclusion,
+}: {
+  row: InvoicePaymentReconciliation;
+  excluded: boolean;
+  onToggleExclusion: (id: string) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const invoice = row.invoices;
   const stripeInvoiceUrl = invoice?.external_url ?? invoice?.hosted_invoice_url ?? null;
 
   return (
-    <div className="border rounded-lg overflow-hidden">
-      <button
-        type="button"
-        className="w-full text-left p-3 hover:bg-muted/40 flex items-start gap-3"
-        onClick={() => setExpanded((v) => !v)}
-      >
-        <span className="mt-0.5 text-muted-foreground">
-          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        </span>
-        <div className="grid flex-1 gap-2 md:grid-cols-[120px_1fr_120px_120px_100px_100px_100px_90px] md:items-center text-sm">
-          <span className="text-muted-foreground whitespace-nowrap">
-            {new Date(row.paid_at).toLocaleDateString("en-US", { timeZone: REPORTING_TIMEZONE, month: "short", day: "numeric" })}
+    <div className={cn("border rounded-lg overflow-hidden", excluded && "opacity-60 bg-muted/20")}>
+      <div className="flex items-center gap-2 p-3">
+        <Checkbox
+          checked={!excluded}
+          aria-label={excluded ? "Include payment in totals" : "Exclude payment from totals"}
+          onCheckedChange={() => onToggleExclusion(row.id)}
+          onClick={(e) => e.stopPropagation()}
+        />
+        <button
+          type="button"
+          className="flex flex-1 min-w-0 items-center gap-3 text-left hover:bg-muted/40 rounded-md -my-1 py-1 pr-1"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          <span className="shrink-0 text-muted-foreground flex items-center justify-center w-4">
+            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </span>
-          <div>
-            <div className="font-medium">{invoice?.number ?? "—"}</div>
-            <div className="text-xs text-muted-foreground">{invoice?.client_name ?? "—"}</div>
+          <div className="grid flex-1 min-w-0 gap-2 md:grid-cols-[120px_1fr_120px_120px_100px_100px_100px_90px] md:items-center text-sm">
+            <span className="text-muted-foreground whitespace-nowrap">
+              {new Date(row.paid_at).toLocaleDateString("en-US", { timeZone: REPORTING_TIMEZONE, month: "short", day: "numeric" })}
+            </span>
+            <div className="min-w-0">
+              <div className={cn("font-medium truncate", excluded && "line-through")}>{invoice?.number ?? "—"}</div>
+              <div className="text-xs text-muted-foreground truncate">{invoice?.client_name ?? "—"}</div>
+            </div>
+            <span>{formatOriginalPaid(row)}</span>
+            <span className="text-xs">{formatFxRate(row)}</span>
+            <span className="font-medium">{formatMinorEur(row.gross_eur_minor)}</span>
+            <span className="text-danger">{formatMinorEur(row.stripe_fee_eur_minor)}</span>
+            <span>{formatMinorEur(row.net_eur_minor)}</span>
+            <StatusBadge
+              status={excluded ? "Excluded" : reconciliationStatusLabel(row)}
+              variant={excluded ? "neutral" : sourceVariant(row.amount_basis)}
+            />
           </div>
-          <span>{formatOriginalPaid(row)}</span>
-          <span className="text-xs">{formatFxRate(row)}</span>
-          <span className="font-medium">{formatMinorEur(row.gross_eur_minor)}</span>
-          <span className="text-danger">{formatMinorEur(row.stripe_fee_eur_minor)}</span>
-          <span>{formatMinorEur(row.net_eur_minor)}</span>
-          <StatusBadge status={reconciliationStatusLabel(row)} variant={sourceVariant(row.amount_basis)} />
-        </div>
-      </button>
+        </button>
+      </div>
       {expanded && (
-        <div className="px-4 pb-4 pt-0 ml-7 space-y-3 text-sm border-t bg-muted/20">
+        <div className="px-4 pb-4 pt-0 ml-10 space-y-3 text-sm border-t bg-muted/20">
           <div className="flex flex-wrap gap-2 pt-3">
             <Badge variant="outline">{reconciliationSourceBadge(row)}</Badge>
             {row.is_paid_out_of_band && <Badge variant="outline">Paid outside Stripe</Badge>}
+            {excluded && <Badge variant="outline">Excluded from totals</Badge>}
           </div>
           <dl className="grid gap-2 sm:grid-cols-2 text-xs">
             <div><dt className="text-muted-foreground">Invoice Payment ID</dt><dd className="font-mono break-all">{row.external_invoice_payment_id ?? "—"}</dd></div>
@@ -148,14 +172,18 @@ export function PaidRevenueBreakdownDialog({
   monthKey,
   rows,
   summary,
+  excludedIds,
+  onToggleExclusion,
+  onIncludeAll,
   isLoading,
   onRefresh,
   isRefreshing,
 }: PaidRevenueBreakdownDialogProps) {
   const monthLabel = formatReportingMonthLabel(monthKey);
+  const excludedCount = excludedIds.size;
 
   const exportCsv = () => {
-    const csv = paidRevenueRowsToCsv(rows);
+    const csv = paidRevenueRowsToCsv(rows, excludedIds);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -174,10 +202,16 @@ export function PaidRevenueBreakdownDialog({
           <DialogTitle>Paid revenue breakdown — {monthLabel}</DialogTitle>
           <DialogDescription>
             Gross paid revenue reconciled from Stripe payments and balance transactions. Reporting timezone: {REPORTING_TIMEZONE}.
+            Uncheck a payment to exclude it from totals.
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-wrap gap-2 justify-end">
+          {excludedCount > 0 && onIncludeAll && (
+            <Button variant="ghost" size="sm" onClick={onIncludeAll}>
+              Include all ({excludedCount} excluded)
+            </Button>
+          )}
           {onRefresh && (
             <Button variant="outline" size="sm" onClick={onRefresh} disabled={isRefreshing}>
               {isRefreshing ? "Refreshing…" : "Reconcile from Stripe"}
@@ -207,10 +241,11 @@ export function PaidRevenueBreakdownDialog({
           </div>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-3 text-xs text-muted-foreground">
-          <span>Payments: {summary.paymentCount}</span>
+        <div className="grid gap-2 sm:grid-cols-4 text-xs text-muted-foreground">
+          <span>Payments included: {summary.paymentCount}</span>
           <span>Stripe actual/native: {summary.reconciledActualCount}</span>
           <span>Reference/unresolved: {summary.referenceCount + summary.unresolvedCount}</span>
+          {excludedCount > 0 && <span className="text-warning">Excluded: {excludedCount}</span>}
         </div>
 
         {unresolvedWarning && (
@@ -231,17 +266,28 @@ export function PaidRevenueBreakdownDialog({
           </p>
         ) : (
           <div className="space-y-2">
-            <div className="hidden md:grid grid-cols-[120px_1fr_120px_120px_100px_100px_100px_90px] gap-3 px-10 text-xs font-medium text-muted-foreground">
+            <div className="hidden md:grid grid-cols-[120px_1fr_120px_120px_100px_100px_100px_90px] gap-3 pl-[4.5rem] text-xs font-medium text-muted-foreground">
               <span>Paid date</span><span>Invoice / Client</span><span>Original paid</span><span>FX source</span><span>Gross EUR</span><span>Stripe fees</span><span>Net EUR</span><span>Status</span>
             </div>
-            {rows.map((row) => <PaymentRow key={row.id} row={row} />)}
+            {rows.map((row) => (
+              <PaymentRow
+                key={row.id}
+                row={row}
+                excluded={excludedIds.has(row.id)}
+                onToggleExclusion={onToggleExclusion}
+              />
+            ))}
           </div>
         )}
 
         <div className={cn("rounded-lg border p-4 text-xs text-muted-foreground space-y-2")}>
           <p><strong>Formula:</strong> Gross paid − Stripe fees = Net received</p>
           <p>Reference EUR and actual Stripe settlement EUR can differ because they use different exchange rates.</p>
-          <p><strong>Diagnostics:</strong> timezone {REPORTING_TIMEZONE}; month {monthKey}; payments included {summary.paymentCount}; last reconciliation {summary.lastReconciledAt ? new Date(summary.lastReconciledAt).toLocaleString() : "never"}.</p>
+          <p>
+            <strong>Diagnostics:</strong> timezone {REPORTING_TIMEZONE}; month {monthKey}; payments included {summary.paymentCount}
+            {excludedCount > 0 ? `; payments excluded ${excludedCount}` : ""}
+            ; last reconciliation {summary.lastReconciledAt ? new Date(summary.lastReconciledAt).toLocaleString() : "never"}.
+          </p>
         </div>
       </DialogContent>
     </Dialog>
