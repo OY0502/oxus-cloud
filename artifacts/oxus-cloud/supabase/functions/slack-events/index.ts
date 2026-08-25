@@ -5,6 +5,8 @@ import {
   upsertProjectSlackEvent,
 } from "../_shared/slackEventStore.ts";
 import type { ProjectSlackLinkRow } from "../_shared/slack-auth.ts";
+import { buildSlackThreadKey } from "../_shared/projectSignalPipeline.ts";
+import { syncSlackThreadKnowledge } from "../_shared/slackKnowledgeMemory.ts";
 
 Deno.serve(async (req) => {
   const rawBody = await req.text();
@@ -68,6 +70,19 @@ Deno.serve(async (req) => {
     for (const link of links as ProjectSlackLinkRow[]) {
       try {
         await upsertProjectSlackEvent({ admin, link, message });
+        const threadKey = buildSlackThreadKey(
+          message.slack_team_id,
+          message.slack_channel_id,
+          message.slack_thread_ts,
+          message.slack_ts,
+        );
+        await syncSlackThreadKnowledge({
+          admin,
+          projectId: link.project_id,
+          projectSlackLinkId: link.id,
+          threadKeys: [threadKey],
+          limit: 200,
+        });
         await admin
           .from("project_slack_links")
           .update({

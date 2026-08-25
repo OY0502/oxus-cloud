@@ -90,7 +90,9 @@ export type ProjectSlackLinkRow = {
   is_client_facing: boolean;
   status: string;
   ingest_from_ts?: string | null;
+  last_event_ts?: string | null;
   last_processed_ts?: string | null;
   sync_mode?: string | null;
+  metadata?: Record<string, unknown> | null;
   created_at?: string | null;
 };

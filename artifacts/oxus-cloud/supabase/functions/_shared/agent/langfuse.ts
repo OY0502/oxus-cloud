@@ -1,4 +1,5 @@
 export type TraceMetadata = {
+  [key: string]: unknown;
   project_id?: string;
   agent_run_id?: string;
   tool_run_id?: string;

@@ -310,6 +310,16 @@ export type ReprocessSlackEventsResult = {
     skipped_reason?: string;
   }>;
   warnings: string[];
+  knowledge?: SlackKnowledgeSyncResult;
+};
+
+export type SlackKnowledgeSyncResult = {
+  threads_checked: number;
+  sources_created: number;
+  sources_updated: number;
+  sources_unchanged: number;
+  sources_skipped: number;
+  source_ids: string[];
 };
 
 export type SlackSyncProjectChannelResult = {
@@ -324,6 +334,9 @@ export type SlackSyncProjectChannelResult = {
   latest_messages_preview: SlackSyncDebugMessagePreview[];
   warnings: string[];
   reprocessed?: boolean;
+  knowledge_sources_created_count?: number;
+  knowledge_sources_updated_count?: number;
+  knowledge_sources_unchanged_count?: number;
 };
 
 export type ProcessAiJobsResult = {

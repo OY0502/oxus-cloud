@@ -496,7 +496,10 @@ export function aiActionOverlapsExisting(candidate: PmActionCandidate, existingI
     if (matchByKey) return true;
   }
   if (candidate.action_type === "request_access" || candidate.category === "access_needed") {
-    const taskId = candidate.related_clickup_task_ids[0] ?? candidate.action_payload?.clickup_task_ids?.[0];
+    const payloadTaskIds = Array.isArray(candidate.action_payload?.clickup_task_ids)
+      ? candidate.action_payload.clickup_task_ids.filter((value): value is string => typeof value === "string")
+      : [];
+    const taskId = candidate.related_clickup_task_ids[0] ?? payloadTaskIds[0];
     const resource =
       candidate.blocker_resource ??
       extractResourceFromText(`${candidate.title} ${candidate.description ?? ""}`);

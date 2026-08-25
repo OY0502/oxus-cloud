@@ -73,6 +73,13 @@ function channelOptionLabel(channel: SlackChannelOption) {
   return `#${channel.name}${shared}`;
 }
 
+function historyBackfillPending(link: ProjectSlackLink) {
+  const metadata = link.metadata && typeof link.metadata === "object" && !Array.isArray(link.metadata)
+    ? link.metadata as Record<string, unknown>
+    : {};
+  return link.sync_mode === "bounded_history" && metadata.history_backfill_complete !== true;
+}
+
 function SlackLinkDiagnostics({
   projectId,
   link,
@@ -332,7 +339,7 @@ function LinkCard({
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" className="h-7 text-xs gap-1" disabled={busy} onClick={onSync}>
           <RefreshCw className={`h-3 w-3 ${busy ? "animate-spin" : ""}`} />
-          Sync latest
+          {historyBackfillPending(link) ? "Continue import" : "Sync latest"}
         </Button>
         <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={busy} onClick={onDisable}>
           Unlink
@@ -367,6 +374,7 @@ export function ProjectSlackPanel({ projectId }: { projectId: string }) {
   const [linkLabel, setLinkLabel] = useState("");
   const [includeInAi, setIncludeInAi] = useState(true);
   const [includeInClientUpdates, setIncludeInClientUpdates] = useState(false);
+  const [historyDays, setHistoryDays] = useState(90);
   const [channels, setChannels] = useState<SlackChannelOption[]>([]);
   const [syncResults, setSyncResults] = useState<Record<string, SlackSyncProjectChannelResult>>({});
   const [reprocessResults, setReprocessResults] = useState<Record<string, ReprocessSlackEventsResult>>({});
@@ -403,6 +411,7 @@ export function ProjectSlackPanel({ projectId }: { projectId: string }) {
     setLinkLabel("");
     setIncludeInAi(true);
     setIncludeInClientUpdates(false);
+    setHistoryDays(90);
     setChannels([]);
   };
 
@@ -428,8 +437,9 @@ export function ProjectSlackPanel({ projectId }: { projectId: string }) {
 
   const submitLink = async () => {
     if (!activeWorkspace || !selectedChannelId) return;
+    let linked: ProjectSlackLink;
     try {
-      await linkChannel.mutateAsync({
+      linked = await linkChannel.mutateAsync({
         project_id: projectId,
         slack_team_id: activeWorkspace.slack_team_id,
         slack_channel_id: selectedChannelId,
@@ -438,12 +448,33 @@ export function ProjectSlackPanel({ projectId }: { projectId: string }) {
         include_in_ai: includeInAi,
         include_in_client_updates: includeInClientUpdates,
         is_client_facing: linkType === "external",
+        history_days: historyDays,
       });
-      setLinkOpen(false);
-      resetLinkForm();
-      toast({ title: "Slack channel linked" });
     } catch (e) {
       toast({ title: "Could not link channel", description: (e as Error).message, variant: "destructive" });
+      return;
+    }
+
+    setLinkOpen(false);
+    resetLinkForm();
+    try {
+      const result = await syncChannel.mutateAsync({
+        project_id: projectId,
+        project_slack_link_id: linked.id,
+        limit: historyDays > 0 ? 500 : 100,
+      });
+      setSyncResults((prev) => ({ ...prev, [linked.id]: result }));
+      const memories = (result.knowledge_sources_created_count ?? 0) + (result.knowledge_sources_updated_count ?? 0);
+      toast({
+        title: "Slack channel connected",
+        description: `${result.imported_count} message(s) imported and ${memories} conversation memory piece(s) prepared.`,
+      });
+    } catch (e) {
+      toast({
+        title: "Channel linked; initial import needs a retry",
+        description: (e as Error).message,
+        variant: "destructive",
+      });
     }
   };
 
@@ -590,7 +621,10 @@ export function ProjectSlackPanel({ projectId }: { projectId: string }) {
                 onChange={(value) => {
                   setSelectedChannelId(value);
                   const channel = channels.find((c) => c.id === value);
-                  if (channel) setLinkType(channel.suggested_link_type);
+                  if (channel) {
+                    setLinkType(channel.suggested_link_type);
+                    setHistoryDays(channel.suggested_link_type === "external" ? 90 : 30);
+                  }
                 }}
                 options={channelSelectOptions}
                 placeholder={listChannels.isPending ? "Loading channels…" : "Select a channel"}
@@ -615,7 +649,14 @@ export function ProjectSlackPanel({ projectId }: { projectId: string }) {
             )}
             <div className="space-y-2">
               <Label>Type</Label>
-              <Select value={linkType} onValueChange={(v) => setLinkType(v as ProjectSlackLinkType)}>
+              <Select
+                value={linkType}
+                onValueChange={(value) => {
+                  const nextType = value as ProjectSlackLinkType;
+                  setLinkType(nextType);
+                  setHistoryDays(nextType === "external" ? 90 : 30);
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -625,6 +666,24 @@ export function ProjectSlackPanel({ projectId }: { projectId: string }) {
                   <SelectItem value="other">Other</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>History to import</Label>
+              <Select value={String(historyDays)} onValueChange={(value) => setHistoryDays(Number(value))}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">New messages only</SelectItem>
+                  <SelectItem value="30">Last 30 days</SelectItem>
+                  <SelectItem value="90">Last 90 days · recommended</SelectItem>
+                  <SelectItem value="180">Last 180 days</SelectItem>
+                  <SelectItem value="365">Last year</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                This is a one-time, bounded import. New messages continue through Slack events; no extra polling job is added.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="slack-label">Label (optional)</Label>

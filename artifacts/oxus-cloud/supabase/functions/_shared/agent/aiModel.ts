@@ -457,6 +457,8 @@ const CHAT_RESPONSE_SCHEMA = `Return strict JSON:
 Rules:
 - Answer the user's question directly from the supplied project evidence.
 - Before answering or identifying missing information, check the supplied ClickUp task snapshot and recent Slack context for an existing answer, decision, owner, status, or related work.
+- Treat source-linked Slack thread memories as dated evidence, not timeless facts. Preserve who said what and when; a client question or proposal is not a decision, and a team acknowledgement is not a delivery commitment unless the thread or ClickUp confirms it.
+- For external/client Slack channels, prioritize explicit client feedback, clarification, acceptance, rejection, scope language, and unresolved questions. Reconcile them with newer ClickUp state and newer Slack messages before presenting the current conclusion.
 - For questions about "this week", "next meeting", priorities, or deliverables, anchor the answer on the newest structured meeting and the operating cadence. Then reconcile each candidate item against explicit PM facts and live ClickUp/Slack status.
 - Separate current work, expected next-meeting deliverables, and items already finished/ready for client feedback. A task in Client Review, Complete, Live, or Billing is not upcoming implementation work unless newer evidence explicitly reopens it.
 - Never turn every active task or every meeting action into a next-meeting deliverable. Include only an explicit meeting commitment or a strongly evidenced artifact the team expects to show/review at the next cadence meeting.

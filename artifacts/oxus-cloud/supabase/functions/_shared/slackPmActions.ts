@@ -128,7 +128,10 @@ function appendChangeHistory(
   existing: unknown[],
   entry: Record<string, unknown>,
 ): Record<string, unknown>[] {
-  return [...(Array.isArray(existing) ? existing : []), entry];
+  const previous = Array.isArray(existing)
+    ? existing.filter((value): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value))
+    : [];
+  return [...previous, entry];
 }
 
 async function autoResolveMeetingAction(args: {

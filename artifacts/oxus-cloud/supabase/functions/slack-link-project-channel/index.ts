@@ -50,6 +50,7 @@ Deno.serve(async (req) => {
       include_in_ai?: boolean;
       include_in_client_updates?: boolean;
       is_client_facing?: boolean;
+      history_days?: number;
     };
     try {
       body = await req.json();
@@ -98,8 +99,14 @@ Deno.serve(async (req) => {
       // allowed but UI warns
     }
 
-    const ingestFromTs = slackTsNow();
-    const row = {
+    const historyDays = Math.min(Math.max(Number(body.history_days ?? 0), 0), 365);
+    const ingestFromTs = historyDays > 0
+      ? `${Math.floor((Date.now() - historyDays * 86_400_000) / 1000)}.000000`
+      : slackTsNow();
+    const ignoreHistoryBefore = historyDays > 0
+      ? new Date(Date.now() - historyDays * 86_400_000).toISOString()
+      : new Date().toISOString();
+    const row: Record<string, unknown> = {
       project_id: projectId,
       slack_team_id: slackTeamId,
       slack_channel_id: slackChannelId,
@@ -117,22 +124,39 @@ Deno.serve(async (req) => {
       status: "active",
       last_error: null,
       ingest_from_ts: ingestFromTs,
-      ignore_history_before_ts: new Date().toISOString(),
-      sync_mode: "new_messages_only",
+      ignore_history_before_ts: ignoreHistoryBefore,
+      sync_mode: historyDays > 0 ? "bounded_history" : "new_messages_only",
       created_by: auth.userId,
-      metadata: { suggested_external: isExtShared || isShared },
+      metadata: {
+        suggested_external: isExtShared || isShared,
+        history_days: historyDays,
+        history_backfill_complete: historyDays === 0,
+        history_cursor: null,
+      },
     };
 
     const { data: existingLink } = await admin
       .from("project_slack_links")
-      .select("id, ingest_from_ts")
+      .select("id, ingest_from_ts, ignore_history_before_ts, metadata")
       .eq("project_id", projectId)
       .eq("slack_team_id", slackTeamId)
       .eq("slack_channel_id", slackChannelId)
       .maybeSingle();
 
-    const upsertRow = existingLink?.ingest_from_ts
-      ? { ...row, ingest_from_ts: existingLink.ingest_from_ts, ignore_history_before_ts: undefined }
+    const existingBaseline = existingLink?.ingest_from_ts ? Number(existingLink.ingest_from_ts) : null;
+    const requestedBaseline = Number(ingestFromTs);
+    const preserveEarlierBaseline = existingBaseline != null && Number.isFinite(existingBaseline)
+      && (historyDays === 0 || existingBaseline < requestedBaseline);
+    const existingMetadata = existingLink?.metadata && typeof existingLink.metadata === "object"
+      ? existingLink.metadata as Record<string, unknown>
+      : {};
+    const upsertRow = preserveEarlierBaseline
+      ? {
+        ...row,
+        ingest_from_ts: existingLink!.ingest_from_ts,
+        ignore_history_before_ts: existingLink!.ignore_history_before_ts ?? ignoreHistoryBefore,
+        metadata: { ...existingMetadata, suggested_external: isExtShared || isShared },
+      }
       : row;
 
     const { data: link, error: upsertError } = await admin

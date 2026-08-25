@@ -364,6 +364,9 @@ async function loadSlackMessageContext(args: {
         user: typeof message.user === "string" ? message.user : null,
         ts: typeof message.ts === "string" ? message.ts : null,
         thread_ts: typeof message.thread_ts === "string" ? message.thread_ts : null,
+        channel_id: channelId,
+        channel_name: typeof args.link?.channel_name === "string" ? args.link.channel_name : null,
+        link_type: typeof args.link?.link_type === "string" ? args.link.link_type : null,
       }))
       .slice(0, 36);
     return { messages: compact, source: "live" };
@@ -735,6 +738,20 @@ async function prepareToolInput(args: {
     });
   }
 
+  if (args.toolName === "add_clickup_comment") {
+    const taskId = String(toolInput.task_id ?? "").trim();
+    const commentText = String(toolInput.comment_text ?? "").trim();
+    if (!taskId || !commentText) return null;
+    const allowClientMentions = explicitlyAllowsMentions(args.inputText);
+    return {
+      ...toolInput,
+      task_id: taskId,
+      comment_text: (allowClientMentions ? commentText : removeMentionSyntax(commentText)).slice(0, 8000),
+      allow_client_mentions: allowClientMentions,
+      requested_by_user: true,
+    };
+  }
+
   if (args.toolName === "link_clickup_doc_to_task") {
     return prepareLinkClickupDocToTaskInput({
       rawInput: { ...toolInput, project_id: args.projectId },
@@ -830,19 +847,6 @@ export async function runProjectAgent(args: {
     chatSessionId = typeof run?.chat_session_id === "string" ? run.chat_session_id : null;
   }
 
-  if (args.toolName === "add_clickup_comment") {
-    const taskId = String(toolInput.task_id ?? "").trim();
-    const commentText = String(toolInput.comment_text ?? "").trim();
-    if (!taskId || !commentText) return null;
-    const allowClientMentions = explicitlyAllowsMentions(args.inputText);
-    return {
-      ...toolInput,
-      task_id: taskId,
-      comment_text: (allowClientMentions ? commentText : removeMentionSyntax(commentText)).slice(0, 8000),
-      allow_client_mentions: allowClientMentions,
-      requested_by_user: true,
-    };
-  }
   if (input.chat && !chatSessionId) {
     const { data: session, error: sessionError } = await args.admin
       .from("project_chat_sessions")
@@ -916,10 +920,16 @@ export async function runProjectAgent(args: {
     args.admin.from("project_timeline_events").select("event_title, event_summary, source_type, created_at").eq("project_id", input.project_id).order("created_at", { ascending: false }).limit(15),
     args.admin.from("project_signals").select("title, summary, signal_type, signal_status, created_at").eq("project_id", input.project_id).order("created_at", { ascending: false }).limit(15),
     args.admin.from("project_clickup_links").select("*").eq("project_id", input.project_id).maybeSingle(),
-    args.admin.from("project_slack_links").select("id, status, last_synced_at, last_event_ts, slack_team_id, slack_channel_id, include_in_ai").eq("project_id", input.project_id).maybeSingle(),
+    args.admin
+      .from("project_slack_links")
+      .select("id, status, last_synced_at, last_event_ts, slack_team_id, slack_channel_id, channel_name, link_type, include_in_ai")
+      .eq("project_id", input.project_id)
+      .eq("status", "active")
+      .eq("include_in_ai", true)
+      .order("last_synced_at", { ascending: false, nullsFirst: false }),
     args.admin
       .from("project_slack_events")
-      .select("message_text, message_preview, slack_user_name, slack_ts, slack_thread_ts, signal_type, created_at")
+      .select("slack_channel_id, message_text, message_preview, slack_user_name, slack_ts, slack_thread_ts, signal_type, created_at")
       .eq("project_id", input.project_id)
       .eq("include_in_ai", true)
       .neq("signal_type", "noise")
@@ -984,12 +994,26 @@ export async function runProjectAgent(args: {
         hierarchyRows,
       })
     : { tasks: [] as ClickupTaskSnapshotItem[], source: "unavailable" as const, warnings: [] as string[] };
-  const slackContext = input.chat
-    ? await loadSlackMessageContext({
+  const slackLinks = ((slackLinkRes.data ?? []) as Record<string, unknown>[]).slice(0, 6);
+  const slackContexts = input.chat
+    ? await Promise.all(slackLinks.map((link) => loadSlackMessageContext({
         admin: args.admin,
-        link: slackLinkRes.data as Record<string, unknown> | null,
-        cached: slackEventsRes.data ?? [],
-      })
+        link,
+        cached: (slackEventsRes.data ?? []).filter((event) =>
+          String((event as Record<string, unknown>).slack_channel_id ?? "") === String(link.slack_channel_id ?? "")
+        ),
+      })))
+    : [];
+  const slackContext = slackContexts.length > 0
+    ? {
+        messages: slackContexts.flatMap((context) => context.messages).slice(0, 72),
+        source: slackContexts.some((context) => context.source === "live")
+          ? "live" as const
+          : slackContexts.some((context) => context.source === "cached")
+            ? "cached" as const
+            : "unavailable" as const,
+        warning: slackContexts.flatMap((context) => context.warning ? [context.warning] : []).join(" ") || undefined,
+      }
     : { messages: [] as unknown[], source: "unavailable" as const };
   const linkedReferenceResolution = input.chat
     ? await resolveExplicitLinkedReferences({
@@ -997,7 +1021,7 @@ export async function runProjectAgent(args: {
         projectId: input.project_id,
         userId: input.user_id,
         text: agentInputText,
-        slackLink: slackLinkRes.data as Record<string, unknown> | null,
+        slackLinks,
         clickupLink: clickupLinkRes.data as Record<string, unknown> | null,
       })
     : { references: [], warnings: [] };
@@ -1072,7 +1096,8 @@ export async function runProjectAgent(args: {
     timeline: timelineRes.data ?? [],
     signals: signalsRes.data ?? [],
     clickupConnected,
-    slackConnected: !!slackLinkRes.data,
+    slackConnected: slackLinks.length > 0,
+    slackLinks,
     clickupHierarchy: hierarchyRows,
     clickupLink: clickupLinkRes.data as Record<string, unknown> | null,
     clickupTasks: input.chat ? clickupTaskSnapshot.tasks : undefined,
@@ -1087,7 +1112,11 @@ export async function runProjectAgent(args: {
       latestTimelineAt: (timelineRes.data?.[0] as { created_at?: string } | undefined)?.created_at ?? null,
       latestSignalAt: (signalsRes.data?.[0] as { created_at?: string } | undefined)?.created_at ?? null,
       clickupLastSyncAt: (clickupLinkRes.data as { last_sync_at?: string | null } | null)?.last_sync_at ?? null,
-      slackLastSyncAt: (slackLinkRes.data as { last_synced_at?: string | null } | null)?.last_synced_at ?? null,
+      slackLastSyncAt: slackLinks
+        .map((link) => typeof link.last_synced_at === "string" ? link.last_synced_at : null)
+        .filter((value): value is string => !!value)
+        .sort()
+        .at(-1) ?? null,
     },
   };
 
@@ -1569,10 +1598,10 @@ export async function runProjectAgent(args: {
     : baseSummary;
 
   // Accurate tool-call accounting by category (drives the external-action warning).
-  const plannedToolNames: string[] = [
+  const plannedToolNames = [
     ...(plan.tool_calls ?? []).map((t) => t.tool_name),
     ...(plan.workflows ?? []).flatMap((w) => (w.steps ?? []).map((s) => s.tool_name)),
-  ].filter((n): n is string => !!n);
+  ];
   const totalToolCallsPlanned = plannedToolNames.length;
   const externalMutationPlanned = plannedToolNames.filter((n) => isExternalMutationTool(n)).length;
   const confirmationRequiredPlanned = plannedToolNames.filter((n) => toolRequiresConfirmation(n)).length;

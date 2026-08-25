@@ -13,6 +13,7 @@ import { resolveSlackEventMessageText } from "./slackMessageText.ts";
 import type { ProjectSlackLinkRow } from "./slack-auth.ts";
 import { processSlackThreadIntelligenceForProject } from "./slackPmActions.ts";
 import type { SuppressionReason } from "./pmActionSuppression.ts";
+import { syncSlackThreadKnowledge, type SlackKnowledgeSyncResult } from "./slackKnowledgeMemory.ts";
 
 export type ReprocessSlackPreview = {
   text: string;
@@ -44,6 +45,7 @@ export type ReprocessSlackEventsResult = {
   previews: ReprocessSlackPreview[];
   warnings: string[];
   suppression_reasons: SuppressionReason[];
+  knowledge: SlackKnowledgeSyncResult;
 };
 
 type DbSlackEvent = SlackEventRow & {
@@ -98,6 +100,14 @@ export async function reprocessSlackEventsForProject(args: {
     previews: [],
     warnings: [],
     suppression_reasons: [],
+    knowledge: {
+      threads_checked: 0,
+      sources_created: 0,
+      sources_updated: 0,
+      sources_unchanged: 0,
+      sources_skipped: 0,
+      source_ids: [],
+    },
   };
 
   let linksQuery = args.admin
@@ -268,6 +278,16 @@ export async function reprocessSlackEventsForProject(args: {
     }
   } catch (error) {
     result.warnings.push(`Thread intelligence failed: ${(error as Error).message}`);
+  }
+
+  try {
+    result.knowledge = await syncSlackThreadKnowledge({
+      admin: args.admin,
+      projectId: args.projectId,
+      projectSlackLinkId: args.projectSlackLinkId,
+    });
+  } catch (error) {
+    result.warnings.push(`Slack memory extraction failed: ${(error as Error).message}`);
   }
 
   return result;

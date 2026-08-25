@@ -9,6 +9,7 @@ import {
   persistClickupSetupAudit,
 } from "./clickupProjectSetup.ts";
 import { provisionDeliveryListInSpace } from "./clickupSetupProvision.ts";
+import { dateToClickupDue } from "./clickupTaskFields.ts";
 
 export {
   CLICKUP_PRIORITY_OPTIONS,

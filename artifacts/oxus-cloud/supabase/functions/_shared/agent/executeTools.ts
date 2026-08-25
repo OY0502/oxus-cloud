@@ -346,9 +346,9 @@ export async function executeSyncClickupDocsFromToolRun(args: {
     projectId: args.projectId,
     userId: args.userId,
     link: {
-      clickup_space_id: link.clickup_space_id,
-      clickup_folder_id: link.clickup_folder_id,
-      clickup_list_id: link.clickup_list_id,
+      clickup_space_id: typeof link.clickup_space_id === "string" ? link.clickup_space_id : null,
+      clickup_folder_id: typeof link.clickup_folder_id === "string" ? link.clickup_folder_id : null,
+      clickup_list_id: typeof link.clickup_list_id === "string" ? link.clickup_list_id : null,
       space_name: (link as Record<string, unknown>).space_name as string | null | undefined,
       folder_name: (link as Record<string, unknown>).folder_name as string | null | undefined,
       list_name: (link as Record<string, unknown>).list_name as string | null | undefined,

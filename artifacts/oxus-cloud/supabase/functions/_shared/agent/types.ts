@@ -1,3 +1,5 @@
+export type { TraceMetadata } from "./langfuse.ts";
+
 export type AgentRunStatus =
   | "pending"
   | "running"

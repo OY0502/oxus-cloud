@@ -131,19 +131,18 @@ export function getServiceRoleSupabase() {
 
 function parseAuthorizedTeams(value: unknown): ClickupAuthorizedTeam[] {
   if (!Array.isArray(value)) return [];
-  return value
-    .map((team) => {
-      if (!team || typeof team !== "object") return null;
+  return value.reduce<ClickupAuthorizedTeam[]>((teams, team) => {
+      if (!team || typeof team !== "object") return teams;
       const row = team as Record<string, unknown>;
       const id = row.id ?? row.team_id;
-      if (id === undefined || id === null) return null;
-      return {
+      if (id === undefined || id === null) return teams;
+      teams.push({
         id: String(id),
         name: typeof row.name === "string" ? row.name : String(id),
         color: typeof row.color === "string" ? row.color : null,
-      };
-    })
-    .filter((team): team is ClickupAuthorizedTeam => team !== null);
+      });
+      return teams;
+    }, []);
 }
 
 function teamIsAuthorized(connection: UserClickupConnectionRow, teamId: string): boolean {

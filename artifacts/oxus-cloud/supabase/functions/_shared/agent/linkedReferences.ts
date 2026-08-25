@@ -191,7 +191,8 @@ export async function resolveExplicitLinkedReferences(args: {
   projectId: string;
   userId: string;
   text: string;
-  slackLink: Record<string, unknown> | null;
+  slackLink?: Record<string, unknown> | null;
+  slackLinks?: Record<string, unknown>[];
   clickupLink: Record<string, unknown> | null;
 }): Promise<LinkedReferenceResolution> {
   const references: LinkedReference[] = [];
@@ -200,7 +201,11 @@ export async function resolveExplicitLinkedReferences(args: {
     try {
       const url = new URL(rawUrl);
       if (/(^|\.)slack\.com$/i.test(url.hostname)) {
-        references.push(await resolveSlackReference({ admin: args.admin, url, link: args.slackLink }));
+        const linkedChannel = url.pathname.match(/^\/archives\/([^/]+)/i)?.[1] ?? "";
+        const slackLink = args.slackLinks?.find((link) =>
+          String(link.slack_channel_id ?? "") === linkedChannel && link.include_in_ai !== false
+        ) ?? args.slackLink ?? null;
+        references.push(await resolveSlackReference({ admin: args.admin, url, link: slackLink }));
       } else if (/(^|\.)clickup\.com$/i.test(url.hostname)) {
         references.push(await resolveClickupReference({
           admin: args.admin,

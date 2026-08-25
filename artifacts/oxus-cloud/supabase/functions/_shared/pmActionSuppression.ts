@@ -382,10 +382,14 @@ export async function recordActionSuppression(args: {
 
 export function proposedFromCandidate(candidate: {
   action_key?: string | null;
+  action_identity?: string | null;
   action_type?: string;
   category?: string;
   title?: string;
+  description?: string | null;
+  source_message?: string | null;
   source_event_ids?: string[];
+  source_signal_ids?: string[];
   action_payload?: Record<string, unknown>;
   source_thread_key?: string | null;
   source_type?: string | null;
@@ -411,10 +415,12 @@ export function proposedFromCandidate(candidate: {
     category: candidate.category ?? null,
     title: candidate.title ?? null,
     source_message:
+      candidate.source_message ??
       (typeof payload.original_message === "string" ? payload.original_message : null) ??
       candidate.description ??
       null,
     source_event_ids: candidate.source_event_ids ?? [],
+    source_signal_ids: candidate.source_signal_ids ?? [],
     action_payload: payload,
     is_escalation: candidate.is_escalation,
   };

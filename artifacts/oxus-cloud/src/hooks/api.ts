@@ -2948,6 +2948,7 @@ export function useSlackLinkProjectChannel() {
       include_in_ai?: boolean;
       include_in_client_updates?: boolean;
       is_client_facing?: boolean;
+      history_days?: number;
     }) => {
       const token = await getAuthToken();
       const { data, error } = await supabase.functions.invoke<{ link: ProjectSlackLink }>(
@@ -2977,6 +2978,9 @@ function normalizeSlackSyncResult(data: Partial<SlackSyncProjectChannelResult>):
     latest_messages_preview: Array.isArray(data.latest_messages_preview) ? data.latest_messages_preview : [],
     warnings: Array.isArray(data.warnings) ? data.warnings : [],
     reprocessed: data.reprocessed,
+    knowledge_sources_created_count: data.knowledge_sources_created_count ?? 0,
+    knowledge_sources_updated_count: data.knowledge_sources_updated_count ?? 0,
+    knowledge_sources_unchanged_count: data.knowledge_sources_unchanged_count ?? 0,
   };
 }
 
