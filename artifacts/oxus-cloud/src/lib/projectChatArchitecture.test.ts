@@ -389,7 +389,12 @@ describe("project chat architecture", () => {
     expect(orchestration).toContain("explicitlyAllowsMentions(inputText)");
     expect(execution).toContain("executeAddClickupCommentFromToolRun");
     expect(execution).toContain("CLICKUP_BOT_API_TOKEN");
+    expect(execution).toContain("comment_preview");
+    expect(execution).toContain("actor_name");
     expect(confirmation).toContain("Client tags and @mentions are disabled");
+    expect(confirmation).toContain("Comment added successfully");
+    expect(confirmation).toContain("Open in ClickUp");
+    expect(confirmation).toContain('presentation === "chat" && r.status === "succeeded"');
     expect(chat).toContain("<Popover open={chatPickerOpen}");
     expect(chat).not.toContain("<select");
   });

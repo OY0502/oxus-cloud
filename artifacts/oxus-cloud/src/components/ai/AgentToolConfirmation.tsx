@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { AlertCircle, Check, ChevronDown, ChevronUp, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";
+import { AlertCircle, Check, CheckCircle2, ChevronDown, ChevronUp, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -55,8 +55,12 @@ export function AgentToolConfirmationList({
   );
 
   const visible = useMemo(
-    () => scoped.filter((r) => isActionableAgentToolRun(r) || r.status === "running"),
-    [scoped],
+    () => scoped.filter((r) =>
+      isActionableAgentToolRun(r)
+      || r.status === "running"
+      || (presentation === "chat" && r.status === "succeeded")
+    ),
+    [scoped, presentation],
   );
 
   const { workflows, standalone } = useMemo(() => groupToolRunsByWorkflow(visible), [visible]);
@@ -65,6 +69,7 @@ export function AgentToolConfirmationList({
 
   const failedCount = visible.filter((r) => r.status === "failed").length;
   const runningCount = visible.filter((r) => r.status === "running" && !isStaleAgentToolRun(r)).length;
+  const allSucceeded = visible.every((r) => r.status === "succeeded");
 
   return (
     <div className={presentation === "chat" ? "space-y-2.5" : "space-y-3"}>
@@ -73,7 +78,9 @@ export function AgentToolConfirmationList({
           ? "Tool actions in progress"
           : failedCount > 0
             ? "Confirmations & retries"
-            : "Pending confirmations"}
+            : allSucceeded
+              ? "Completed actions"
+              : "Pending confirmations"}
       </p>
 
       {workflows.map((workflow) => (
@@ -269,6 +276,7 @@ function AgentToolConfirmationCard({
   const destination = destinationFromPayload(payload);
   const sourceContext = sourceContextFromPayload(payload);
   const isFailed = toolRun.status === "failed";
+  const isSucceeded = toolRun.status === "succeeded";
   const isRunning = toolRun.status === "running" && !isStaleAgentToolRun(toolRun);
   const isStaleRunning = toolRun.status === "running" && isStaleAgentToolRun(toolRun);
   const docContentMissing = isDoc && !isRunning && !isClickupDocContentValid(description);
@@ -282,6 +290,15 @@ function AgentToolConfirmationCard({
   const canConfirmComment = !isComment || commentText.trim().length > 0;
   const canConfirm = canConfirmDoc && canConfirmTask && canConfirmComment;
   const showEditor = presentation !== "chat" || expanded || isFailed || isStaleRunning;
+  const result = resultPayload(toolRun.result_payload);
+  const resultUrl = payloadField(result, "comment_url")
+    || payloadField(result, "url")
+    || payloadField(payload, "task_url");
+  const resultTaskName = payloadField(result, "task_name")
+    || payloadField(payload, "task_name")
+    || "ClickUp task";
+  const resultActorName = payloadField(result, "actor_name");
+  const resultPreview = payloadField(result, "comment_preview") || commentText;
 
   React.useEffect(() => {
     if (!onOverrideChange) return;
@@ -318,8 +335,47 @@ function AgentToolConfirmationCard({
           {stepIndex != null && <span className="text-muted-foreground mr-1.5">Step {stepIndex}.</span>}
           {toolDisplayName(toolRun.tool_name)}
         </p>
-        <span className="rounded-full bg-warning-muted px-2 py-0.5 text-xs font-medium text-warning-foreground">{toolRun.status.replace(/_/g, " ")}</span>
+        <span className={isSucceeded
+          ? "rounded-full bg-success-muted px-2 py-0.5 text-xs font-medium text-success"
+          : "rounded-full bg-warning-muted px-2 py-0.5 text-xs font-medium text-warning-foreground"}
+        >{toolRun.status.replace(/_/g, " ")}</span>
       </div>
+
+      {isSucceeded && (
+        <div className="rounded-lg border border-success/20 bg-success-muted/40 p-3">
+          <div className="flex items-start gap-2.5">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-foreground">
+                {isComment ? "Comment added successfully" : `${toolDisplayName(toolRun.tool_name)} completed`}
+              </p>
+              {isComment && (
+                <>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Posted to <span className="font-medium text-foreground">{resultTaskName}</span>
+                    {resultActorName ? ` by ${resultActorName}` : ""}.
+                  </p>
+                  {resultPreview && (
+                    <p className="mt-2 line-clamp-4 whitespace-pre-wrap rounded-md border border-border/60 bg-background/70 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                      {resultPreview}
+                    </p>
+                  )}
+                </>
+              )}
+              {/^https?:\/\//i.test(resultUrl) && (
+                <a
+                  href={resultUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-info hover:underline"
+                >
+                  Open in ClickUp <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {isRunning && (
         <div className="flex gap-2 text-xs text-muted-foreground">
@@ -362,7 +418,7 @@ function AgentToolConfirmationCard({
         </div>
       )}
 
-      {(isTask || isDoc || isComment) && !isRunning && !showEditor && (
+      {(isTask || isDoc || isComment) && !isRunning && !isSucceeded && !showEditor && (
         <div className="space-y-2">
           <div>
             <p className="text-sm font-semibold leading-5 text-foreground">
@@ -388,7 +444,7 @@ function AgentToolConfirmationCard({
         </div>
       )}
 
-      {(isTask || isDoc || isComment) && !isRunning && showEditor && (
+      {(isTask || isDoc || isComment) && !isRunning && !isSucceeded && showEditor && (
         <>
           {presentation === "chat" && !isFailed && !isStaleRunning && (
             <div className="flex justify-end">
@@ -504,7 +560,7 @@ function AgentToolConfirmationCard({
         <p className="text-[10px] text-muted-foreground font-mono">trigger: {toolRun.trigger_run_id}</p>
       )}
 
-      {!hideActions && (
+      {!hideActions && !isSucceeded && (
         <div className="flex gap-2 justify-end">
           {!isRunning && (
             <Button size="sm" variant="ghost" className="h-7 gap-1" disabled={busy} onClick={() => onCancel(toolRun)}>
@@ -538,6 +594,12 @@ function AgentToolConfirmationCard({
 function payloadField(payload: Record<string, unknown>, key: string): string {
   const val = payload[key];
   return typeof val === "string" ? val : "";
+}
+
+function resultPayload(value: AgentToolRun["result_payload"]): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 function taskValuesFromPayload(payload: Record<string, unknown>): ClickupTaskFormValues {

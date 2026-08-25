@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { getClickupBaseUrl, resolveUserClickupForProject } from "../clickup-auth.ts";
-import { addClickupTaskComment, ensureProjectClickupSpace, fetchClickupTask, updateClickupTask } from "../clickup.ts";
+import { addClickupTaskComment, clickupFetch, ensureProjectClickupSpace, fetchClickupTask, updateClickupTask } from "../clickup.ts";
 import { removeMentionSyntax } from "./linkedReferences.ts";
 import { createProjectClickUpTask } from "../clickupTaskCreation.ts";
 import {
@@ -114,11 +114,12 @@ export async function executeAddClickupCommentFromToolRun(args: {
   const comment = (allowClientMentions ? rawComment : removeMentionSyntax(rawComment)).slice(0, 8000);
   if (!comment) throw new Error("The ClickUp comment is empty after safety checks.");
 
-  const botToken = Deno.env.get("CLICKUP_BOT_API_TOKEN")?.trim()
-    || Deno.env.get("CLICKUP_API_TOKEN")?.trim();
-  const connected = botToken ? null : await resolveUserClickupForProject(args.userId, args.projectId);
-  const clickup = botToken
-    ? { apiToken: botToken, baseUrl: getClickupBaseUrl() }
+  const dedicatedBotToken = Deno.env.get("CLICKUP_BOT_API_TOKEN")?.trim();
+  const legacySharedToken = Deno.env.get("CLICKUP_API_TOKEN")?.trim();
+  const sharedToken = dedicatedBotToken || legacySharedToken;
+  const connected = sharedToken ? null : await resolveUserClickupForProject(args.userId, args.projectId);
+  const clickup = sharedToken
+    ? { apiToken: sharedToken, baseUrl: getClickupBaseUrl() }
     : connected!.clickup;
   const task = await fetchClickupTask(clickup, taskId) as Record<string, unknown>;
   const taskSpaceId = String(((task.space ?? {}) as Record<string, unknown>).id ?? "");
@@ -141,6 +142,21 @@ export async function executeAddClickupCommentFromToolRun(args: {
   const result = await addClickupTaskComment(clickup, taskId, comment);
   const taskName = String(task.name ?? args.payload.task_name ?? taskId);
   const taskUrl = String(task.url ?? args.payload.task_url ?? `https://app.clickup.com/t/${taskId}`);
+  let actorName: string | null = null;
+  let actorAvatarUrl: string | null = null;
+  try {
+    const authorized = await clickupFetch(clickup, "/user") as Record<string, unknown>;
+    const user = (authorized.user ?? authorized) as Record<string, unknown>;
+    actorName = String(user.username ?? user.name ?? "").trim() || null;
+    actorAvatarUrl = String(user.profilePicture ?? user.profile_picture ?? "").trim() || null;
+  } catch (error) {
+    console.warn("[executeAddClickupCommentFromToolRun] could not resolve comment author:", (error as Error).message);
+  }
+  const actorMode = dedicatedBotToken
+    ? "oxus_bot"
+    : legacySharedToken
+      ? "legacy_shared_user"
+      : "connected_user";
   await args.admin.from("project_timeline_events").insert({
     project_id: args.projectId,
     source_type: "clickup",
@@ -151,7 +167,8 @@ export async function executeAddClickupCommentFromToolRun(args: {
     source_url: taskUrl,
     metadata: {
       via: "project_chat",
-      actor_mode: botToken ? "bot" : "connected_user",
+      actor_mode: actorMode,
+      actor_name: actorName,
       client_mentions_allowed: allowClientMentions,
       source_links: Array.isArray(args.payload.source_links) ? args.payload.source_links : [],
     },
@@ -161,8 +178,12 @@ export async function executeAddClickupCommentFromToolRun(args: {
     clickup_task_id: taskId,
     clickup_comment_id: result?.id ?? null,
     url: taskUrl,
+    comment_url: taskUrl,
     task_name: taskName,
-    actor_mode: botToken ? "bot" : "connected_user",
+    comment_preview: comment.slice(0, 1000),
+    actor_mode: actorMode,
+    actor_name: actorName,
+    actor_avatar_url: actorAvatarUrl,
   };
 }
 
