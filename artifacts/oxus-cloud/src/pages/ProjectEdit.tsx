@@ -31,7 +31,7 @@ import {
   useTechnologyOptions,
   useUserOptions,
 } from "@/components/forms/refOptions";
-import { PROJECT_TYPES } from "@/lib/types";
+import { PROJECT_TYPES, type Project } from "@/lib/types";
 import { isLikelyWebsiteUrl } from "@/lib/companyWebsite";
 import { removeProjectImage, uploadProjectImage } from "@/lib/projectImage";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -60,6 +60,24 @@ const SECTIONS = [
   { id: "lifecycle", label: "Lifecycle" },
 ] as const;
 
+type ProjectEditSnapshot = {
+  name: string;
+  description: string;
+  companyWebsiteUrl: string;
+  organizationId: string;
+  pointOfContactId: string;
+  technologyId: string;
+  projectType: string;
+  budget: number | null;
+  progress: number;
+  status: Project["status"];
+  priority: Project["priority"];
+  startDate: string | null;
+  deadline: string | null;
+  ownerId: string;
+  teamMembers: string;
+};
+
 export function ProjectEdit() {
   const params = useParams();
   const id = params.id as string;
@@ -83,7 +101,8 @@ export function ProjectEdit() {
   const { data: slackLinks = [] } = useProjectSlackLinks(id);
   const { data: pandadocStatus } = usePandaDocConnectionStatus({ enabled: isSuperAdmin });
 
-  const [hydrated, setHydrated] = useState(false);
+  const [hydratedProjectId, setHydratedProjectId] = useState<string | null>(null);
+  const [snapshot, setSnapshot] = useState<ProjectEditSnapshot | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [companyWebsiteUrl, setCompanyWebsiteUrl] = useState("");
@@ -111,7 +130,7 @@ export function ProjectEdit() {
   const [enrichConfirmOpen, setEnrichConfirmOpen] = useState(false);
 
   useEffect(() => {
-    if (!project || hydrated) return;
+    if (!project || hydratedProjectId === project.id) return;
     setName(project.name ?? "");
     setDescription(project.description ?? "");
     setCompanyWebsiteUrl(project.company_website_url ?? "");
@@ -130,12 +149,7 @@ export function ProjectEdit() {
     setImagePath(project.image_path ?? null);
     setPendingImageFile(null);
     setRemoveExistingImage(false);
-    setHydrated(true);
-  }, [project, hydrated]);
-
-  const snapshot = useMemo(() => {
-    if (!project) return null;
-    return {
+    setSnapshot({
       name: project.name ?? "",
       description: project.description ?? "",
       companyWebsiteUrl: project.company_website_url ?? "",
@@ -151,9 +165,9 @@ export function ProjectEdit() {
       deadline: project.deadline ?? null,
       ownerId: project.owner_id ?? "",
       teamMembers: project.team_contacts.map((c) => c.id).slice().sort().join(","),
-      imageDirty: false,
-    };
-  }, [project]);
+    });
+    setHydratedProjectId(project.id);
+  }, [project, hydratedProjectId]);
 
   const dirty = useMemo(() => {
     if (!snapshot) return false;
@@ -265,6 +279,30 @@ export function ProjectEdit() {
         contact_assignee_ids: teamMembers,
       });
 
+      const savedName = name.trim();
+      const savedWebsite = companyWebsiteUrl.trim();
+      const savedProgress = Math.min(100, Math.max(0, progress));
+      setName(savedName);
+      setCompanyWebsiteUrl(savedWebsite);
+      setProgress(savedProgress);
+      setSnapshot({
+        name: savedName,
+        description,
+        companyWebsiteUrl: savedWebsite,
+        organizationId,
+        pointOfContactId,
+        technologyId,
+        projectType,
+        budget,
+        progress: savedProgress,
+        status,
+        priority,
+        startDate,
+        deadline,
+        ownerId,
+        teamMembers: teamMembers.slice().sort().join(","),
+      });
+
       const websiteChanged =
         (companyWebsiteUrl.trim() || null) !== (project.company_website_url ?? null);
       if (opts?.queueEnrichment && websiteChanged && companyWebsiteUrl.trim()) {
@@ -274,8 +312,7 @@ export function ProjectEdit() {
           .catch(() => undefined);
       }
 
-      toast({ title: "Changes saved", description: name });
-      setHydrated(false);
+      toast({ title: "Changes saved", description: savedName });
       await refetch();
     } catch (e) {
       toast({ title: "Couldn't save", description: (e as Error).message, variant: "destructive" });

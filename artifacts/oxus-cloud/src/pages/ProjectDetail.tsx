@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ProjectTimelineProgress } from "@/components/projects/ProjectTimelineProgress";
+import { ProjectInvoicingDialog } from "@/components/projects/ProjectInvoicingDialog";
 import { formatDateOnlyLong } from "@/lib/projectTimelineState";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ProjectHealthBadge } from "@/components/ProjectHealthBadge";
@@ -17,6 +18,7 @@ import {
   WalletCards,
   MoreHorizontal,
   Pencil,
+  ReceiptText,
   RotateCcw,
   Trash2,
 } from "lucide-react";
@@ -78,7 +80,7 @@ export function ProjectDetail() {
   const params = useParams();
   const id = params.id as string;
   const [, navigate] = useLocation();
-  const { isSuperAdmin } = useAuth();
+  const { isSuperAdmin, isPM } = useAuth();
   const { toast } = useToast();
   const deleteProject = useDeleteProject();
   const archiveProject = useArchiveProject();
@@ -89,6 +91,7 @@ export function ProjectDetail() {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveReason, setArchiveReason] = useState("");
   const [restoreOpen, setRestoreOpen] = useState(false);
+  const [invoicingOpen, setInvoicingOpen] = useState(false);
   const [workspacePanel, setWorkspacePanel] = useState<WorkspacePanel | null>(null);
 
   const { data: project, isLoading, isError, error, refetch } = useProject(id);
@@ -228,6 +231,11 @@ export function ProjectDetail() {
               <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate(`/projects/${project.id}/edit`)}>
                 <Pencil className="h-4 w-4" /> Edit
               </Button>
+              {(isPM || isSuperAdmin) && (
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setInvoicingOpen(true)}>
+                  <ReceiptText className="h-4 w-4" /> Invoicing
+                </Button>
+              )}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" className="h-9 w-9" disabled={lifecyclePending} aria-label="More project actions">
@@ -388,6 +396,13 @@ export function ProjectDetail() {
           )}
         </SheetContent>
       </Sheet>
+
+      <ProjectInvoicingDialog
+        projectId={project.id}
+        projectName={project.name}
+        open={invoicingOpen}
+        onOpenChange={setInvoicingOpen}
+      />
 
       <AlertDialog
         open={archiveOpen}

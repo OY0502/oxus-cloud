@@ -36,6 +36,12 @@ import {
   type GoogleCanonicalImportStatus,
 } from "@/lib/googleImportStatus";
 import { subscribeGoogleImportRun } from "@/lib/googleImportRunRealtime";
+import {
+  formatMonthLabel,
+  monthBounds,
+  type ProjectInvoicingResponse,
+  type ProjectInvoicingTask,
+} from "@/lib/projectInvoicing";
 import type {
   Activity,
   AiProjectBrief,
@@ -140,6 +146,7 @@ export const qk = {
   projectTimelineEvents: (projectId: string, filters?: ProjectTimelineFilters) =>
     ["project_timeline_events", projectId, filters ?? {}] as const,
   clickupTaskLinks: (projectId: string) => ["clickup_task_links", projectId] as const,
+  projectInvoicing: (projectId: string, month: string) => ["project_invoicing", projectId, month] as const,
   clickupMembers: (teamId: string) => ["clickup_members", teamId] as const,
   clickupAssignableMembers: (projectId: string) => ["clickup_assignable_members", projectId] as const,
   clickupListStatuses: (projectId: string) => ["clickup_list_statuses", projectId] as const,
@@ -2982,6 +2989,90 @@ function normalizeSlackSyncResult(data: Partial<SlackSyncProjectChannelResult>):
     knowledge_sources_updated_count: data.knowledge_sources_updated_count ?? 0,
     knowledge_sources_unchanged_count: data.knowledge_sources_unchanged_count ?? 0,
   };
+}
+
+export function useProjectInvoicing(
+  projectId: string,
+  month: string,
+  options?: { enabled?: boolean },
+): UseQueryResult<ProjectInvoicingResponse> {
+  return useQuery<ProjectInvoicingResponse>({
+    queryKey: qk.projectInvoicing(projectId, month),
+    enabled: (options?.enabled ?? true) && !!projectId && !!month,
+    queryFn: async () => {
+      const bounds = monthBounds(month);
+      try {
+        const token = await getAuthToken();
+        const { data, error } = await supabase.functions.invoke<ProjectInvoicingResponse>("clickup-project-invoicing", {
+          body: { project_id: projectId, month },
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!error && data) return data;
+      } catch {
+        // The local/cache fallback keeps the report useful when ClickUp is temporarily unavailable.
+      }
+
+      const { data: link } = await supabase
+        .from("project_clickup_links")
+        .select("id")
+        .eq("project_id", projectId)
+        .eq("status", "active")
+        .maybeSingle();
+      if (!link) {
+        return {
+          linked: false,
+          source: "cached",
+          period: { key: month, label: formatMonthLabel(month), ...bounds },
+          billing_tasks: [],
+          open_tasks: [],
+          warning: null,
+        };
+      }
+
+      const { data, error } = await supabase
+        .from("clickup_task_links")
+        .select("clickup_task_id, clickup_task_name, clickup_task_url, clickup_status, last_snapshot")
+        .eq("project_id", projectId)
+        .order("last_synced_at", { ascending: false });
+      if (error) throw new Error(error.message);
+
+      const tasks = (data ?? []).map<ProjectInvoicingTask>((row) => {
+        const snapshot = row.last_snapshot && typeof row.last_snapshot === "object" && !Array.isArray(row.last_snapshot)
+          ? row.last_snapshot as Record<string, unknown>
+          : {};
+        const statusObject = snapshot.status && typeof snapshot.status === "object" && !Array.isArray(snapshot.status)
+          ? snapshot.status as Record<string, unknown>
+          : {};
+        return {
+          id: String(row.clickup_task_id),
+          name: String(row.clickup_task_name ?? snapshot.name ?? row.clickup_task_id),
+          description: String(snapshot.markdown_description ?? snapshot.text_content ?? snapshot.description ?? "").trim() || null,
+          status: String(row.clickup_status ?? statusObject.status ?? "Unknown"),
+          status_type: typeof statusObject.type === "string" ? statusObject.type : null,
+          url: row.clickup_task_url ? String(row.clickup_task_url) : null,
+          estimate_ms: Number.isFinite(Number(snapshot.time_estimate)) && Number(snapshot.time_estimate) > 0
+            ? Number(snapshot.time_estimate)
+            : null,
+          tracked_ms: Number.isFinite(Number(snapshot.time_spent)) && Number(snapshot.time_spent) > 0
+            ? Number(snapshot.time_spent)
+            : 0,
+        };
+      });
+      const isBilling = (task: ProjectInvoicingTask) => task.status.trim().toLowerCase() === "billing";
+      const isClosed = (task: ProjectInvoicingTask) =>
+        task.status_type?.toLowerCase() === "closed" || /^(closed|complete|completed|done)$/i.test(task.status.trim());
+
+      return {
+        linked: true,
+        source: "cached",
+        period: { key: month, label: formatMonthLabel(month), ...bounds },
+        billing_tasks: tasks.filter(isBilling),
+        open_tasks: tasks.filter((task) => !isBilling(task) && !isClosed(task)),
+        warning: "Showing the latest synced ClickUp totals. Refreshing live data was unavailable.",
+      };
+    },
+    staleTime: 60_000,
+  });
 }
 
 export function useSlackSyncProjectChannel() {
