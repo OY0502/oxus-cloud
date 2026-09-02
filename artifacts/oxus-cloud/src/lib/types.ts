@@ -1119,6 +1119,51 @@ export interface ProjectChatVectorSync {
   updated_at: string;
 }
 
+export type ProjectMeetingIngestionStatus = "queued" | "processing" | "completed" | "partial" | "failed" | "cancelled";
+
+export interface ProjectMeetingIngestionItem {
+  id: string;
+  batch_id: string;
+  project_id: string;
+  attachment_id: string;
+  derived_attachment_id: string | null;
+  agent_run_id: string | null;
+  file_name: string;
+  mime_type: string | null;
+  file_size: number | null;
+  status: "queued" | "downloading" | "transcribing" | "analyzing" | "completed" | "failed";
+  progress_percent: number;
+  transcript_chars: number;
+  chunk_count: number;
+  error_message: string | null;
+  metadata: Json;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectMeetingIngestionBatch {
+  id: string;
+  project_id: string;
+  chat_session_id: string | null;
+  created_by: string | null;
+  status: ProjectMeetingIngestionStatus;
+  file_count: number;
+  completed_count: number;
+  failed_count: number;
+  progress_percent: number;
+  user_message: string | null;
+  trigger_run_id: string | null;
+  error_message: string | null;
+  metadata: Json;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  items?: ProjectMeetingIngestionItem[];
+}
+
 export interface AgentToolRun {
   id: string;
   project_id: string;

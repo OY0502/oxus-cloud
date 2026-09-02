@@ -1,4 +1,12 @@
-import { schedules, task } from "@trigger.dev/sdk";
+import { schedules, task, tasks } from "@trigger.dev/sdk";
+import { execFile } from "node:child_process";
+import { createWriteStream } from "node:fs";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { extname, join } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { promisify } from "node:util";
 import { getServiceClient, invokeAgentWorker } from "../server/supabase";
 import "./googleSyncTasks";
 
@@ -19,6 +27,20 @@ function sleep(ms: number) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error ?? "Unknown agent error");
+}
+
+const execFileAsync = promisify(execFile);
+const TEXT_MEETING_EXTENSIONS = new Set([".txt", ".md", ".csv", ".json", ".vtt", ".srt"]);
+
+async function updateMeetingBatchCounts(batchId: string) {
+  const admin = getServiceClient();
+  const { data: items } = await admin.from("project_meeting_ingestion_items").select("status, progress_percent").eq("batch_id", batchId);
+  const rows = items ?? [];
+  const completed = rows.filter((item) => item.status === "completed").length;
+  const failed = rows.filter((item) => item.status === "failed").length;
+  const progress = rows.length ? Math.round(rows.reduce((sum, item) => sum + Number(item.progress_percent ?? 0), 0) / rows.length) : 0;
+  await admin.from("project_meeting_ingestion_batches").update({ completed_count: completed, failed_count: failed, progress_percent: progress }).eq("id", batchId);
+  return { total: rows.length, completed, failed, progress };
 }
 
 async function publishFinalAgentFailure(
@@ -153,6 +175,161 @@ export const syncClickupProjectUpdatesTask = task({
     return workerPost("clickup-sync-project-updates", {
       project_id: payload.project_id,
     });
+  },
+});
+
+export const clickupInitialProjectScanTask = task({
+  id: "clickup-initial-project-scan",
+  queue: { name: "clickup-initial-project-scan", concurrencyLimit: 3 },
+  maxDuration: 600,
+  run: async (payload: { project_id: string; user_id: string }) => {
+    return workerPost("clickup-initial-project-scan", payload);
+  },
+});
+
+export const projectMeetingFileIngestTask = task({
+  id: "project-meeting-file-ingest",
+  queue: { name: "project-meeting-file-ingest", concurrencyLimit: 3 },
+  maxDuration: 3600,
+  retry: { maxAttempts: 3 },
+  run: async (payload: { batch_id: string; item_id: string; project_id: string; user_id: string }) => {
+    const admin = getServiceClient();
+    const { data: item, error: itemError } = await admin.from("project_meeting_ingestion_items")
+      .select("*, attachment:attachments(id, file_name, file_path, mime_type, file_size)")
+      .eq("id", payload.item_id).eq("batch_id", payload.batch_id).single();
+    if (itemError || !item?.attachment) throw new Error(itemError?.message ?? "Meeting ingestion item not found.");
+    if (item.status === "completed") return { item_id: payload.item_id, skipped: true };
+    const attachment = item.attachment as { id: string; file_name: string; file_path: string; mime_type: string | null; file_size: number | null };
+    const startedAt = new Date().toISOString();
+    await admin.from("project_meeting_ingestion_items").update({ status: "downloading", progress_percent: 5, started_at: startedAt, error_message: null }).eq("id", payload.item_id);
+    await updateMeetingBatchCounts(payload.batch_id);
+
+    let workDir: string | null = null;
+    try {
+      let analysisAttachmentId = attachment.id;
+      let transcriptChars = 0;
+      const extension = extname(attachment.file_name).toLowerCase();
+      if (!TEXT_MEETING_EXTENSIONS.has(extension)) {
+        workDir = await mkdtemp(join(tmpdir(), "oxus-meeting-"));
+        const inputPath = join(workDir, `input${extension || ".media"}`);
+        const { data: signed, error: signedError } = await admin.storage.from("documents").createSignedUrl(attachment.file_path, 3600);
+        if (signedError || !signed?.signedUrl) throw new Error(signedError?.message ?? "Could not authorize meeting recording download.");
+        const download = await fetch(signed.signedUrl);
+        if (!download.ok || !download.body) throw new Error(`Could not download meeting recording (${download.status}).`);
+        await pipeline(Readable.fromWeb(download.body as never), createWriteStream(inputPath));
+        await admin.from("project_meeting_ingestion_items").update({ status: "transcribing", progress_percent: 15 }).eq("id", payload.item_id);
+        await updateMeetingBatchCounts(payload.batch_id);
+        const outputPattern = join(workDir, "chunk-%03d.mp3");
+        await execFileAsync(process.env.FFMPEG_PATH || "ffmpeg", [
+          "-hide_banner", "-loglevel", "error", "-i", inputPath, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k",
+          "-f", "segment", "-segment_time", "600", "-reset_timestamps", "1", outputPattern,
+        ], { maxBuffer: 1024 * 1024 * 8 });
+        const chunkFiles = (await readdir(workDir)).filter((name) => /^chunk-\d+\.mp3$/.test(name)).sort();
+        if (!chunkFiles.length) throw new Error("No audio could be extracted from this recording.");
+        const transcriptParts: string[] = [];
+        for (let index = 0; index < chunkFiles.length; index += 1) {
+          const audio = await readFile(join(workDir, chunkFiles[index]));
+          const response = await workerPost("project-meeting-transcribe-chunk", { audio_base64: audio.toString("base64"), format: "mp3" });
+          const transcript = typeof response.text === "string" ? response.text.trim() : "";
+          if (transcript) transcriptParts.push(`## Recording segment ${index + 1}\n\n${transcript}`);
+          const progress = 20 + Math.round(((index + 1) / chunkFiles.length) * 45);
+          await admin.from("project_meeting_ingestion_items").update({ progress_percent: progress }).eq("id", payload.item_id);
+          await updateMeetingBatchCounts(payload.batch_id);
+        }
+        const transcript = [`# Transcript · ${attachment.file_name}`, ...transcriptParts].join("\n\n");
+        transcriptChars = transcript.length;
+        const transcriptPath = `project/${payload.project_id}/meeting-transcripts/${payload.batch_id}/${payload.item_id}.md`;
+        const { error: uploadError } = await admin.storage.from("documents").upload(transcriptPath, Buffer.from(transcript, "utf8"), { contentType: "text/markdown", upsert: true });
+        if (uploadError) throw new Error(uploadError.message);
+        const { data: derived, error: derivedError } = await admin.from("attachments").insert({
+          entity_type: "project", entity_id: payload.project_id, doc_type: "attachment", is_active: true,
+          file_path: transcriptPath, file_name: `${attachment.file_name}.transcript.md`, file_size: Buffer.byteLength(transcript),
+          mime_type: "text/markdown", uploaded_by: payload.user_id,
+        }).select("id").single();
+        if (derivedError || !derived) throw new Error(derivedError?.message ?? "Could not save transcript.");
+        analysisAttachmentId = String(derived.id);
+        await admin.from("project_meeting_ingestion_items").update({ derived_attachment_id: analysisAttachmentId, transcript_chars: transcriptChars }).eq("id", payload.item_id);
+      }
+
+      await admin.from("project_meeting_ingestion_items").update({ status: "analyzing", progress_percent: 72 }).eq("id", payload.item_id);
+      await updateMeetingBatchCounts(payload.batch_id);
+      const { data: run, error: runError } = await admin.from("project_agent_runs").insert({
+        project_id: payload.project_id, user_id: payload.user_id, input_summary: `Background meeting import: ${attachment.file_name}`,
+        status: "running", diagnostics: { runtime: "trigger.dev", meeting_ingestion_batch_id: payload.batch_id, meeting_ingestion_item_id: payload.item_id },
+      }).select("id").single();
+      if (runError || !run) throw new Error(runError?.message ?? "Could not create meeting analysis run.");
+      await admin.from("project_meeting_ingestion_items").update({ agent_run_id: run.id }).eq("id", payload.item_id);
+      const result = await workerPost("project-agent-run-worker", {
+        project_id: payload.project_id, user_id: payload.user_id, agent_run_id: run.id,
+        input_text: "Analyze this meeting thoroughly and merge its decisions, requirements, risks, open questions, and action items into durable project memory. Do not create or change external records.",
+        uploaded_file_ids: [analysisAttachmentId], mode: "answer_only", chat: false, retry_managed: true,
+      });
+      if (result.error) throw new Error(String(result.error));
+      const sourceIds = Array.isArray(result.created_source_ids) ? result.created_source_ids : [];
+      let chunkCount = 0;
+      if (sourceIds.length) {
+        const { count } = await admin.from("project_knowledge_chunks").select("id", { count: "exact", head: true }).in("source_id", sourceIds);
+        chunkCount = count ?? 0;
+      }
+      await admin.from("project_meeting_ingestion_items").update({
+        status: "completed", progress_percent: 100, transcript_chars: transcriptChars, chunk_count: chunkCount,
+        completed_at: new Date().toISOString(), error_message: null,
+      }).eq("id", payload.item_id);
+      await updateMeetingBatchCounts(payload.batch_id);
+      return { item_id: payload.item_id, source_ids: sourceIds, chunk_count: chunkCount };
+    } catch (error) {
+      const message = errorMessage(error);
+      await admin.from("project_meeting_ingestion_items").update({ status: "failed", progress_percent: 100, error_message: message.slice(0, 1000), completed_at: new Date().toISOString() }).eq("id", payload.item_id);
+      await updateMeetingBatchCounts(payload.batch_id);
+      throw error;
+    } finally {
+      if (workDir) await rm(workDir, { recursive: true, force: true });
+    }
+  },
+});
+
+export const projectMeetingBatchTask = task({
+  id: "project-meeting-batch",
+  queue: { name: "project-meeting-batch", concurrencyLimit: 4 },
+  maxDuration: 3600,
+  run: async (payload: { batch_id: string; project_id: string; user_id: string; chat_session_id: string }) => {
+    const admin = getServiceClient();
+    await admin.from("project_meeting_ingestion_batches").update({ status: "processing", started_at: new Date().toISOString(), error_message: null }).eq("id", payload.batch_id);
+    const { data: items, error } = await admin.from("project_meeting_ingestion_items").select("id").eq("batch_id", payload.batch_id).order("created_at");
+    if (error || !items?.length) throw new Error(error?.message ?? "Meeting batch has no files.");
+    await tasks.batchTriggerAndWait("project-meeting-file-ingest", items.map((item) => ({
+      payload: { batch_id: payload.batch_id, item_id: item.id, project_id: payload.project_id, user_id: payload.user_id },
+      options: { idempotencyKey: `project-meeting-file-ingest:${item.id}` },
+    })));
+    const counts = await updateMeetingBatchCounts(payload.batch_id);
+    const status = counts.failed === 0 ? "completed" : counts.completed > 0 ? "partial" : "failed";
+    const completedAt = new Date().toISOString();
+    await admin.from("project_meeting_ingestion_batches").update({ status, progress_percent: 100, completed_at: completedAt }).eq("id", payload.batch_id);
+
+    const { data: run, error: runError } = await admin.from("project_agent_runs").insert({
+      project_id: payload.project_id, chat_session_id: payload.chat_session_id, user_id: payload.user_id,
+      input_summary: `Summarize completed meeting import (${counts.completed}/${counts.total})`, status: "running",
+      diagnostics: { runtime: "trigger.dev", meeting_ingestion_batch_id: payload.batch_id },
+    }).select("id").single();
+    if (!runError && run) {
+      try {
+        const result = await workerPost("project-agent-run-worker", {
+          project_id: payload.project_id, user_id: payload.user_id, agent_run_id: run.id,
+          input_text: `The background meeting import finished: ${counts.completed} of ${counts.total} files succeeded and ${counts.failed} failed. Summarize the newly learned project context, decisions, risks, open questions, and action items. Mention failed files without claiming their contents were analyzed.`,
+          mode: "answer_only", chat: true, chat_session_id: payload.chat_session_id, retry_managed: true,
+        });
+        if (result.error) throw new Error(String(result.error));
+      } catch (summaryError) {
+        await publishFinalAgentFailure({ project_id: payload.project_id, agent_run_id: run.id, chat: true, chat_session_id: payload.chat_session_id }, summaryError);
+      }
+    }
+    return { status, ...counts };
+  },
+  onFailure: async ({ payload, error }) => {
+    const admin = getServiceClient();
+    await admin.from("project_meeting_ingestion_batches").update({
+      status: "failed", error_message: errorMessage(error).slice(0, 1000), completed_at: new Date().toISOString(),
+    }).eq("id", payload.batch_id);
   },
 });
 

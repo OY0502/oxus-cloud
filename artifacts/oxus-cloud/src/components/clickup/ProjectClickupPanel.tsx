@@ -146,7 +146,9 @@ export function ProjectClickupPanel({ projectId }: Props) {
       );
       toast({
         title: linkMode === "existing" ? "ClickUp space linked" : "ClickUp space created",
-        description: result.created
+        description: result.initial_scan_queued
+          ? `Connected to "${result.link.space_name}". Existing tasks are being scanned and added to project context in the background.`
+          : result.created
           ? linkMode === "existing"
             ? `Linked "${result.link.space_name}" with Delivery → Tasks list.`
             : `Space "${result.link.space_name}" with Delivery → Tasks list is ready.`

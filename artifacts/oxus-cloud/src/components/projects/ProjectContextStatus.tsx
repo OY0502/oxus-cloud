@@ -1,7 +1,7 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { CheckCircle2, CircleAlert, Database } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
-import { useProjectChatVectorSync, useProjectClickupLink, useProjectSlackLinks } from "@/hooks/api";
+import { useProjectChatVectorSync, useProjectClickupLink, useProjectSlackLinks, useStartClickupInitialProjectScan } from "@/hooks/api";
 import { cn } from "@/lib/utils";
 
 function relativeTime(value: string | null | undefined) {
@@ -56,11 +56,36 @@ export function ProjectContextStatus({ projectId, compact = false }: { projectId
   const { data: clickupLink } = useProjectClickupLink(projectId);
   const { data: slackLinks = [] } = useProjectSlackLinks(projectId);
   const { data: vectorSync } = useProjectChatVectorSync(projectId);
+  const startInitialScan = useStartClickupInitialProjectScan();
+  const attemptedInitialScan = useRef<string | null>(null);
   const slackLink = slackLinks.find((link) => link.status === "active") ?? slackLinks[0];
   const vectorMetadata = vectorSync?.metadata && typeof vectorSync.metadata === "object" && !Array.isArray(vectorSync.metadata)
     ? vectorSync.metadata as Record<string, unknown>
     : {};
   const retrievalMode = typeof vectorMetadata.retrieval_mode === "string" ? vectorMetadata.retrieval_mode : "shadow";
+  const clickupMetadata = clickupLink?.metadata && typeof clickupLink.metadata === "object" && !Array.isArray(clickupLink.metadata)
+    ? clickupLink.metadata as Record<string, unknown>
+    : {};
+  const clickupScanStatus = typeof clickupMetadata.initial_scan_status === "string" ? clickupMetadata.initial_scan_status : null;
+
+  useEffect(() => {
+    if (!clickupLink?.id || clickupLink.status !== "active" || clickupLink.last_sync_at) return;
+    if (clickupScanStatus === "queued" || clickupScanStatus === "running" || clickupScanStatus === "completed") return;
+    if (attemptedInitialScan.current === clickupLink.id) return;
+    attemptedInitialScan.current = clickupLink.id;
+    startInitialScan.mutate({ project_id: projectId });
+  }, [clickupLink?.id, clickupLink?.last_sync_at, clickupLink?.status, clickupScanStatus, projectId]);
+  const clickupDetail = clickupLink?.last_sync_at
+    ? undefined
+    : clickupScanStatus === "queued"
+      ? "Connected · task scan queued"
+      : clickupScanStatus === "running"
+        ? "Connected · scanning existing tasks…"
+        : clickupScanStatus === "failed"
+          ? "Connected · initial task scan needs retry"
+          : clickupLink?.status === "active"
+            ? "Connected · preparing project context"
+            : undefined;
 
   const dates = [clickupLink?.last_sync_at, slackLink?.last_synced_at, vectorSync?.last_indexed_at]
     .filter((value): value is string => !!value)
@@ -81,14 +106,18 @@ export function ProjectContextStatus({ projectId, compact = false }: { projectId
           <div>
             <h3 className="text-sm font-semibold">Connected context</h3>
             <p className="text-xs text-muted-foreground">
-              {newest ? `Latest connected sync ${relativeTime(newest)}` : "No connected source has synced yet"}
+              {newest
+                ? `Latest connected sync ${relativeTime(newest)}`
+                : clickupLink?.status === "active"
+                  ? "ClickUp connected · project context is preparing"
+                  : "No connected source has synced yet"}
             </p>
           </div>
         </div>
         <span className="mt-1.5 inline-flex h-2 w-2 rounded-full bg-success" aria-label="Context status" />
       </div>
       <div className={cn("mt-2", compact ? "grid gap-x-4 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2" : "divide-y divide-border/60")}>
-        <SourceRow compact={compact} label="ClickUp" connected={clickupLink?.status === "active"} syncedAt={clickupLink?.last_sync_at} />
+        <SourceRow compact={compact} label="ClickUp" connected={clickupLink?.status === "active"} syncedAt={clickupLink?.last_sync_at} detail={clickupDetail} />
         <SourceRow compact={compact} label="Slack" connected={slackLink?.status === "active"} syncedAt={slackLink?.last_synced_at} />
         <SourceRow
           compact={compact}

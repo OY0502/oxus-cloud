@@ -1,5 +1,5 @@
 import { defineConfig } from "@trigger.dev/sdk";
-import { syncEnvVars } from "@trigger.dev/build/extensions/core";
+import { ffmpeg, syncEnvVars } from "@trigger.dev/build/extensions/core";
 
 export default defineConfig({
   // OXUS Cloud project ref (dashboard slug oxus-cloud_GIK is not accepted by the v4 API)
@@ -19,6 +19,7 @@ export default defineConfig({
   dirs: ["./src/trigger"],
   build: {
     extensions: [
+      ffmpeg(),
       syncEnvVars(async () => {
         const url = process.env.SUPABASE_URL?.trim() || process.env.VITE_SUPABASE_URL?.trim();
         const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();

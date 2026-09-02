@@ -107,15 +107,42 @@ describe("project chat architecture", () => {
     expect(migration).not.toMatch(/grant execute[\s\S]+to authenticated/i);
   });
 
-  it("accepts only text attachments until binary extraction is implemented", async () => {
+  it("accepts large recording batches through durable background ingestion", async () => {
     const fs = await import("node:fs/promises");
-    const chat = await fs.readFile(
-      new URL("../components/projects/ProjectChat.tsx", import.meta.url),
-      "utf8",
-    );
+    const [chat, trigger, migration, transcriber] = await Promise.all([
+      fs.readFile(new URL("../components/projects/ProjectChat.tsx", import.meta.url), "utf8"),
+      fs.readFile(new URL("../trigger/index.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/migrations/20260902120000_project_meeting_ingestion.sql", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/functions/project-meeting-transcribe-chunk/index.ts", import.meta.url), "utf8"),
+    ]);
 
-    expect(chat).toContain('accept=".txt,.md,.csv,.json,.vtt,.srt,text/*"');
+    expect(chat).toContain(".mp3,.mp4,.m4a,.wav,.webm");
+    expect(chat).toContain("up to 20 recordings or transcripts");
+    expect(chat).toContain("processing continues after you leave");
     expect(chat).not.toContain(".pdf,.doc,.docx");
+    expect(trigger).toContain('id: "project-meeting-batch"');
+    expect(trigger).toContain('id: "project-meeting-file-ingest"');
+    expect(trigger).toContain('"-segment_time", "600"');
+    expect(migration).toContain("project_meeting_ingestion_batches");
+    expect(migration).toContain("project_meeting_ingestion_items");
+    expect(transcriber).toContain("/audio/transcriptions");
+    expect(transcriber).toContain('"openai/whisper-1"');
+  });
+
+  it("scans a newly connected ClickUp space into knowledge and posts an initial chat summary", async () => {
+    const fs = await import("node:fs/promises");
+    const [ensure, scan, context] = await Promise.all([
+      fs.readFile(new URL("../../supabase/functions/clickup-ensure-project-space/index.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/functions/clickup-initial-project-scan/index.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../components/projects/ProjectContextStatus.tsx", import.meta.url), "utf8"),
+    ]);
+    expect(ensure).toContain('triggerDevTask("clickup-initial-project-scan"');
+    expect(scan).toContain("include_closed=true");
+    expect(scan).toContain('.from("clickup_task_links").upsert');
+    expect(scan).toContain('source_type: "clickup"');
+    expect(scan).toContain('title: "ClickUp project overview"');
+    expect(context).toContain("Connected · scanning existing tasks…");
+    expect(context).not.toContain('detail={clickupLink?.last_sync_at ?');
   });
 
   it("checks uploaded meetings against ClickUp and renders interactive follow-up controls", async () => {

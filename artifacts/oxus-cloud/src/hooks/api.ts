@@ -11,6 +11,7 @@ import {
   useQueryClient,
   type UseQueryResult,
 } from "@tanstack/react-query";
+import { Upload } from "tus-js-client";
 import { supabase } from "@/lib/supabase";
 import { hasRunningAgentToolRuns } from "@/lib/agentToolRunUtils";
 import { deleteProjectRecord, purgeProjectStorage } from "@/lib/projectDelete";
@@ -88,6 +89,7 @@ import type {
   ProjectChatMessage,
   ProjectChatSession,
   ProjectChatVectorSync,
+  ProjectMeetingIngestionBatch,
   ProjectSignal,
   ProjectSignalThread,
   ProjectSlackEvent,
@@ -175,6 +177,7 @@ export const qk = {
   projectChatMessages: (projectId: string, chatSessionId: string) =>
     ["project_chat_messages", projectId, chatSessionId] as const,
   projectChatVectorSync: (projectId: string) => ["project_chat_vector_sync", projectId] as const,
+  projectMeetingIngestionBatches: (projectId: string) => ["project_meeting_ingestion_batches", projectId] as const,
   agentToolRuns: (projectId: string, agentRunId?: string) =>
     ["agent_tool_runs", projectId, agentRunId ?? "all"] as const,
   slackPipelineDiagnostics: (projectId: string, linkId?: string) =>
@@ -1303,6 +1306,47 @@ export function useProjectChatVectorSync(projectId: string): UseQueryResult<Proj
   });
 }
 
+export function useProjectMeetingIngestionBatches(projectId: string): UseQueryResult<ProjectMeetingIngestionBatch[]> {
+  return useQuery({
+    queryKey: qk.projectMeetingIngestionBatches(projectId),
+    enabled: !!projectId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("project_meeting_ingestion_batches")
+        .select("*, items:project_meeting_ingestion_items(*)")
+        .eq("project_id", projectId)
+        .order("created_at", { ascending: false })
+        .limit(5);
+      return unwrap<ProjectMeetingIngestionBatch[]>(data, error);
+    },
+    refetchInterval: (query) =>
+      (query.state.data ?? []).some((batch) => batch.status === "queued" || batch.status === "processing") ? 3000 : false,
+  });
+}
+
+export function useStartProjectMeetingIngestion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { project_id: string; chat_session_id?: string; attachment_ids: string[]; message?: string }) => {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw new Error(sessionError.message);
+      const token = sessionData.session?.access_token;
+      if (!token) throw new Error("You must be signed in.");
+      const { data, error } = await supabase.functions.invoke("project-meeting-batch-start", {
+        body: input,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (error) await throwEdgeFunctionError(error);
+      return data as { batch_id: string; chat_session_id: string; trigger_run_id: string; async: true };
+    },
+    onSuccess: (data, input) => {
+      qc.invalidateQueries({ queryKey: qk.projectMeetingIngestionBatches(input.project_id) });
+      qc.invalidateQueries({ queryKey: qk.projectChatSessions(input.project_id) });
+      qc.invalidateQueries({ queryKey: qk.projectChatMessages(input.project_id, data.chat_session_id) });
+    },
+  });
+}
+
 export function useAgentToolRuns(projectId: string, agentRunId?: string): UseQueryResult<AgentToolRun[]> {
   return useQuery({
     queryKey: qk.agentToolRuns(projectId, agentRunId),
@@ -1885,16 +1929,51 @@ export function useDeleteAttachment() {
   });
 }
 
-export async function uploadProjectAgentIntakeFile(projectId: string, file: File): Promise<string> {
-  const { data: auth } = await supabase.auth.getUser();
+export async function uploadProjectAgentIntakeFile(
+  projectId: string,
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<string> {
+  const [{ data: auth }, { data: sessionData, error: sessionError }] = await Promise.all([
+    supabase.auth.getUser(),
+    supabase.auth.getSession(),
+  ]);
+  if (sessionError) throw new Error(sessionError.message);
   const safeName = file.name.replace(/[^\w.\-]+/g, "_");
-  const path = `project/${projectId}/${Date.now()}_${safeName}`;
+  const path = `project/${projectId}/${crypto.randomUUID()}_${safeName}`;
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) throw new Error("You must be signed in.");
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+  const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
 
-  const { error: upErr } = await supabase.storage.from(DOCUMENTS_BUCKET).upload(path, file, {
-    upsert: false,
-    contentType: file.type || undefined,
+  await new Promise<void>((resolve, reject) => {
+    const upload = new Upload(file, {
+      endpoint: `${supabaseUrl}/storage/v1/upload/resumable`,
+      headers: { authorization: `Bearer ${accessToken}`, apikey: publishableKey },
+      uploadDataDuringCreation: true,
+      removeFingerprintOnSuccess: true,
+      retryDelays: [0, 1000, 3000, 5000, 10000],
+      chunkSize: 6 * 1024 * 1024,
+      metadata: {
+        bucketName: DOCUMENTS_BUCKET,
+        objectName: path,
+        contentType: file.type || "application/octet-stream",
+        cacheControl: "3600",
+      },
+      onBeforeRequest: async (request) => {
+        const { data } = await supabase.auth.getSession();
+        const freshToken = data.session?.access_token;
+        if (freshToken) request.setHeader("authorization", `Bearer ${freshToken}`);
+      },
+      onError: reject,
+      onProgress: (uploaded, total) => onProgress?.(total > 0 ? Math.round((uploaded / total) * 100) : 0),
+      onSuccess: () => resolve(),
+    });
+    upload.findPreviousUploads().then((previous) => {
+      if (previous[0]) upload.resumeFromPreviousUpload(previous[0]);
+      upload.start();
+    }).catch(reject);
   });
-  if (upErr) throw new Error(upErr.message);
 
   const { data, error: insErr } = await supabase
     .from("attachments")
@@ -1912,6 +1991,7 @@ export async function uploadProjectAgentIntakeFile(projectId: string, file: File
     .select("id")
     .single();
   if (insErr) throw new Error(insErr.message);
+  onProgress?.(100);
   return data.id as string;
 }
 
@@ -2211,6 +2291,13 @@ export function useProjectClickupLink(projectId: string): UseQueryResult<Project
         .maybeSingle();
       if (error) throw new Error(error.message);
       return data as ProjectClickupLink | null;
+    },
+    refetchInterval: (query) => {
+      const metadata = query.state.data?.metadata;
+      const scanStatus = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+        ? (metadata as Record<string, unknown>).initial_scan_status
+        : null;
+      return scanStatus === "queued" || scanStatus === "running" ? 3000 : false;
     },
   });
 }
@@ -3424,7 +3511,12 @@ export function useEnsureProjectClickupSpace() {
   return useMutation({
     mutationFn: async (input: { project_id: string; clickup_space_id?: string; space_name?: string }) => {
       const token = await getAuthToken();
-      const { data, error } = await supabase.functions.invoke<{ link: ProjectClickupLink; created: boolean }>(
+      const { data, error } = await supabase.functions.invoke<{
+        link: ProjectClickupLink;
+        created: boolean;
+        initial_scan_queued?: boolean;
+        initial_scan_trigger_run_id?: string | null;
+      }>(
         "clickup-ensure-project-space",
         { body: input, headers: { Authorization: `Bearer ${token}` } },
       );
@@ -3435,6 +3527,29 @@ export function useEnsureProjectClickupSpace() {
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: qk.projectClickupLink(vars.project_id) });
       qc.invalidateQueries({ queryKey: qk.projectClickupTimeline(vars.project_id) });
+      qc.invalidateQueries({ queryKey: qk.projectTimelineEvents(vars.project_id) });
+      qc.invalidateQueries({ queryKey: qk.projectChatSessions(vars.project_id) });
+      qc.invalidateQueries({ queryKey: qk.projectKnowledgeSources(vars.project_id) });
+    },
+  });
+}
+
+export function useStartClickupInitialProjectScan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { project_id: string; force?: boolean }) => {
+      const token = await getAuthToken();
+      const { data, error } = await supabase.functions.invoke<{ status: string; queued: boolean; trigger_run_id?: string }>(
+        "clickup-initial-project-scan-start",
+        { body: input, headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (error) await throwEdgeFunctionError(error);
+      if (!data) throw new Error("No ClickUp scan result returned.");
+      return data;
+    },
+    onSuccess: (_data, input) => {
+      qc.invalidateQueries({ queryKey: qk.projectClickupLink(input.project_id) });
+      qc.invalidateQueries({ queryKey: qk.projectChatSessions(input.project_id) });
     },
   });
 }

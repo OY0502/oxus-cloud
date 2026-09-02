@@ -56,7 +56,13 @@ verify_jwt = false
 [functions.project-agent-run-worker]
 verify_jwt = false
 
+[functions.project-meeting-transcribe-chunk]
+verify_jwt = false
+
 [functions.clickup-sync-project-hierarchy]
+verify_jwt = false
+
+[functions.clickup-initial-project-scan]
 verify_jwt = false
 
 [functions.clickup-create-doc-from-agent]

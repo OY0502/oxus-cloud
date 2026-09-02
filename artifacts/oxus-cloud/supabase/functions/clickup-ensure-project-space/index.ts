@@ -13,6 +13,10 @@ import {
   InternalOxusAuthError,
   internalOxusAuthErrorResponse,
 } from "../_shared/internalOxusAuth.ts";
+import {
+  shouldQueueTriggerDevTasks,
+  triggerDevTask,
+} from "../_shared/agent/triggerDev.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -128,7 +132,44 @@ Deno.serve(async (req) => {
       return err("Failed to create ClickUp space.", 502, "CLICKUP_ERROR", (e as Error).message);
     }
 
-    return json({ link: result.link, created: result.created });
+    const linkMetadata = result.link.metadata && typeof result.link.metadata === "object" && !Array.isArray(result.link.metadata)
+      ? result.link.metadata as Record<string, unknown>
+      : {};
+    const scanStatus = typeof linkMetadata.initial_scan_status === "string" ? linkMetadata.initial_scan_status : null;
+    let initialScanQueued = scanStatus === "queued" || scanStatus === "running";
+    let triggerRunId = typeof linkMetadata.initial_scan_trigger_run_id === "string"
+      ? linkMetadata.initial_scan_trigger_run_id
+      : null;
+
+    if (scanStatus !== "completed" && !initialScanQueued && shouldQueueTriggerDevTasks()) {
+      const queuedAt = new Date().toISOString();
+      const attempt = Number(linkMetadata.initial_scan_attempt ?? 0) + 1;
+      const nextMetadata = { ...linkMetadata, initial_scan_status: "queued", initial_scan_attempt: attempt, initial_scan_queued_at: queuedAt };
+      await supabase.from("project_clickup_links").update({ last_error: null, metadata: nextMetadata }).eq("id", result.link.id);
+      try {
+        const triggered = await triggerDevTask("clickup-initial-project-scan", {
+          project_id: body.project_id,
+          user_id: userId,
+        }, { idempotencyKey: `clickup-initial-project-scan:${result.link.id}:${attempt}` });
+        triggerRunId = triggered.id;
+        initialScanQueued = true;
+        await supabase.from("project_clickup_links").update({
+          metadata: { ...nextMetadata, initial_scan_trigger_run_id: triggered.id },
+        }).eq("id", result.link.id);
+      } catch (scanError) {
+        await supabase.from("project_clickup_links").update({
+          last_error: `Initial task scan could not be queued: ${(scanError as Error).message}`.slice(0, 1000),
+          metadata: { ...nextMetadata, initial_scan_status: "failed", initial_scan_failed_at: new Date().toISOString() },
+        }).eq("id", result.link.id);
+      }
+    }
+
+    return json({
+      link: result.link,
+      created: result.created,
+      initial_scan_queued: initialScanQueued,
+      initial_scan_trigger_run_id: triggerRunId,
+    });
   } catch (e) {
     console.error("[UNEXPECTED_ERROR]", (e as Error).message);
     return err("Unexpected error.", 500, "UNEXPECTED_ERROR", (e as Error).message);

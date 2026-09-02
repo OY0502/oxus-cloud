@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   Bot,
   CalendarDays,
+  AudioLines,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -35,7 +36,9 @@ import {
   useProjectChatMessages,
   useProjectChatSessions,
   useProjectChatVectorSync,
+  useProjectMeetingIngestionBatches,
   useRunProjectAgent,
+  useStartProjectMeetingIngestion,
 } from "@/hooks/api";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -324,13 +327,16 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
   const [chatPickerOpen, setChatPickerOpen] = useState(false);
   const { data: messages = [], isLoading, refetch } = useProjectChatMessages(projectId, activeSessionId);
   const { data: vectorSync, refetch: refetchVectorSync } = useProjectChatVectorSync(projectId);
+  const { data: meetingBatches = [], refetch: refetchMeetingBatches } = useProjectMeetingIngestionBatches(projectId);
   const { data: toolRuns = [], refetch: refetchToolRuns } = useAgentToolRuns(projectId);
   const runAgent = useRunProjectAgent();
+  const startMeetingIngestion = useStartProjectMeetingIngestion();
   const createChat = useCreateProjectChatSession();
   const deleteChat = useDeleteProjectChatSession();
   const confirmTool = useConfirmAgentToolRun();
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [clarificationAnswers, setClarificationAnswers] = useState<Record<string, string>>({});
   const [activeRunId, setActiveRunId] = useState<string>();
   const run = useProjectAgentRun(activeRunId);
@@ -339,12 +345,15 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
   const endRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
 
+  const uploading = startMeetingIngestion.isPending || Object.keys(uploadProgress).length > 0;
   const running = runAgent.isPending || run.data?.status === "pending" || run.data?.status === "running";
+  const activeMeetingBatch = meetingBatches.find((batch) => batch.status === "queued" || batch.status === "processing");
 
   useEffect(() => {
     setActiveSessionId(undefined);
     setActiveRunId(undefined);
     setClarificationAnswers({});
+    setUploadProgress({});
   }, [projectId]);
 
   useEffect(() => {
@@ -373,6 +382,12 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
     })();
     return () => { cancelled = true; };
   }, [activeRunId, refetch, refetchSessions, refetchToolRuns, refetchVectorSync, run.data]);
+
+  useEffect(() => {
+    const latest = meetingBatches[0];
+    if (!latest || latest.status === "queued" || latest.status === "processing") return;
+    void Promise.all([refetch(), refetchSessions(), refetchVectorSync()]);
+  }, [meetingBatches, refetch, refetchSessions, refetchVectorSync]);
 
   const startNewChat = async () => {
     if (running || createChat.isPending) return;
@@ -413,6 +428,27 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
 
   const activeSession = chatSessions.find((session) => session.id === activeSessionId);
 
+  const selectMeetingFiles = (selected: File[]) => {
+    const combined = [...files, ...selected].filter((file, index, all) =>
+      all.findIndex((candidate) => candidate.name === file.name && candidate.size === file.size && candidate.lastModified === file.lastModified) === index
+    );
+    if (combined.length > 20) {
+      toast({ title: "Too many files", description: "You can import up to 20 recordings or transcripts in one batch.", variant: "destructive" });
+      return;
+    }
+    const oversized = combined.find((file) => file.size > 1024 * 1024 * 1024);
+    if (oversized) {
+      toast({ title: "File is too large", description: `${oversized.name} exceeds the 1 GB per-file limit.`, variant: "destructive" });
+      return;
+    }
+    const totalBytes = combined.reduce((total, file) => total + file.size, 0);
+    if (totalBytes > 3 * 1024 * 1024 * 1024) {
+      toast({ title: "Batch is too large", description: "Keep the combined upload below 3 GB.", variant: "destructive" });
+      return;
+    }
+    setFiles(combined);
+  };
+
   const send = async (suggestedPrompt?: string, questions?: ChatClarification[]) => {
     const answeredQuestions = (questions ?? []).flatMap((question) => {
       const answer = clarificationAnswers[question.question]?.trim();
@@ -422,7 +458,7 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
     const text = respondingToClarification
       ? answeredQuestions.map(({ question, answer }) => `Question: ${question}\nAnswer: ${answer}`).join("\n\n")
       : (suggestedPrompt ?? input).trim();
-    if ((!text && files.length === 0) || running) return;
+    if ((!text && files.length === 0) || running || uploading) return;
 
     try {
       let chatSessionId = activeSessionId;
@@ -431,17 +467,47 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
         chatSessionId = session.id;
         setActiveSessionId(session.id);
       }
-      const uploadedFileIds = await Promise.all(
-        files.map((file) => uploadProjectAgentIntakeFile(projectId, file)),
-      );
       const reviewingFiles = files.length > 0;
       const message = respondingToClarification
         ? `Clarification responses\n\n${text}`
         : text || `Review the attached ${files.length === 1 ? "meeting file" : "meeting files"} as a project manager. Compare every action item against the current ClickUp board, identify what is already covered, ask specific clarification questions, and prepare confirmation cards for genuinely missing tasks.`;
+      if (reviewingFiles) {
+        const selectedFiles = [...files];
+        const uploadedFileIds = new Array<string>(selectedFiles.length);
+        let cursor = 0;
+        setUploadProgress(Object.fromEntries(selectedFiles.map((file, index) => [`${index}:${file.name}`, 0])));
+        await Promise.all(Array.from({ length: Math.min(3, selectedFiles.length) }, async () => {
+          while (cursor < selectedFiles.length) {
+            const index = cursor++;
+            const file = selectedFiles[index];
+            const key = `${index}:${file.name}`;
+            uploadedFileIds[index] = await uploadProjectAgentIntakeFile(projectId, file, (percent) => {
+              setUploadProgress((current) => ({ ...current, [key]: percent }));
+            });
+          }
+        }));
+        const batch = await startMeetingIngestion.mutateAsync({
+          project_id: projectId,
+          chat_session_id: chatSessionId,
+          attachment_ids: uploadedFileIds,
+          message,
+        });
+        setActiveSessionId(batch.chat_session_id);
+        setInput("");
+        setFiles([]);
+        setUploadProgress({});
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        await Promise.all([refetch(), refetchSessions(), refetchMeetingBatches()]);
+        toast({
+          title: "Meeting import started",
+          description: `${selectedFiles.length} file${selectedFiles.length === 1 ? " is" : "s are"} processing in the background. You can safely leave this page.`,
+        });
+        return;
+      }
       const result = await runAgent.mutateAsync({
         project_id: projectId,
         input_text: message,
-        uploaded_file_ids: uploadedFileIds,
+        uploaded_file_ids: [],
         mode: reviewingFiles || respondingToClarification ? "auto" : "answer_only",
         chat: true,
         chat_session_id: chatSessionId,
@@ -460,6 +526,7 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
       await refetch();
       if (!result.async) setActiveRunId(undefined);
     } catch (error) {
+      setUploadProgress({});
       toast({
         title: "Could not send message",
         description: error instanceof Error ? error.message : "Unknown error",
@@ -523,7 +590,7 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
             <div>
               <CardTitle className="text-[15px]">Project chat</CardTitle>
               <CardDescription className="mt-0.5 max-w-2xl text-xs">
-                Ask about current state or add a meeting transcript. Uploads are checked against ClickUp before new tasks are suggested.
+                Ask about current state or import meeting recordings and transcripts. New context is analyzed against ClickUp in the background.
               </CardDescription>
             </div>
           </div>
@@ -628,6 +695,28 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
                 <p className="mt-1 text-sm text-muted-foreground">
                   I’ll combine recent project activity with the shared project memory. This chat keeps its own conversation history.
                 </p>
+              </div>
+            )}
+
+            {activeMeetingBatch && (
+              <div className="rounded-xl border border-info/25 bg-info-muted/35 p-3.5" role="status" aria-live="polite">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-lg bg-info/10 p-2 text-info"><AudioLines className="h-4 w-4" /></div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold">Processing meeting context</p>
+                      <span className="text-xs tabular-nums text-muted-foreground">{activeMeetingBatch.progress_percent}%</span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {activeMeetingBatch.completed_count} of {activeMeetingBatch.file_count} files analyzed
+                      {activeMeetingBatch.failed_count > 0 ? ` · ${activeMeetingBatch.failed_count} failed` : ""}
+                    </p>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-info/10">
+                      <div className="h-full rounded-full bg-info transition-[width] duration-500" style={{ width: `${activeMeetingBatch.progress_percent}%` }} />
+                    </div>
+                    <p className="mt-2 text-[11px] text-muted-foreground">Safe to leave this page — analysis continues in the background and the summary will appear here.</p>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -791,7 +880,7 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
                   key={starter}
                   type="button"
                   onClick={() => void send(starter)}
-                  disabled={running}
+                  disabled={running || uploading}
                   className="shrink-0 rounded-full border border-border bg-muted/20 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-info/30 hover:bg-info-muted hover:text-foreground disabled:opacity-50"
                 >
                   {starter}
@@ -802,15 +891,20 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
 
           {files.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2">
-              {files.map((file, index) => (
+              {files.map((file, index) => {
+                const progress = uploadProgress[`${index}:${file.name}`];
+                const media = file.type.startsWith("audio/") || file.type.startsWith("video/");
+                return (
                 <span key={`${file.name}-${index}`} className="inline-flex items-center gap-1.5 rounded-lg bg-muted px-2.5 py-1.5 text-xs">
-                  <FileText className="h-3.5 w-3.5" />
+                  {media ? <AudioLines className="h-3.5 w-3.5 text-info" /> : <FileText className="h-3.5 w-3.5" />}
                   <span className="max-w-52 truncate">{file.name}</span>
-                  <button type="button" onClick={() => setFiles((current) => current.filter((_, i) => i !== index))} aria-label={`Remove ${file.name}`}>
+                  {progress != null && <span className="tabular-nums text-muted-foreground">{progress}%</span>}
+                  <button type="button" disabled={uploading} onClick={() => setFiles((current) => current.filter((_, i) => i !== index))} aria-label={`Remove ${file.name}`}>
                     <X className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
                   </button>
                 </span>
-              ))}
+              )})}
+              <span className="self-center text-[11px] text-muted-foreground">{files.length}/20 · processed in background</span>
             </div>
           )}
 
@@ -820,10 +914,13 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
               type="file"
               multiple
               className="hidden"
-              accept=".txt,.md,.csv,.json,.vtt,.srt,text/*"
-              onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 5))}
+              accept=".txt,.md,.csv,.json,.vtt,.srt,.mp3,.mp4,.m4a,.wav,.webm,.ogg,.oga,.aac,.flac,.mov,.mpeg,.mpg,text/*,audio/*,video/*"
+              onChange={(event) => {
+                selectMeetingFiles(Array.from(event.target.files ?? []));
+                event.currentTarget.value = "";
+              }}
             />
-            <Button type="button" size="icon" variant="ghost" className="shrink-0" onClick={() => fileInputRef.current?.click()} aria-label="Attach transcript or project file">
+            <Button type="button" size="icon" variant="ghost" className="shrink-0" disabled={uploading} onClick={() => fileInputRef.current?.click()} aria-label="Attach meeting recordings, transcripts, or project files">
               <Paperclip className="h-4 w-4" />
             </Button>
             <Textarea
@@ -838,13 +935,13 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
               }}
               placeholder="Ask about this project…"
               className="max-h-36 min-h-10 resize-none border-0 px-1 py-2 leading-5 shadow-none focus-visible:ring-0"
-              disabled={running}
+              disabled={running || uploading}
             />
-            <Button type="button" size="icon" className="shrink-0 rounded-lg" disabled={running || (!input.trim() && files.length === 0)} onClick={() => void send()} aria-label="Send message">
-              {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            <Button type="button" size="icon" className="shrink-0 rounded-lg" disabled={running || uploading || (!input.trim() && files.length === 0)} onClick={() => void send()} aria-label="Send message">
+              {running || uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             </Button>
           </div>
-          <p className="sr-only">Enter to send. Shift and Enter for a new line.</p>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">Attach up to 20 recordings or transcripts. Large uploads resume automatically; processing continues after you leave.</p>
         </div>
       </CardContent>
     </Card>

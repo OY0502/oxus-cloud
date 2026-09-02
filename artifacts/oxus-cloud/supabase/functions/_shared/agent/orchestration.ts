@@ -882,7 +882,10 @@ export async function runProjectAgent(args: {
     userId: input.user_id,
     fileIds: input.uploaded_file_ids ?? [],
   });
-  const isFileReview = input.chat === true && fileIntake.sourceIds.length > 0;
+  // File analysis is also used by durable background meeting imports. Chat
+  // controls transcript publication, not whether structured meeting memory is
+  // extracted and persisted.
+  const isFileReview = fileIntake.sourceIds.length > 0;
   const isClarificationResponse = input.chat === true && input.chat_action === "clarification_response";
   const isTaskReview = isFileReview || isClarificationResponse;
   const embeddingWarnings: string[] = [];

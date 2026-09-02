@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { useProjectTimelineEvents } from "@/hooks/api";
 import type { ProjectTimelineEvent, ProjectTimelineFilters, ProjectTimelineSourceType } from "@/lib/types";
 import { format, formatDistanceToNow, isToday, isYesterday } from "date-fns";
+import { cn } from "@/lib/utils";
 
 const SOURCE_FILTERS: Array<{ id: ProjectTimelineFilters["sourceType"]; label: string }> = [
   { id: "all", label: "All" },
@@ -36,8 +37,21 @@ function sourceBadge(source: ProjectTimelineSourceType, compact = false) {
     manual: "Manual",
     ai: "AI",
   };
+  const colors: Record<string, string> = {
+    clickup: "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/45 dark:text-blue-300",
+    slack: "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950/45 dark:text-violet-300",
+    pm_action: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/45 dark:text-amber-300",
+    ai: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/45 dark:text-emerald-300",
+    zoom: "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700 dark:border-fuchsia-800 dark:bg-fuchsia-950/45 dark:text-fuchsia-300",
+    figma: "border-pink-200 bg-pink-50 text-pink-700 dark:border-pink-800 dark:bg-pink-950/45 dark:text-pink-300",
+    github: "border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300",
+    manual: "border-border bg-muted/60 text-muted-foreground",
+  };
   return (
-    <Badge variant="outline" className={compact ? "h-5 px-1.5 text-[11px] font-medium capitalize" : "h-4 px-1 text-[9px] capitalize"}>
+    <Badge variant="outline" className={cn(
+      compact ? "h-5 px-1.5 text-[11px] font-medium capitalize" : "h-4 px-1 text-[9px] capitalize",
+      colors[source] ?? "border-border bg-muted/60 text-muted-foreground",
+    )}>
       {labels[source] ?? source.replace(/_/g, " ")}
     </Badge>
   );
@@ -93,15 +107,26 @@ function TimelineRow({ event, compact = false }: { event: ProjectTimelineEvent; 
       : {};
   const href = eventHref(event);
   const external = /^https?:\/\//i.test(href);
+  const rowAccent: Record<string, string> = {
+    clickup: "border-l-blue-400 hover:bg-blue-50/45 dark:hover:bg-blue-950/20",
+    slack: "border-l-violet-400 hover:bg-violet-50/45 dark:hover:bg-violet-950/20",
+    pm_action: "border-l-amber-400 hover:bg-amber-50/45 dark:hover:bg-amber-950/20",
+    ai: "border-l-emerald-400 hover:bg-emerald-50/45 dark:hover:bg-emerald-950/20",
+    zoom: "border-l-fuchsia-400 hover:bg-fuchsia-50/45 dark:hover:bg-fuchsia-950/20",
+    figma: "border-l-pink-400 hover:bg-pink-50/45 dark:hover:bg-pink-950/20",
+    github: "border-l-slate-400 hover:bg-slate-50/60 dark:hover:bg-slate-900/35",
+  };
 
   return (
     <a
       href={href}
       target={external ? "_blank" : undefined}
       rel={external ? "noreferrer" : undefined}
-      className={compact
-        ? "group block border-b border-border/60 py-2.5 transition-colors last:border-0 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info/30"
-        : "group block border-b border-border/60 py-2 transition-colors last:border-0 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info/30"}
+      className={cn(
+        "group block border-b border-l-2 border-b-border/60 pl-2 transition-colors last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info/30",
+        compact ? "py-2.5" : "py-2",
+        rowAccent[event.source_type] ?? "border-l-transparent hover:bg-muted/30",
+      )}
       aria-label={`Open activity: ${informativeEventText(event)}`}
     >
       <div className="flex items-start justify-between gap-2">
