@@ -18,7 +18,8 @@ $result = [ordered]@{
   status = $html.StatusCode
   asset = $assetPath
   new_chat_ui = $bundle.Content.Contains("New chat")
-  delete_chat_ui = $bundle.Content.Contains("Delete current chat")
+  delete_chat_ui = $bundle.Content.Contains("This removes its transcript") -and
+    $bundle.Content.Contains("Chat deleted")
   pinecone_ui = $bundle.Content.Contains("Pinecone retrieval")
 }
 
