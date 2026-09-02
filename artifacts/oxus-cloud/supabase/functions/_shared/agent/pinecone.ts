@@ -324,10 +324,14 @@ export async function rerankPinecone(args: {
 export async function deletePineconeSource(projectId: string, sourceId: string): Promise<void> {
   const index = await describePineconeIndex();
   if (!index) return;
-  await pineconeRequest(trustedDataPlaneUrl(index.host, "/vectors/delete"), {
-    method: "POST",
-    body: JSON.stringify({ namespace: pineconeNamespace(projectId), filter: { source_id: { $eq: sourceId } } }),
-  }, INGEST_TIMEOUT_MS);
+  try {
+    await pineconeRequest(trustedDataPlaneUrl(index.host, "/vectors/delete"), {
+      method: "POST",
+      body: JSON.stringify({ namespace: pineconeNamespace(projectId), filter: { source_id: { $eq: sourceId } } }),
+    }, INGEST_TIMEOUT_MS);
+  } catch (error) {
+    if ((error as Error & { status?: number }).status !== 404) throw error;
+  }
 }
 
 export async function deletePineconeSourceVersionsBefore(

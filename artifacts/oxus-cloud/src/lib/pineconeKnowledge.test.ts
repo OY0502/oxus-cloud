@@ -69,4 +69,22 @@ describe("Pinecone knowledge preparation", () => {
     expect(body.filter).toEqual({ status: { $eq: "active" } });
     expect(result[0]).toMatchObject({ id: "source#v1#c0", score: 0.92 });
   });
+
+  it("treats deleting from a missing namespace as an idempotent no-op", async () => {
+    const env = new Map<string, string>([
+      ["PINECONE_API_KEY", "test-key"],
+      ["PINECONE_INDEX_HOST", "unit-test.svc.us-east-1.pinecone.io"],
+      ["PINECONE_HYBRID_ENABLED", "true"],
+    ]);
+    vi.stubGlobal("Deno", { env: { get: (name: string) => env.get(name) } });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ message: "Namespace not found" }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { deletePineconeSource } = await import("../../supabase/functions/_shared/agent/pinecone");
+    await expect(deletePineconeSource("new-project", "new-source")).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
 });
