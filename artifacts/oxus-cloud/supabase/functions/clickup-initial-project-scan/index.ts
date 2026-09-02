@@ -112,7 +112,7 @@ Deno.serve(async (req) => {
   try {
     const [{ clickup }, projectResult] = await Promise.all([
       resolveUserClickupForProject(userId, projectId),
-      admin.from("projects").select("id, name, type").eq("id", projectId).single(),
+      admin.from("projects").select("id, name, project_type").eq("id", projectId).single(),
     ]);
     if (projectResult.error || !projectResult.data) throw new Error(projectResult.error?.message ?? "Project not found.");
 
@@ -188,7 +188,7 @@ Deno.serve(async (req) => {
     try {
       const analyzed = await generateStructuredObject<{ summary_markdown: string }>({
         schemaDescription: 'Return JSON: {"summary_markdown":"concise project-manager summary with headings, task/status overview, important themes, risks, and a final note that more project data can be added"}.',
-        systemPrompt: `${oxusIdentityGuidance({ projectName, projectType: text(projectResult.data.type) })}\nBe concise, factual, and never invent details.`,
+        systemPrompt: `${oxusIdentityGuidance({ projectName, projectType: text(projectResult.data.project_type) })}\nBe concise, factual, and never invent details.`,
         userPrompt: `Summarize this newly connected ClickUp project context for a project manager.\n\n${sourceText.slice(0, 45000)}`,
         traceName: "clickup-initial-project-scan", trace: { projectId, userId }, maxTokens: 1200,
       });

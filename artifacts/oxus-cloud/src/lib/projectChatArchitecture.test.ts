@@ -138,6 +138,8 @@ describe("project chat architecture", () => {
     ]);
     expect(ensure).toContain('triggerDevTask("clickup-initial-project-scan"');
     expect(scan).toContain("include_closed=true");
+    expect(scan).toContain('.select("id, name, project_type")');
+    expect(scan).not.toContain('.select("id, name, type")');
     expect(scan).toContain('.from("clickup_task_links").upsert');
     expect(scan).toContain('source_type: "clickup"');
     expect(scan).toContain('title: "ClickUp project overview"');
