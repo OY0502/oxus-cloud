@@ -4,6 +4,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
@@ -51,6 +52,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [initializing, setInitializing] = useState(true);
   const [profileLoading, setProfileLoading] = useState(false);
   const [isRecovering, setIsRecovering] = useState(false);
+  const activeUserIdRef = useRef<string | null>(null);
 
   const loadProfile = useCallback(async (userId: string) => {
     setProfileLoading(true);
@@ -61,10 +63,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .eq("id", userId)
         .maybeSingle();
       if (error) throw error;
+      if (activeUserIdRef.current !== userId) return;
       setProfile(data as Profile | null);
     } catch {
+      if (activeUserIdRef.current !== userId) return;
       setProfile(null);
     } finally {
+      if (activeUserIdRef.current !== userId) return;
       setProfileLoading(false);
     }
   }, []);
@@ -72,6 +77,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshSession = useCallback(async () => {
     const { data, error } = await supabase.auth.refreshSession();
     if (error) throw error;
+    activeUserIdRef.current = data.session?.user?.id ?? null;
     setSession(data.session);
     if (data.session?.user?.id) {
       await loadProfile(data.session.user.id);
@@ -85,6 +91,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!active) return;
+      const nextUserId = nextSession?.user?.id ?? null;
+      const userChanged = activeUserIdRef.current !== nextUserId;
+      activeUserIdRef.current = nextUserId;
       setSession(nextSession);
 
       if (event === "PASSWORD_RECOVERY") {
@@ -98,11 +107,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setInitializing(false);
       }
 
-      if (nextSession?.user?.id) {
+      // Supabase can emit SIGNED_IN/TOKEN_REFRESHED again when a backgrounded
+      // tab becomes active. Keep the existing profile (and protected route)
+      // mounted for the same user so unsaved form state is not discarded.
+      if (nextUserId && userChanged) {
         setProfile(null);
         setProfileLoading(true);
-        void loadProfile(nextSession.user.id);
-      } else {
+        void loadProfile(nextUserId);
+      } else if (!nextUserId) {
         setProfile(null);
         setProfileLoading(false);
       }

@@ -1,745 +1,300 @@
 import React, { useState } from "react";
-
-import { DataTable } from "@/components/DataTable";
-
 import { Button } from "@/components/ui/button";
-
 import {
-
   DropdownMenu,
-
   DropdownMenuContent,
-
   DropdownMenuItem,
-
   DropdownMenuSeparator,
-
   DropdownMenuTrigger,
-
 } from "@/components/ui/dropdown-menu";
-
 import {
-
-  Tooltip,
-
-  TooltipContent,
-
-  TooltipProvider,
-
-  TooltipTrigger,
-
-} from "@/components/ui/tooltip";
-
-import {
-
-  useTeamMemberRates,
-
   useManageTeamMemberRate,
-
   useRateUsageCheck,
-
+  useTeamMemberRates,
 } from "@/hooks/api";
-
 import { formatRate } from "@/lib/team";
-
 import {
-
-  getDefaultRate,
-
-  rateScopeLabel,
-
-  rateStatusVariant,
-
   formatRateDescription,
-
+  getDefaultRate,
   rateAppliesToLabel,
-
   rateHasProjects,
-
-  formatProjectNames,
-
-  rateProjects,
-
+  rateScopeLabel,
+  rateStatusVariant,
 } from "@/lib/teamMemberRates";
-
 import type { Contact, TeamMemberRate } from "@/lib/types";
-
 import { RateDialog } from "./TeamDialogs";
-
 import { ChevronDown, History, MoreHorizontal, Plus } from "lucide-react";
-
 import { useToast } from "@/hooks/use-toast";
-
-import { TeamMiniStat, TeamOutlineButton, TeamPanelHeader, teamActionBtn, teamIcon } from "./teamUi";
-
+import {
+  TeamEmptyState,
+  TeamMiniStat,
+  TeamOutlineButton,
+  TeamPanelHeader,
+  TeamRecordField,
+  TeamRecordItem,
+  TeamRecordList,
+  teamActionBtn,
+  teamIcon,
+} from "./teamUi";
 import { StatusBadge } from "@/components/StatusBadge";
-
 import { cn } from "@/lib/utils";
 
-
-
 function RateStatusBadge({ status }: { status: TeamMemberRate["status"] }) {
-
   return <StatusBadge status={status} variant={rateStatusVariant(status)} />;
-
 }
-
-function AppliesToCell({ rate }: { rate: TeamMemberRate }) {
-
-  const projects = rateProjects(rate);
-
-  const label = rateAppliesToLabel(rate);
-
-  const { display, full } = formatProjectNames(projects);
-
-  const showTooltip = projects.length > 2 || label.includes("\n");
-
-
-
-  const content = (
-
-    <div className="text-sm leading-snug whitespace-pre-line">
-
-      {rate.work_type && rateHasProjects(rate) ? (
-
-        <>
-
-          <div>{rate.work_type}</div>
-
-          <div className="text-muted-foreground">{display || "—"}</div>
-
-        </>
-
-      ) : (
-
-        label
-
-      )}
-
-    </div>
-
-  );
-
-
-
-  if (!showTooltip) return content;
-
-
-
-  return (
-
-    <TooltipProvider>
-
-      <Tooltip>
-
-        <TooltipTrigger asChild>
-
-          <div className="cursor-default">{content}</div>
-
-        </TooltipTrigger>
-
-        <TooltipContent side="top" className="max-w-xs">
-
-          <p className="text-sm whitespace-pre-line">{rate.work_type ? `${rate.work_type}\n${full}` : full}</p>
-
-        </TooltipContent>
-
-      </Tooltip>
-
-    </TooltipProvider>
-
-  );
-}
-
 
 export function TeamMemberRatesPanel({
-
   person,
-
   canManage,
-
 }: {
-
   person: Contact;
-
   canManage: boolean;
-
 }) {
-
   const { toast } = useToast();
-
   const { data: rates = [], isLoading } = useTeamMemberRates(person.id, { enabled: canManage });
-
   const manageRate = useManageTeamMemberRate();
-
   const [dialogOpen, setDialogOpen] = useState(false);
-
   const [editRate, setEditRate] = useState<TeamMemberRate | null>(null);
-
   const [dialogMode, setDialogMode] = useState<"create" | "edit" | "duplicate" | "replace">("create");
-
   const [showHistory, setShowHistory] = useState(false);
 
-
-
   const today = new Date().toISOString().slice(0, 10);
-
-
-
   const defaultRate = getDefaultRate(rates, today);
-
-  const activeRates = rates.filter((r) => r.status === "active");
-
-  const scheduledRates = rates.filter((r) => r.status === "scheduled");
-
-  const historicalRates = rates.filter((r) => r.status === "expired");
-
-
+  const activeRates = rates.filter((rate) => rate.status === "active");
+  const scheduledRates = rates.filter((rate) => rate.status === "scheduled");
+  const historicalRates = rates.filter((rate) => rate.status === "expired");
 
   const openCreate = () => {
-
     setEditRate(null);
-
     setDialogMode("create");
-
     setDialogOpen(true);
-
   };
-
-
 
   const openEdit = (rate: TeamMemberRate) => {
-
     setEditRate(rate);
-
     setDialogMode("edit");
-
     setDialogOpen(true);
-
   };
-
-
 
   const handleEnd = async (rate: TeamMemberRate) => {
-
     try {
-
       await manageRate.mutateAsync({
-
         action: "end",
-
         person_id: person.id,
-
         rate_id: rate.id,
-
         effective_to: today,
-
       });
-
       toast({ title: "Rate ended", description: rate.name ?? formatRate(rate) });
-
-    } catch (e) {
-
+    } catch (error) {
       toast({
-
         title: "Could not end rate",
-
-        description: e instanceof Error ? e.message : "Try again.",
-
+        description: error instanceof Error ? error.message : "Try again.",
         variant: "destructive",
-
       });
-
     }
-
   };
-
-
 
   const handleSetDefault = async (rate: TeamMemberRate) => {
-
     try {
-
       await manageRate.mutateAsync({
-
         action: "set_default",
-
         person_id: person.id,
-
         rate_id: rate.id,
-
       });
-
       toast({ title: "Default rate updated" });
-
-    } catch (e) {
-
+    } catch (error) {
       toast({
-
         title: "Could not set default",
-
-        description: e instanceof Error ? e.message : "Try again.",
-
+        description: error instanceof Error ? error.message : "Try again.",
         variant: "destructive",
-
       });
-
     }
-
   };
-
-
 
   const handleDelete = async (rate: TeamMemberRate) => {
-
     try {
-
       await manageRate.mutateAsync({
-
         action: "delete",
-
         person_id: person.id,
-
         rate_id: rate.id,
-
       });
-
       toast({ title: "Rate deleted" });
-
-    } catch (e) {
-
+    } catch (error) {
       toast({
-
         title: "Could not delete rate",
-
-        description: e instanceof Error ? e.message : "Try again.",
-
+        description: error instanceof Error ? error.message : "Try again.",
         variant: "destructive",
-
       });
-
     }
-
   };
 
-
-
-  const columns = [
-
-    {
-
-      id: "name",
-
-      header: "Rate name",
-
-      cell: (r: TeamMemberRate) => (
-
-        <div>
-
-          <div className="font-medium">{r.name ?? r.rate_type.replace("_", " ")}</div>
-
-          {r.is_default && <span className="text-xs text-muted-foreground">Default</span>}
-
-        </div>
-
-      ),
-
-    },
-
-    {
-
-      id: "scope",
-
-      header: "Scope",
-
-      cell: (r: TeamMemberRate) => rateScopeLabel(r),
-
-    },
-
-    {
-
-      id: "applies_to",
-
-      header: "Applies to",
-
-      cell: (r: TeamMemberRate) => <AppliesToCell rate={r} />,
-
-    },
-
-    {
-
-      id: "type",
-
-      header: "Type",
-
-      cell: (r: TeamMemberRate) => r.rate_type.replace("_", " "),
-
-    },
-
-    {
-
-      id: "amount",
-
-      header: "Native rate",
-
-      cell: (r: TeamMemberRate) => (
-
-        <span className="font-serif text-sm font-semibold tabular-nums">{formatRate(r)}</span>
-
-      ),
-
-    },
-
-    {
-
-      id: "dates",
-
-      header: "Effective",
-
-      cell: (r: TeamMemberRate) =>
-
-        `${r.effective_from}${r.effective_to ? ` → ${r.effective_to}` : ""}`,
-
-    },
-
-    {
-
-      id: "status",
-
-      header: "Status",
-
-      cell: (r: TeamMemberRate) => <RateStatusBadge status={r.status} />,
-
-    },
-
-    ...(canManage
-
-      ? [{
-
-          id: "actions",
-
-          header: "",
-
-          cell: (r: TeamMemberRate) => (
-
-            <RateActions
-
-              rate={r}
-
-              personId={person.id}
-
-              onEdit={() => openEdit(r)}
-
-              onDuplicate={() => {
-
-                setEditRate(r);
-
-                setDialogMode("duplicate");
-
-                setDialogOpen(true);
-
-              }}
-
-              onReplace={() => {
-
-                setEditRate(r);
-
-                setDialogMode("replace");
-
-                setDialogOpen(true);
-
-              }}
-
-              onEnd={() => void handleEnd(r)}
-
-              onSetDefault={() => void handleSetDefault(r)}
-
-              onDelete={() => void handleDelete(r)}
-
-            />
-
-          ),
-
-        }]
-
-      : []),
-
-  ];
-
-
+  const renderRate = (rate: TeamMemberRate) => {
+    const scope = rateScopeLabel(rate);
+    const appliesTo = rateAppliesToLabel(rate).replace(/\n/g, ", ");
+
+    return (
+      <TeamRecordItem
+        key={rate.id}
+        title={
+          <>
+            <span>{rate.name ?? rate.rate_type.replace("_", " ")}</span>
+            {rate.is_default && <StatusBadge status="Default" variant="neutral" />}
+            <RateStatusBadge status={rate.status} />
+          </>
+        }
+        subtitle={[scope, appliesTo].filter((value, index, all) => value && all.indexOf(value) === index).join(" · ")}
+        trailing={
+          <>
+            <div className="text-xs text-muted-foreground">Rate</div>
+            <div className="mt-0.5 text-sm font-semibold tabular-nums text-foreground">{formatRate(rate)}</div>
+          </>
+        }
+        details={
+          <>
+            <TeamRecordField label="Type">{rate.rate_type.replace("_", " ")}</TeamRecordField>
+            <TeamRecordField label="Effective">
+              {rate.effective_from}{rate.effective_to ? ` → ${rate.effective_to}` : " → ongoing"}
+            </TeamRecordField>
+          </>
+        }
+        actions={canManage ? (
+          <RateActions
+            rate={rate}
+            onEdit={() => openEdit(rate)}
+            onDuplicate={() => {
+              setEditRate(rate);
+              setDialogMode("duplicate");
+              setDialogOpen(true);
+            }}
+            onReplace={() => {
+              setEditRate(rate);
+              setDialogMode("replace");
+              setDialogOpen(true);
+            }}
+            onEnd={() => void handleEnd(rate)}
+            onSetDefault={() => void handleSetDefault(rate)}
+            onDelete={() => void handleDelete(rate)}
+          />
+        ) : undefined}
+      />
+    );
+  };
 
   if (!canManage) {
-
     return <p className="text-sm text-muted-foreground">Compensation rates are restricted to admins.</p>;
-
   }
 
-
+  const currentRates = activeRates.concat(scheduledRates);
 
   return (
-
     <div className="space-y-4">
-
       <TeamPanelHeader
-
-        title="Rates"
-
+        title="Compensation rates"
         action={
-
           <TeamOutlineButton onClick={openCreate}>
-
             <Plus className={teamIcon} /> Add rate
-
           </TeamOutlineButton>
-
         }
-
       />
 
-
-
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-
-        <TeamMiniStat
-
-          label="Default rate"
-
-          value={defaultRate ? formatRate(defaultRate) : "—"}
-
-        />
-
-        <TeamMiniStat label="Active rates" value={String(activeRates.length)} />
-
-        <TeamMiniStat
-
-          label="Scheduled"
-
-          value={String(scheduledRates.length)}
-
-        />
-
-        {scheduledRates.length > 0 && (
-
-          <TeamMiniStat
-
-            label="Next change"
-
-            value={scheduledRates[0]?.effective_from ?? "—"}
-
-          />
-
-        )}
-
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <TeamMiniStat label="Default rate" value={defaultRate ? formatRate(defaultRate) : "—"} />
+        <TeamMiniStat label="Active" value={String(activeRates.length)} />
+        <TeamMiniStat label="Scheduled" value={String(scheduledRates.length)} />
+        <TeamMiniStat label="Next change" value={scheduledRates[0]?.effective_from ?? "—"} />
       </div>
 
-
-
-      {defaultRate && (
-
-        <p className="text-xs text-muted-foreground">{formatRateDescription(defaultRate)}</p>
-
-      )}
+      {defaultRate && <p className="text-xs text-muted-foreground">{formatRateDescription(defaultRate)}</p>}
 
       {isLoading ? (
-
         <p className="text-sm text-muted-foreground">Loading rates…</p>
-
-      ) : rates.length === 0 ? (
-
-        <p className="text-sm text-muted-foreground">No rates recorded yet.</p>
-
+      ) : currentRates.length === 0 ? (
+        <TeamEmptyState title="No active rates" description="Add a rate to define this member's compensation." />
       ) : (
-
-        <>
-
-          <DataTable
-
-            tableId={`team-rates-active-${person.id}`}
-
-            data={activeRates.concat(scheduledRates)}
-
-            columns={columns}
-
-            enablePagination={false}
-
-          />
-
-
-
-          {historicalRates.length > 0 && (
-
-            <div className="space-y-2">
-
-        <Button size="sm" variant="ghost" className={cn("gap-1 text-muted-foreground", teamActionBtn.secondary)} onClick={() => setShowHistory((v) => !v)}>
-
-                <History className={teamIcon} />
-
-                {showHistory ? "Hide" : "Show"} historical rates ({historicalRates.length})
-
-                <ChevronDown className={cn(teamIcon, "transition-transform", showHistory && "rotate-180")} />
-
-              </Button>              {showHistory && (
-
-                <DataTable
-
-                  tableId={`team-rates-history-${person.id}`}
-
-                  data={historicalRates}
-
-                  columns={columns}
-
-                  enablePagination={false}
-
-                />
-
-              )}
-
-            </div>
-
-          )}
-
-        </>
-
+        <TeamRecordList>{currentRates.map(renderRate)}</TeamRecordList>
       )}
 
-
+      {historicalRates.length > 0 && (
+        <div className="space-y-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            className={cn("gap-1 text-muted-foreground", teamActionBtn.secondary)}
+            onClick={() => setShowHistory((value) => !value)}
+          >
+            <History className={teamIcon} />
+            {showHistory ? "Hide" : "Show"} history ({historicalRates.length})
+            <ChevronDown className={cn(teamIcon, "transition-transform", showHistory && "rotate-180")} />
+          </Button>
+          {showHistory && <TeamRecordList>{historicalRates.map(renderRate)}</TeamRecordList>}
+        </div>
+      )}
 
       {dialogOpen && (
-
         <RateDialog
-
           open={dialogOpen}
-
           onOpenChange={setDialogOpen}
-
           person={person}
-
           rate={editRate}
-
           mode={dialogMode}
-
         />
-
       )}
-
     </div>
-
   );
-
 }
 
-
-
 function RateActions({
-
   rate,
-
-  personId,
-
   onEdit,
-
   onDuplicate,
-
   onReplace,
-
   onEnd,
-
   onSetDefault,
-
   onDelete,
-
 }: {
-
   rate: TeamMemberRate;
-
-  personId: string;
-
   onEdit: () => void;
-
   onDuplicate: () => void;
-
   onReplace: () => void;
-
   onEnd: () => void;
-
   onSetDefault: () => void;
-
   onDelete: () => void;
-
 }) {
-
   const { data: usage } = useRateUsageCheck(rate.id, { enabled: !!rate.id });
-
   const isUsed = usage?.is_used ?? false;
-
   const canEdit = !isUsed && rate.status !== "expired";
-
   const canDelete = !isUsed && rate.status !== "active";
 
-
-
   return (
-
     <DropdownMenu>
-
       <DropdownMenuTrigger asChild>
-
-        <Button variant="ghost" size="icon" className={teamActionBtn.menu}>
-
+        <Button variant="ghost" size="icon" className={teamActionBtn.menu} aria-label="Rate actions">
           <MoreHorizontal className={teamIcon} />
-
         </Button>
-
       </DropdownMenuTrigger>
-
       <DropdownMenuContent align="end">
-
-        {canEdit && <DropdownMenuItem onClick={onEdit}>Edit</DropdownMenuItem>}
-
-        <DropdownMenuItem onClick={onDuplicate}>Duplicate</DropdownMenuItem>
-
+        {canEdit && <DropdownMenuItem onSelect={onEdit}>Edit rate</DropdownMenuItem>}
+        <DropdownMenuItem onSelect={onDuplicate}>Duplicate rate</DropdownMenuItem>
         {rate.status === "active" && (
-
-          <DropdownMenuItem onClick={onReplace}>
-
+          <DropdownMenuItem onSelect={onReplace}>
             {isUsed ? "Schedule replacement" : "Replace rate"}
-
           </DropdownMenuItem>
-
         )}
-
         {rate.status === "active" && !rate.effective_to && (
-
-          <DropdownMenuItem onClick={onEnd}>End rate</DropdownMenuItem>
-
+          <DropdownMenuItem onSelect={onEnd}>End rate</DropdownMenuItem>
         )}
-
         {!rateHasProjects(rate) && !rate.work_type && !rate.is_default && rate.status === "active" && (
-
-          <DropdownMenuItem onClick={onSetDefault}>Set as default</DropdownMenuItem>
-
+          <DropdownMenuItem onSelect={onSetDefault}>Set as default</DropdownMenuItem>
         )}
-
         {canDelete && (
-
           <>
-
             <DropdownMenuSeparator />
-
-            <DropdownMenuItem className="text-destructive" onClick={onDelete}>
-
-              Delete
-
+            <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={onDelete}>
+              Delete rate
             </DropdownMenuItem>
-
           </>
-
         )}
-
       </DropdownMenuContent>
-
     </DropdownMenu>
-
   );
-
 }

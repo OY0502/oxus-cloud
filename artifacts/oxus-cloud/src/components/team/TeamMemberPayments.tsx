@@ -1,129 +1,47 @@
 import React, { useState } from "react";
-
-import { DataTable } from "@/components/DataTable";
-
 import { StatusBadge } from "@/components/StatusBadge";
-
-import { Button } from "@/components/ui/button";
-
 import {
-
   usePayoutsWithAllocations,
-
   useTeamMemberSummary,
-
-  useContractorInvoiceSummary,
-
 } from "@/hooks/api";
-
 import { formatCurrency, formatEUR } from "@/lib/currency";
-
-import type { Contact, PayoutWithAllocations } from "@/lib/types";
-
+import type { Contact } from "@/lib/types";
 import { EurReportingValue } from "./EurReportingValue";
 import { RecordPaymentDialog } from "./TeamDialogs";
 import { Plus } from "lucide-react";
-import { TeamMiniStat, TeamOutlineButton, TeamPanelHeader, teamIcon } from "./teamUi";
-
-
+import {
+  TeamEmptyState,
+  TeamMiniStat,
+  TeamOutlineButton,
+  TeamPanelHeader,
+  TeamRecordField,
+  TeamRecordItem,
+  TeamRecordList,
+  teamIcon,
+} from "./teamUi";
 
 export function TeamMemberPaymentsPanel({
-
   person,
-
   canManage,
-
   onRecordPayment,
-
 }: {
-
   person: Contact;
-
   canManage: boolean;
-
   onRecordPayment?: () => void;
-
 }) {
-
   const { data: payouts = [], isLoading } = usePayoutsWithAllocations(person.id, { enabled: canManage });
-
   const summaryQuery = useTeamMemberSummary(person.id, { enabled: canManage, includeFinancials: true });
-
-  const invoiceSummary = useContractorInvoiceSummary(person.id, { enabled: canManage });
-
   const summary = summaryQuery.data;
-
   const [recordOpen, setRecordOpen] = useState(false);
 
-
-
   const openRecord = () => {
-
     if (onRecordPayment) onRecordPayment();
-
     else setRecordOpen(true);
-
   };
 
-
-
-  const columns = [
-
-    { id: "date", header: "Date", cell: (p: PayoutWithAllocations) => p.payment_date ?? "—" },
-
-    { id: "amount", header: "Amount", cell: (p: PayoutWithAllocations) => formatCurrency(p.amount, p.currency, true) },
-
-    {
-
-      id: "period",
-
-      header: "Period",
-
-      cell: (p: PayoutWithAllocations) =>
-
-        p.period_start && p.period_end ? `${p.period_start} – ${p.period_end}` : "—",
-
-    },
-
-    {
-
-      id: "invoices",
-
-      header: "Invoices",
-
-      cell: (p: PayoutWithAllocations) => {
-
-        const links = p.contractor_invoice_payments ?? [];
-
-        if (links.length === 0) return "—";
-
-        return links
-
-          .map((l) => l.contractor_invoices?.invoice_number ?? l.contractor_invoice_id.slice(0, 8))
-
-          .join(", ");
-
-      },
-
-    },
-
-    { id: "provider", header: "Provider", cell: (p: PayoutWithAllocations) => <StatusBadge status={p.provider} variant="neutral" /> },
-
-    { id: "status", header: "Status", cell: (p: PayoutWithAllocations) => <StatusBadge status={p.status} variant="neutral" /> },
-
-    { id: "notes", header: "Notes", cell: (p: PayoutWithAllocations) => p.notes ?? "—" },
-
-  ];
-
-
-
   if (!canManage) {
-
     return <p className="text-sm text-muted-foreground">Payment details are restricted to admins.</p>;
-
   }
-
-
 
   return (
     <div className="min-w-0 space-y-4">
@@ -147,7 +65,7 @@ export function TeamMemberPaymentsPanel({
           }
         />
         <TeamMiniStat
-          label="Paid YTD"
+          label="Paid this year"
           value={
             <EurReportingValue
               aggregate={summary?.paid_ytd_eur}
@@ -156,46 +74,68 @@ export function TeamMemberPaymentsPanel({
           }
         />
         <TeamMiniStat label="Lifetime paid" value={formatCurrency(summary?.lifetime_paid ?? 0)} />
-        <TeamMiniStat label="Outstanding payables" value={formatEUR(summary?.outstanding_payables ?? summary?.outstanding_invoices ?? 0)} />
+        <TeamMiniStat
+          label="Outstanding"
+          value={formatEUR(summary?.outstanding_payables ?? summary?.outstanding_invoices ?? 0)}
+        />
         <TeamMiniStat label="Pending payouts" value={formatCurrency(summary?.pending ?? 0)} />
       </div>
 
-
-
       {summary?.last_payment_date && (
-
-        <p className="text-xs text-muted-foreground">Last payment: {summary.last_payment_date}</p>
-
+        <p className="text-xs text-muted-foreground">Last payment on {summary.last_payment_date}</p>
       )}
-
-
 
       {isLoading ? (
-
         <p className="text-sm text-muted-foreground">Loading payments…</p>
-
       ) : payouts.length === 0 ? (
-
-        <p className="text-sm text-muted-foreground">No payments recorded yet.</p>
-
+        <TeamEmptyState
+          title="No payments"
+          description="Recorded payments will appear here with their period, provider, and invoice allocations."
+        />
       ) : (
+        <TeamRecordList>
+          {payouts.map((payout) => {
+            const invoiceLabels = (payout.contractor_invoice_payments ?? []).map(
+              (link) => link.contractor_invoices?.invoice_number ?? link.contractor_invoice_id.slice(0, 8),
+            );
+            const period = payout.period_start && payout.period_end
+              ? `${payout.period_start} – ${payout.period_end}`
+              : "—";
 
-        <DataTable tableId={`team-payments-${person.id}`} data={payouts} columns={columns} />
-
+            return (
+              <TeamRecordItem
+                key={payout.id}
+                title={
+                  <>
+                    <span>Payment {payout.payment_date ? `· ${payout.payment_date}` : ""}</span>
+                    <StatusBadge status={payout.status} variant={payout.status === "completed" ? "success" : "neutral"} />
+                  </>
+                }
+                subtitle={invoiceLabels.length > 0 ? `Invoices · ${invoiceLabels.join(", ")}` : payout.notes ?? "Unallocated payment"}
+                trailing={
+                  <>
+                    <div className="text-xs text-muted-foreground">Amount</div>
+                    <div className="mt-0.5 text-sm font-semibold tabular-nums text-foreground">
+                      {formatCurrency(payout.amount, payout.currency, true)}
+                    </div>
+                  </>
+                }
+                details={
+                  <>
+                    <TeamRecordField label="Period">{period}</TeamRecordField>
+                    <TeamRecordField label="Provider">{payout.provider}</TeamRecordField>
+                    <TeamRecordField label="Notes">{payout.notes ?? "—"}</TeamRecordField>
+                  </>
+                }
+              />
+            );
+          })}
+        </TeamRecordList>
       )}
-
-
 
       {!onRecordPayment && (
-
         <RecordPaymentDialog open={recordOpen} onOpenChange={setRecordOpen} person={person} />
-
       )}
-
     </div>
-
   );
-
 }
-
-

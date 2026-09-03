@@ -12,6 +12,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeProfileRole, roleLabel } from "@/lib/roles";
 import type { Contact, ProfileRole } from "@/lib/types";
+import { TeamDetailGrid, TeamDetailItem, TeamPanelSection } from "./teamUi";
 
 export function TeamMemberAccessPanel({ person }: { person: Contact }) {
   const { user, refreshProfile } = useAuth();
@@ -71,22 +72,22 @@ export function TeamMemberAccessPanel({ person }: { person: Contact }) {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-border/60 divide-y divide-border/60">
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 px-4 py-3 text-sm">
-          <span className="text-muted-foreground">Account</span>
-          <span className="font-medium">{profile.full_name ?? profile.email}</span>
-          <span className="text-muted-foreground">Email</span>
-          <span>{profile.email}</span>
-          <span className="text-muted-foreground">Status</span>
-          <span>
+      <TeamPanelSection title="Workspace account">
+        <TeamDetailGrid>
+          <TeamDetailItem label="Account">{profile.full_name ?? profile.email}</TeamDetailItem>
+          <TeamDetailItem label="Email" className="col-span-2 sm:col-span-1">
+            <span className="break-all">{profile.email}</span>
+          </TeamDetailItem>
+          <TeamDetailItem label="Status">
             <StatusBadge
               status={profile.access_status === "active" ? "Active" : profile.access_status}
               variant={profile.access_status === "active" ? "success" : "neutral"}
             />
-          </span>
-        </div>
-        <div className="flex items-center justify-between gap-3 px-4 py-3">
-          <div>
+          </TeamDetailItem>
+        </TeamDetailGrid>
+
+        <div className="mt-4 flex flex-col gap-3 border-t border-border/60 pt-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
             <p className="text-sm font-medium">Workspace role</p>
             <p className="text-xs text-muted-foreground">Controls finance and admin permissions</p>
           </div>
@@ -95,7 +96,7 @@ export function TeamMemberAccessPanel({ person }: { person: Contact }) {
             disabled={setProfileRole.isPending || isLastSuperAdmin}
             onValueChange={(v) => void handleRoleChange(v as ProfileRole)}
           >
-            <SelectTrigger className="w-[150px] h-9">
+            <SelectTrigger className="h-9 w-full sm:w-[160px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -104,7 +105,12 @@ export function TeamMemberAccessPanel({ person }: { person: Contact }) {
             </SelectContent>
           </Select>
         </div>
-      </div>
+        {isLastSuperAdmin && (
+          <p className="mt-3 text-xs text-muted-foreground">
+            This is the last super admin account, so its role cannot be changed.
+          </p>
+        )}
+      </TeamPanelSection>
     </div>
   );
 }

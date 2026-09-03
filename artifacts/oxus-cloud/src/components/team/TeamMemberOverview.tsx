@@ -11,18 +11,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TagInput } from "@/components/forms/Inputs";
-import { StatusBadge } from "@/components/StatusBadge";
 import { useUpdateTeamMember, useCreateTeamActivity } from "@/hooks/api";
 import { useToast } from "@/hooks/use-toast";
 import {
-  availabilityLabel,
-  availabilityVariant,
   mergeTeamMetadata,
   parseTeamMetadata,
-  personStatusVariant,
   formatRate,
-  deactivatedAtLabel,
-  isPersonInactive,
 } from "@/lib/team";
 import type { Availability, Contact, TeamMemberFinancialSummary } from "@/lib/types";
 import type { Json } from "@/lib/database.types";
@@ -31,6 +25,7 @@ import {
   TeamChip,
   TeamDetailGrid,
   TeamDetailItem,
+  TeamMiniStat,
   TeamPanelSection,
   TeamPrimaryButton,
   teamActionBtn,
@@ -57,7 +52,6 @@ export function TeamMemberOverview({
   const updateMember = useUpdateTeamMember();
   const logActivity = useCreateTeamActivity();
   const meta = parseTeamMetadata(person);
-  const inactive = isPersonInactive(person);
 
   const [editingInternal, setEditingInternal] = useState(false);
   const editing = editingProp ?? editingInternal;
@@ -102,8 +96,6 @@ export function TeamMemberOverview({
     setPaymentTerms(m.payment_terms ?? "");
     if (editingProp === undefined) setEditingInternal(false);
   }, [person, editingProp]);
-
-  const displayName = [firstName, lastName].filter(Boolean).join(" ") || person.name;
 
   const cancel = () => {
     setEditing(false);
@@ -239,31 +231,27 @@ export function TeamMemberOverview({
     );
   }
 
-  const deactivated = deactivatedAtLabel(person);
-
   return (
     <div className="space-y-3">
-      <TeamPanelSection title="Member details">
+      <TeamPanelSection title="Contact & availability">
         <TeamDetailGrid>
-          <TeamDetailItem label="Name">{displayName}</TeamDetailItem>
-          <TeamDetailItem label="Email">{person.email ?? "—"}</TeamDetailItem>
+          <TeamDetailItem label="Email" className="col-span-2 sm:col-span-1">
+            <span className="break-all">{person.email ?? "—"}</span>
+          </TeamDetailItem>
           <TeamDetailItem label="Phone">{person.phone ?? "—"}</TeamDetailItem>
           <TeamDetailItem label="Location">{person.location ?? "—"}</TeamDetailItem>
-          <TeamDetailItem label="Role">{person.job_title ?? "—"}</TeamDetailItem>
           <TeamDetailItem label="Start date">{meta.start_date ?? "—"}</TeamDetailItem>
-          <TeamDetailItem label="Status">
-            <StatusBadge
-              status={inactive ? "Inactive" : "Active"}
-              variant={personStatusVariant(person.person_status)}
-            />
+          <TeamDetailItem label="Weekly availability">
+            {meta.weekly_available_hours != null ? `${meta.weekly_available_hours}h / week` : "—"}
           </TeamDetailItem>
-          <TeamDetailItem label="Availability">
-            {inactive ? "—" : (
-              <StatusBadge status={availabilityLabel(person.availability)} variant={availabilityVariant(person.availability)} />
-            )}
+          <TeamDetailItem label="Capacity">
+            {meta.capacity_percent != null ? `${meta.capacity_percent}%` : summary?.available_capacity ?? "—"}
           </TeamDetailItem>
-          {inactive && deactivated && (
-            <TeamDetailItem label="Deactivated">{deactivated}</TeamDetailItem>
+          {meta.end_date && (
+            <TeamDetailItem label="End date">{meta.end_date}</TeamDetailItem>
+          )}
+          {showFinancials && meta.payment_terms && (
+            <TeamDetailItem label="Payment terms">{meta.payment_terms}</TeamDetailItem>
           )}
         </TeamDetailGrid>
       </TeamPanelSection>
@@ -280,32 +268,25 @@ export function TeamMemberOverview({
         )}
       </TeamPanelSection>
 
-      <TeamPanelSection title="Operational summary">
-        <TeamDetailGrid>
-          {showFinancials && summary?.current_rate && (
-            <TeamDetailItem label="Current rate">
-              <span className="font-serif tabular-nums">{formatRate(summary.current_rate)}</span>
-            </TeamDetailItem>
-          )}
+      <TeamPanelSection title={showFinancials ? "Compensation & workload" : "Workload"}>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {showFinancials && (
-            <>
-              <TeamDetailItem label="Paid this month">
-                <span className="font-serif tabular-nums">{formatEUR(summary?.paid_mtd ?? 0)}</span>
-              </TeamDetailItem>
-              <TeamDetailItem label="Paid this year">
-                <span className="font-serif tabular-nums">{formatEUR(summary?.paid_ytd ?? 0)}</span>
-              </TeamDetailItem>
-              <TeamDetailItem label="Outstanding payables">
-                <span className="font-serif tabular-nums">{formatEUR(summary?.outstanding_payables ?? summary?.outstanding_invoices ?? 0)}</span>
-              </TeamDetailItem>
-              <TeamDetailItem label="Ready to pay">
-                <span className="font-serif tabular-nums">{formatEUR(summary?.ready_to_pay ?? 0)}</span>
-              </TeamDetailItem>
-            </>
+            <TeamMiniStat
+              label="Current rate"
+              value={summary?.current_rate ? formatRate(summary.current_rate) : "—"}
+            />
           )}
-          <TeamDetailItem label="Active projects">{summary?.active_projects ?? 0}</TeamDetailItem>
-          <TeamDetailItem label="Available capacity">{summary?.available_capacity ?? "—"}</TeamDetailItem>
-        </TeamDetailGrid>
+          {showFinancials && <TeamMiniStat label="Paid this year" value={formatEUR(summary?.paid_ytd ?? 0)} />}
+          {showFinancials && (
+            <TeamMiniStat
+              label="Outstanding"
+              value={formatEUR(summary?.outstanding_payables ?? summary?.outstanding_invoices ?? 0)}
+            />
+          )}
+          {showFinancials && <TeamMiniStat label="Ready to pay" value={formatEUR(summary?.ready_to_pay ?? 0)} />}
+          <TeamMiniStat label="Active projects" value={summary?.active_projects ?? 0} />
+          <TeamMiniStat label="Available capacity" value={summary?.available_capacity ?? "—"} />
+        </div>
       </TeamPanelSection>
 
       {(person.notes || (showFinancials && meta.internal_notes)) && (

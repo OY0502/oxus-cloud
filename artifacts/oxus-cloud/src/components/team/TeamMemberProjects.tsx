@@ -1,14 +1,31 @@
 import React, { useState } from "react";
 import { Link } from "wouter";
-import { DataTable } from "@/components/DataTable";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { StatusBadge } from "@/components/StatusBadge";
 import { useEndProjectAssignment, usePersonProjectAssignments } from "@/hooks/api";
 import { parseTeamMetadata } from "@/lib/team";
 import { useToast } from "@/hooks/use-toast";
 import type { Contact, ProjectContactAssignment } from "@/lib/types";
 import { AssignProjectDialog } from "./TeamDialogs";
-import { Plus } from "lucide-react";
-import { TeamMiniStat, TeamOutlineButton, TeamPanelHeader, teamIcon } from "./teamUi";
+import { MoreHorizontal, Plus } from "lucide-react";
+import {
+  TeamEmptyState,
+  TeamMiniStat,
+  TeamOutlineButton,
+  TeamPanelHeader,
+  TeamRecordField,
+  TeamRecordItem,
+  TeamRecordList,
+  teamActionBtn,
+  teamIcon,
+} from "./teamUi";
 
 export function TeamMemberProjects({
   person,
@@ -29,56 +46,18 @@ export function TeamMemberProjects({
   const totalWeekly = active.reduce((s, a) => s + (Number(a.weekly_hours) || 0), 0);
   const hasAllocationData = active.some((a) => a.allocation_percent != null || a.weekly_hours != null);
 
-  const columns = [
-    {
-      id: "project",
-      header: "Project",
-      cell: (a: ProjectContactAssignment) => (
-        <Link href={`/projects/${a.project_id}`} className="font-medium hover:underline">
-          {a.projects?.name ?? a.project_id.slice(0, 8)}
-        </Link>
-      ),
-    },
-    { id: "role", header: "Role", cell: (a: ProjectContactAssignment) => a.role_on_project ?? "—" },
-    {
-      id: "allocation",
-      header: "Allocation",
-      cell: (a: ProjectContactAssignment) =>
-        a.allocation_percent != null ? `${a.allocation_percent}%` : a.weekly_hours != null ? `${a.weekly_hours}h/wk` : "—",
-    },
-    { id: "start", header: "Start", cell: (a: ProjectContactAssignment) => a.start_date ?? "—" },
-    { id: "end", header: "End", cell: (a: ProjectContactAssignment) => a.end_date ?? (a.is_active ? "Active" : "—") },
-    ...(canManage
-      ? [{
-          id: "actions",
-          header: "",
-          cell: (a: ProjectContactAssignment) => (
-            <div className="flex gap-1 justify-end">
-              <Button size="sm" variant="ghost" onClick={() => { setEditAssignment(a); setAssignOpen(true); }}>Edit</Button>
-              {a.is_active && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="text-destructive"
-                  onClick={() => void endAssignment.mutateAsync({ project_id: a.project_id, contact_id: person.id }).then(() => {
-                    toast({ title: "Assignment ended" });
-                  }).catch((e) => {
-                    toast({ title: "Could not end assignment", description: e.message, variant: "destructive" });
-                  })}
-                >
-                  End
-                </Button>
-              )}
-            </div>
-          ),
-        }]
-      : []),
-  ];
+  const endProjectAssignment = (assignment: ProjectContactAssignment) => {
+    void endAssignment.mutateAsync({ project_id: assignment.project_id, contact_id: person.id }).then(() => {
+      toast({ title: "Assignment ended" });
+    }).catch((e) => {
+      toast({ title: "Could not end assignment", description: e.message, variant: "destructive" });
+    });
+  };
 
   return (
     <div className="space-y-4">
       <TeamPanelHeader
-        title="Projects"
+        title="Project assignments"
         action={
           canManage ? (
             <TeamOutlineButton onClick={() => { setEditAssignment(null); setAssignOpen(true); }}>
@@ -112,9 +91,70 @@ export function TeamMemberProjects({
       {isLoading ? (
         <p className="text-sm text-muted-foreground">Loading assignments…</p>
       ) : assignments.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No project assignments yet.</p>
+        <TeamEmptyState
+          title="No project assignments"
+          description="Assign this member to a project to track role, dates, and capacity."
+        />
       ) : (
-        <DataTable tableId={`team-projects-${person.id}`} data={assignments} columns={columns} enablePagination={false} />
+        <TeamRecordList>
+          {assignments.map((assignment) => {
+            const isActive = assignment.is_active !== false;
+            const allocation = assignment.allocation_percent != null
+              ? `${assignment.allocation_percent}%`
+              : assignment.weekly_hours != null
+                ? `${assignment.weekly_hours}h / week`
+                : "—";
+
+            return (
+              <TeamRecordItem
+                key={`${assignment.project_id}-${assignment.contact_id}`}
+                title={
+                  <>
+                    <Link href={`/projects/${assignment.project_id}`} className="hover:underline">
+                      {assignment.projects?.name ?? assignment.project_id.slice(0, 8)}
+                    </Link>
+                    <StatusBadge status={isActive ? "Active" : "Ended"} variant={isActive ? "success" : "neutral"} />
+                  </>
+                }
+                subtitle={assignment.role_on_project ?? "No project role set"}
+                trailing={
+                  <>
+                    <div className="text-xs text-muted-foreground">Allocation</div>
+                    <div className="mt-0.5 text-sm font-semibold tabular-nums text-foreground">{allocation}</div>
+                  </>
+                }
+                details={
+                  <>
+                    <TeamRecordField label="Started">{assignment.start_date ?? "—"}</TeamRecordField>
+                    <TeamRecordField label="Ended">{assignment.end_date ?? (isActive ? "Ongoing" : "—")}</TeamRecordField>
+                  </>
+                }
+                actions={canManage ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className={teamActionBtn.menu} aria-label="Assignment actions">
+                        <MoreHorizontal className={teamIcon} />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onSelect={() => { setEditAssignment(assignment); setAssignOpen(true); }}>
+                        Edit assignment
+                      </DropdownMenuItem>
+                      {isActive && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => endProjectAssignment(assignment)}>
+                            End assignment
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : undefined}
+              />
+            );
+          })}
+        </TeamRecordList>
       )}
 
       <AssignProjectDialog

@@ -14,6 +14,7 @@ export type TeamMemberTab =
 interface TeamMemberTabNavProps {
   value: TeamMemberTab;
   onChange: (tab: TeamMemberTab) => void;
+  className?: string;
   showPayables?: boolean;
   showRates?: boolean;
   showInvoices?: boolean;
@@ -27,7 +28,7 @@ const TABS: { id: TeamMemberTab; label: string }[] = [
   { id: "projects", label: "Projects" },
   { id: "rates", label: "Rates" },
   { id: "payables", label: "Payables" },
-  { id: "invoices", label: "Supporting invoices" },
+  { id: "invoices", label: "Invoices" },
   { id: "payments", label: "Payments" },
   { id: "activity", label: "Activity" },
   { id: "access", label: "Access" },
@@ -36,6 +37,7 @@ const TABS: { id: TeamMemberTab; label: string }[] = [
 export function TeamMemberTabNav({
   value,
   onChange,
+  className,
   showRates = false,
   showPayables = false,
   showInvoices = false,
@@ -54,17 +56,24 @@ export function TeamMemberTabNav({
   });
 
   return (
-    <nav className="-mb-px mb-4 flex gap-4 overflow-x-auto border-b border-border">
+    <nav
+      aria-label="Team member sections"
+      className={cn(
+        "grid grid-cols-4 border-b border-border/70 sm:grid-cols-7",
+        className,
+      )}
+    >
       {visible.map((tab) => (
         <button
           key={tab.id}
           type="button"
+          aria-current={value === tab.id ? "page" : undefined}
           onClick={() => onChange(tab.id)}
           className={cn(
-            "shrink-0 border-b-2 pb-2.5 text-sm font-medium transition-colors",
+            "min-w-0 border-b-2 px-1 py-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
             value === tab.id
               ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground",
+              : "border-transparent text-muted-foreground hover:border-border hover:text-foreground",
           )}
         >
           {tab.label}

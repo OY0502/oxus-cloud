@@ -46,7 +46,6 @@ import {
 import {
   TeamIconButton,
   TeamInactiveBanner,
-  TeamMiniStat,
   TeamOutlineButton,
   TeamPrimaryButton,
   teamIcon,
@@ -163,10 +162,6 @@ export function TeamMemberDrawer({
 
   if (!person) return null;
 
-  const metadataParts = [
-    person.email,
-  ].filter(Boolean);
-
   const drawerActions = (
     <div className="flex flex-wrap items-center gap-2">
       {isSuperAdmin && !inactive && (
@@ -176,7 +171,7 @@ export function TeamMemberDrawer({
       )}
 
       {isSuperAdmin && !inactive && (
-        <TeamOutlineButton onClick={() => openRecordPayment()}>
+        <TeamOutlineButton variant="ghost" onClick={() => openRecordPayment()}>
           <Wallet className={teamIcon} /> Record payment
         </TeamOutlineButton>
       )}
@@ -192,7 +187,7 @@ export function TeamMemberDrawer({
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <TeamIconButton aria-label="More actions">
+          <TeamIconButton variant="ghost" aria-label="More actions">
             <MoreHorizontal className={teamIcon} />
           </TeamIconButton>
         </DropdownMenuTrigger>
@@ -270,88 +265,97 @@ export function TeamMemberDrawer({
       <EntityDrawer
         open={open}
         onOpenChange={onOpenChange}
-        className="sm:max-w-[680px]"
+        className="sm:max-w-[760px]"
+        headerClassName="bg-card/70 px-6 pb-4 pt-4"
         title={
-          <div className="space-y-3">
-            <div className="flex items-start gap-3">
-              <Avatar
+          <div className="flex min-w-0 items-center gap-3.5">
+            <Avatar
+              className={cn(
+                "h-11 w-11 shrink-0 border",
+                inactive ? "border-border/40 grayscale opacity-80" : "border-border/60",
+              )}
+            >
+              {person.avatar_url ? <AvatarImage src={person.avatar_url} alt={person.name} /> : null}
+              <AvatarFallback
                 className={cn(
-                  "h-11 w-11 shrink-0 border",
-                  inactive ? "border-border/40 grayscale opacity-80" : "border-border/60",
+                  "text-sm font-semibold",
+                  inactive ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary",
                 )}
               >
-                {person.avatar_url ? <AvatarImage src={person.avatar_url} alt={person.name} /> : null}
-                <AvatarFallback
-                  className={cn(
-                    "text-sm font-semibold",
-                    inactive ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary",
-                  )}
-                >
-                  {personInitials(person.name)}
-                </AvatarFallback>
-              </Avatar>
+                {personInitials(person.name)}
+              </AvatarFallback>
+            </Avatar>
 
-              <div className="min-w-0 flex-1 space-y-1">
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <div
                   className={cn(
-                    "truncate font-serif text-lg font-semibold leading-tight tracking-tight",
+                    "truncate text-lg font-semibold leading-tight tracking-tight",
                     inactive && "text-muted-foreground",
                   )}
                 >
                   {person.name}
                 </div>
-                <p className="truncate text-sm text-foreground">{person.job_title ?? "No role set"}</p>
-                {metadataParts.length > 0 && (
-                  <p className="truncate text-sm text-muted-foreground">{metadataParts.join(" · ")}</p>
-                )}
-                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                  <StatusBadge
-                    status={inactive ? "Inactive" : "Active"}
-                    variant={personStatusVariant(person.person_status)}
-                  />
-                  {!inactive && person.availability && (
-                    <StatusBadge
-                      status={availabilityLabel(person.availability)}
-                      variant={availabilityVariant(person.availability)}
-                    />
-                  )}
-                  {hasWorkspaceAccount && (
-                    <span className="text-xs text-muted-foreground">Workspace access</span>
-                  )}
-                </div>
-                {inactive && deactivatedLabel && (
-                  <p className="text-xs text-muted-foreground">Deactivated {deactivatedLabel}</p>
+                <StatusBadge
+                  status={inactive ? "Inactive" : "Active"}
+                  variant={personStatusVariant(person.person_status)}
+                />
+              </div>
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-normal">
+                <span className="truncate text-foreground">{person.job_title ?? "No role set"}</span>
+                {person.email && (
+                  <>
+                    <span className="text-border" aria-hidden="true">·</span>
+                    <span className="truncate text-muted-foreground">{person.email}</span>
+                  </>
                 )}
               </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                {!inactive && person.availability && (
+                  <StatusBadge
+                    status={availabilityLabel(person.availability)}
+                    variant={availabilityVariant(person.availability)}
+                  />
+                )}
+                {hasWorkspaceAccount && (
+                  <span className="text-xs font-normal text-muted-foreground">Workspace access</span>
+                )}
+              </div>
+              {inactive && deactivatedLabel && (
+                <p className="mt-1.5 text-xs font-normal text-muted-foreground">Deactivated {deactivatedLabel}</p>
+              )}
             </div>
-
-            {drawerActions}
-
+          </div>
+        }
+        headerActions={
+          <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             {isSuperAdmin && (
-              <div className="rounded-lg border border-border/60 bg-card/40 px-4 py-3">
-                <div className="grid grid-cols-3 gap-3">
-                  <TeamMiniStat
-                    label="Top paid"
-                    value={paidYtdRankInfo ? `#${paidYtdRankInfo.rank}` : "—"}
-                    className="border-0 bg-transparent px-0 py-0"
-                  />
-                  <TeamMiniStat
-                    label="Paid MTD"
-                    value={formatEUR(summary?.paid_mtd ?? 0)}
-                    className="border-0 bg-transparent px-0 py-0"
-                  />
-                  <TeamMiniStat
-                    label="Active projects"
-                    value={String(summary?.active_projects ?? 0)}
-                    className="border-0 bg-transparent px-0 py-0"
-                  />
+              <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1.5 text-xs">
+                <div className="whitespace-nowrap">
+                  <span className="font-semibold tabular-nums text-foreground">
+                    {paidYtdRankInfo ? `#${paidYtdRankInfo.rank}` : "—"}
+                  </span>
+                  <span className="ml-1.5 text-muted-foreground">pay rank</span>
+                </div>
+                <div className="whitespace-nowrap">
+                  <span className="font-semibold tabular-nums text-foreground">
+                    {formatEUR(summary?.paid_mtd ?? 0)}
+                  </span>
+                  <span className="ml-1.5 text-muted-foreground">paid this month</span>
+                </div>
+                <div className="whitespace-nowrap">
+                  <span className="font-semibold tabular-nums text-foreground">
+                    {summary?.active_projects ?? 0}
+                  </span>
+                  <span className="ml-1.5 text-muted-foreground">active projects</span>
                 </div>
               </div>
             )}
+            <div className="shrink-0 sm:ml-auto">{drawerActions}</div>
           </div>
         }
       >
-        <div className="min-w-0 space-y-4">
+        <div className="min-w-0 space-y-4 pb-2">
           {inactive && (
             <TeamInactiveBanner>
               This member is inactive. History is preserved — reactivate to restore roster actions.
@@ -361,6 +365,7 @@ export function TeamMemberDrawer({
           <TeamMemberTabNav
             value={tab}
             onChange={(v) => { setTab(v); if (v !== "overview") setEditing(false); }}
+            className="sticky -top-4 z-10 bg-background/95 backdrop-blur-md"
             showRates={isSuperAdmin}
             showPayables={isSuperAdmin}
             showInvoices={isSuperAdmin}
