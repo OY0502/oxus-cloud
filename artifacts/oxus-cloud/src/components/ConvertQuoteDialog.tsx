@@ -34,26 +34,35 @@ export function ConvertQuoteDialog({ quote, open, onOpenChange, onDone }: Conver
       const project = await convert.mutateAsync(quote);
 
       // Kick off enrichment + initial Project Intelligence from the proposal's
-      // company website + request message. Fire-and-forget: never block conversion.
+      // company website + request message. Wait for queue acknowledgement so a
+      // failed request is visible, while still preserving the converted project.
       const website = quote.company_website_url?.trim() || null;
       const requestMessage = quote.request_message?.trim() || null;
       if (website || requestMessage) {
-        enrichFromWebsite
-          .mutateAsync({
+        try {
+          const result = await enrichFromWebsite.mutateAsync({
             project_id: project.id,
             company_website_url: website,
             request_message: requestMessage,
             proposal_id: quote.id,
-          })
-          .then((r) => {
-            toast({
-              title: r.async ? "Project intelligence queued" : "Project intelligence started",
-              description: website
-                ? "Enriching from the company website and the client's request message."
-                : "Initializing project intelligence from the client's request message.",
-            });
-          })
-          .catch((e) => console.warn("[enrichment] convert queue failed", (e as Error).message));
+          });
+          if (!result.async && result.status === "failed") {
+            throw new Error(result.message || "Project intelligence could not be initialized.");
+          }
+          toast({
+            title: result.async ? "Project intelligence queued" : "Project intelligence started",
+            description: website
+              ? "Enriching from the company website and the client's request message."
+              : "Initializing project intelligence from the client's request message.",
+          });
+        } catch (e) {
+          console.warn("[enrichment] convert queue failed", (e as Error).message);
+          toast({
+            title: "Project created without enrichment",
+            description: "Project intelligence could not start. You can retry it from the project page.",
+            variant: "destructive",
+          });
+        }
       }
 
       onOpenChange(false);
@@ -75,8 +84,8 @@ export function ConvertQuoteDialog({ quote, open, onOpenChange, onDone }: Conver
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Not now</AlertDialogCancel>
-          <AlertDialogAction onClick={confirm} disabled={convert.isPending}>
-            {convert.isPending ? "Creating…" : "Create project"}
+          <AlertDialogAction onClick={confirm} disabled={convert.isPending || enrichFromWebsite.isPending}>
+            {convert.isPending || enrichFromWebsite.isPending ? "Creating…" : "Create project"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

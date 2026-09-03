@@ -87,4 +87,19 @@ describe("Supabase security architecture", () => {
     expect(source).toContain("if (!webhookSecret)");
     expect(source).toContain("Webhook authentication is not configured.");
   });
+
+  it("imports the auth guards used by project website enrichment", async () => {
+    const fs = await import("node:fs/promises");
+    const source = await fs.readFile(
+      new URL(
+        "../../supabase/functions/enrich-project-from-website/index.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    expect(source).toMatch(
+      /import\s*\{[^}]*assertInternalOxusUser[^}]*InternalOxusAuthError[^}]*internalOxusAuthErrorResponse[^}]*\}\s*from\s*["']\.\.\/_shared\/internalOxusAuth\.ts["']/s,
+    );
+  });
 });

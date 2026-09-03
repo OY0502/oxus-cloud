@@ -1,4 +1,9 @@
 import { getServiceRoleSupabase } from "../_shared/clickup-auth.ts";
+import {
+  assertInternalOxusUser,
+  InternalOxusAuthError,
+  internalOxusAuthErrorResponse,
+} from "../_shared/internalOxusAuth.ts";
 import { isServiceRoleRequest } from "../_shared/serviceRoleAuth.ts";
 import {
   getTriggerKeyEnvironment,

@@ -212,26 +212,32 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
   };
 
   // Queue server-side Firecrawl enrichment when a website is present and it hasn't
-  // been enriched yet, or the URL changed. Fire-and-forget: never block or fail saves.
-  const maybeQueueEnrichment = (id: string) => {
+  // been enriched yet, or the URL changed. Wait for the queue acknowledgement so
+  // navigation cannot hide a failed request, but never fail the project save itself.
+  const maybeQueueEnrichment = async (id: string) => {
     const website = companyWebsiteUrl.trim();
     if (!website || websiteInvalid) return;
     const previousWebsite = existing.data?.company_website_url ?? null;
     const status = existing.data?.company_enrichment_status ?? "not_started";
     const alreadyEnriched = status !== "not_started" && status !== "failed" && previousWebsite === website;
     if (alreadyEnriched) return;
-    enrichFromWebsite
-      .mutateAsync({ project_id: id, company_website_url: website })
-      .then((r) => {
-        toast({
-          title: r.async ? "Company enrichment queued" : "Company enrichment started",
-          description: "We're reading the company website to enrich this project.",
-        });
-      })
-      .catch((e) => {
-        // Enrichment must never break project creation.
-        console.warn("[enrichment] queue failed", (e as Error).message);
+    try {
+      const result = await enrichFromWebsite.mutateAsync({ project_id: id, company_website_url: website });
+      if (!result.async && result.status === "failed") {
+        throw new Error(result.message || "The company website could not be enriched.");
+      }
+      toast({
+        title: result.async ? "Company enrichment queued" : "Company enrichment started",
+        description: "We're reading the company website to enrich this project.",
       });
+    } catch (e) {
+      console.warn("[enrichment] queue failed", (e as Error).message);
+      toast({
+        title: "Project saved without enrichment",
+        description: "Website enrichment could not start. You can retry it from the project page.",
+        variant: "destructive",
+      });
+    }
   };
 
   const goToDocuments = async () => {
@@ -258,7 +264,7 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
     try {
       const id = await ensureSaved(2);
       await update.mutateAsync({ id, patch: { is_draft: false }, contact_assignee_ids: teamMembers });
-      maybeQueueEnrichment(id);
+      await maybeQueueEnrichment(id);
       toast({ title: "Project updated", description: name });
       navigate(`/projects/${id}`);
     } catch (e) {
@@ -270,7 +276,7 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
     try {
       const id = await ensureSaved(2);
       await update.mutateAsync({ id, patch: { is_draft: false, draft_step: 2 } });
-      maybeQueueEnrichment(id);
+      await maybeQueueEnrichment(id);
       toast({ title: "Project created", description: name });
       navigate(`/projects/${id}`);
     } catch (e) {
@@ -278,7 +284,7 @@ export function ProjectWizard({ projectId: projectIdProp }: ProjectWizardProps) 
     }
   };
 
-  const busy = create.isPending || update.isPending || deleteProject.isPending;
+  const busy = create.isPending || update.isPending || deleteProject.isPending || enrichFromWebsite.isPending;
 
   const confirmDeleteDraft = async () => {
     if (!projectId) return;
