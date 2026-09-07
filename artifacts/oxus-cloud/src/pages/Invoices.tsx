@@ -256,7 +256,7 @@ export function Invoices() {
               <RefreshCw className={`mr-2 h-4 w-4 ${syncStripe.isPending ? "animate-spin" : ""}`} /> Sync latest
             </Button>
             <Button asChild className="bg-primary text-primary-foreground hover:bg-primary/90">
-              <Link href="/invoices/new"><Plus className="mr-2 h-4 w-4" /> New Invoice</Link>
+              <Link href="/invoices/new"><Plus className="mr-2 h-4 w-4" /> New manual invoice</Link>
             </Button>
           </div>
         }

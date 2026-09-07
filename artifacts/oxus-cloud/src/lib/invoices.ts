@@ -55,6 +55,7 @@ export interface Invoice {
   currency: string;
   attentionDismissedAt: string | null;
   lineItems: InvoiceLineItem[];
+  memo?: string;
 }
 
 interface StatusConfig {
@@ -201,6 +202,8 @@ export function invoiceFromRow(r: InvoiceWithItems): Invoice {
     externalUrl: r.external_url ?? null,
     syncStatus: r.sync_status ?? "pending",
     currency: r.currency ?? "EUR",
+    memo: r.invoice_metadata && typeof r.invoice_metadata === "object" && !Array.isArray(r.invoice_metadata)
+      && typeof r.invoice_metadata.memo === "string" ? r.invoice_metadata.memo : undefined,
     attentionDismissedAt: (r as InvoiceWithItems & { attention_dismissed_at?: string | null }).attention_dismissed_at ?? null,
     lineItems: r.line_items.map((li) => ({
       description: li.description,
@@ -351,6 +354,7 @@ export function formatProviderLabel(provider: string): string {
 
 export function formatSyncBadge(syncStatus: string): { label: string; variant: StatusVariant } {
   const s = (syncStatus ?? "pending").toLowerCase();
+  if (s === "local") return { label: "Local only", variant: "neutral" };
   if (s === "synced") return { label: "Synced", variant: "success" };
   if (s === "failed" || s === "error") return { label: "Failed", variant: "danger" };
   if (s === "deleted") return { label: "Deleted", variant: "neutral" };

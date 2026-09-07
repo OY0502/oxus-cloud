@@ -379,6 +379,12 @@ export function InvoiceDetailDrawer({ invoice, open, onOpenChange, onStripeActio
       >
 
         <div className="space-y-5">
+          {invoice.memo && (
+            <div className="rounded-lg border border-card-border bg-card p-4">
+              <h3 className="text-sm font-medium">Memo</h3>
+              <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{invoice.memo}</p>
+            </div>
+          )}
 
           <div className="grid gap-4 rounded-lg border border-card-border bg-card p-4 shadow-soft sm:grid-cols-[1fr_auto]">
 

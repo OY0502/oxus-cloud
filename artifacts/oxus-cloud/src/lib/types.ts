@@ -1818,6 +1818,7 @@ export interface Invoice {
   sync_status: string;
   last_synced_at: string | null;
   company_mapping_status: string;
+  invoice_metadata?: Json;
   attention_dismissed_at: string | null;
   attention_dismissed_by: string | null;
   attention_dismiss_reason: string | null;

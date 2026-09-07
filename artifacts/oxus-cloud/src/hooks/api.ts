@@ -2116,6 +2116,18 @@ export type NewInvoice = {
   line_items?: { description: string; amount: number }[];
 };
 
+export function useCreateManualInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: import("@/lib/manualInvoice").ManualInvoiceInput) => {
+      const { data, error } = await supabase.rpc("create_manual_invoice", { p_input: input });
+      if (error) throw new Error(error.message);
+      return data as { id: string; number: string };
+    },
+    onSuccess: () => invalidateInvoiceQueries(qc),
+  });
+}
+
 export function useCreateInvoice() {
   const qc = useQueryClient();
   return useMutation({
