@@ -632,7 +632,7 @@ export async function reconcileStripeInvoicePayments(
   options?: { invoice_id?: string; month?: string; force?: boolean; limit?: number },
 ): Promise<ReconcilePaymentsResult> {
   const warnings: string[] = [];
-  const invoices = await loadInvoicesForReconciliation(admin, options);
+  const invoices = await loadInvoicesForReconciliation(admin, options ?? {});
   const allRows: ReconciliationRow[] = [];
 
   const concurrency = 3;

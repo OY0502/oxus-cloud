@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import type Stripe from "npm:stripe@17.7.0";
 import { createStripeClient } from "./stripe.ts";
+import { isMissingStripeInvoice, markStripeInvoiceDeleted } from "./stripeInvoiceDeletion.ts";
 import { upsertStripeInvoice } from "./stripeInvoiceSync.ts";
 import { reconcileStripeInvoice } from "./stripePaymentReconcile.ts";
 
@@ -27,7 +28,7 @@ export const STRIPE_SUPPORTED_EVENTS = new Set([
 ]);
 
 export type StripeWebhookProcessResult = {
-  outcome: "processed" | "ignored" | "duplicate";
+  outcome: "processed" | "ignored";
   event_type: string;
   stripe_event_id: string;
   object_id: string | null;
@@ -48,15 +49,16 @@ async function processInvoiceEvent(
     try {
       invoice = await stripe.invoices.retrieve(invoice.id);
     } catch (err) {
-      console.warn("[stripe-webhook-processor] invoice retrieve failed, using event payload", (err as Error).message);
+      if (isMissingStripeInvoice(err)) {
+        await markStripeInvoiceDeleted(admin, invoice.id);
+        return;
+      }
+      throw err;
     }
   }
 
   if (event.type === "invoice.deleted") {
-    await admin.from("invoices")
-      .update({ sync_status: "deleted", last_synced_at: new Date().toISOString() })
-      .eq("provider", "stripe")
-      .eq("external_id", invoice.id);
+    await markStripeInvoiceDeleted(admin, invoice.id);
     return;
   }
 

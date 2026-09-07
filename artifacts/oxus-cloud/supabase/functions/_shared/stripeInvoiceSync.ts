@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import type Stripe from "npm:stripe@17.7.0";
+import { isMissingStripeInvoice, markStripeInvoiceDeleted } from "./stripeInvoiceDeletion.ts";
 import { centsToAmount, mapStripeInvoiceStatus } from "./stripe.ts";
 
 export type StripeSyncResult = {
@@ -168,6 +169,8 @@ export async function upsertStripeInvoice(
     .eq("external_id", stripeInvoice.id)
     .maybeSingle();
 
+  if (existing?.sync_status === "deleted" || existing?.stripe_status === "deleted") return "unchanged";
+
   if (!existing) {
     const { data: inserted, error } = await admin
       .from("invoices")
@@ -184,7 +187,7 @@ export async function upsertStripeInvoice(
           invoice_id: inserted.id,
           description: line.description ?? "Line item",
           quantity: line.quantity ?? 1,
-          unit_amount: centsToAmount(line.unit_amount ?? line.amount ?? 0),
+          unit_amount: centsToAmount(Number(line.unit_amount_excluding_tax ?? line.amount / (line.quantity || 1))),
           amount: centsToAmount(line.amount ?? 0),
           line_total: centsToAmount(line.amount ?? 0),
           position: i,
@@ -212,7 +215,7 @@ export async function upsertStripeInvoice(
         invoice_id: existing.id,
         description: line.description ?? "Line item",
         quantity: line.quantity ?? 1,
-        unit_amount: centsToAmount(line.unit_amount ?? line.amount ?? 0),
+        unit_amount: centsToAmount(Number(line.unit_amount_excluding_tax ?? line.amount / (line.quantity || 1))),
         amount: centsToAmount(line.amount ?? 0),
         line_total: centsToAmount(line.amount ?? 0),
         position: i,
@@ -238,6 +241,7 @@ export async function syncStripeInvoices(
     errors: [],
   };
 
+  const seenInvoices = new Set<string>();
   const matchedCompanies = new Set<string>();
   const unresolved = new Set<string>();
 
@@ -255,6 +259,7 @@ export async function syncStripeInvoices(
     });
 
     for (const inv of page.data) {
+      seenInvoices.add(inv.id);
       result.checked += 1;
       try {
         const outcome = await upsertStripeInvoice(admin, inv, options?.force ?? false);
@@ -280,6 +285,39 @@ export async function syncStripeInvoices(
 
     if (!page.has_more || page.data.length === 0) break;
     startingAfter = page.data[page.data.length - 1]?.id;
+  }
+
+  const missingInvoices: string[] = [];
+  // Listing omits deleted invoices. Verify missing local drafts individually,
+  // including on incremental syncs, to recover missed deletion webhooks.
+  const localDrafts: { id: string; external_id: string | null }[] = [];
+  for (let offset = 0; ; offset += 500) {
+    const { data: drafts, error } = await admin.from("invoices")
+      .select("id, external_id").eq("provider", "stripe").eq("status", "draft")
+      .or("sync_status.is.null,sync_status.neq.deleted")
+      .order("id").range(offset, offset + 499);
+    if (error) throw new Error(error.message);
+    localDrafts.push(...(drafts ?? []));
+    if (!drafts || drafts.length < 500) break;
+  }
+  for (const draft of localDrafts) {
+    if (!draft.external_id || seenInvoices.has(draft.external_id)) continue;
+    result.checked += 1;
+    try {
+      const invoice = await stripe.invoices.retrieve(draft.external_id);
+      const outcome = await upsertStripeInvoice(admin, invoice, options?.force ?? false);
+      result[outcome] += 1;
+    } catch (error) {
+      if (!isMissingStripeInvoice(error)) {
+        result.errors.push(`${draft.external_id}: ${(error as Error).message}`);
+        continue;
+      }
+      missingInvoices.push(draft.external_id);
+    }
+  }
+  for (const externalId of missingInvoices) {
+    await markStripeInvoiceDeleted(admin, externalId);
+    result.updated += 1;
   }
 
   result.companies_matched = matchedCompanies.size;

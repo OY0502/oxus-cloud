@@ -12,12 +12,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useClients, useProjects, useStripeCreateInvoice } from "@/hooks/api";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Plus, Trash2 } from "lucide-react";
+import { invoiceSelectionForProject, invoiceProjectForCompany, projectBillingCompany, isInvoiceBillingCompany } from "@/lib/invoiceProjectSelection";
 
 type LineItem = { description: string; quantity: string; unit_amount: string };
 
 export function CreateInvoicePage() {
-  const { data: clients = [] } = useClients();
-  const { data: projects = [] } = useProjects();
+  const { data: clients = [], isLoading: clientsLoading, error: clientsError } = useClients();
+  const { data: projects = [], isLoading: projectsLoading, error: projectsError } = useProjects();
   const createInvoice = useStripeCreateInvoice();
   const { toast } = useToast();
 
@@ -30,9 +31,19 @@ export function CreateInvoicePage() {
     { description: "", quantity: "1", unit_amount: "" },
   ]);
 
-  const clientProjects = projects.filter(
-    (p) => !companyId || p.organization_id === companyId || p.client_id === companyId,
-  );
+  const billingClients = clients.filter((client) => isInvoiceBillingCompany(client, projects));
+
+  const selectCompany = (id: string) => {
+    setCompanyId(id);
+    setProjectId(invoiceProjectForCompany(projects.find((project) => project.id === projectId), id));
+  };
+  const selectProject = (id: string) => {
+    const project = projects.find((project) => project.id === id);
+    if (!project) { setProjectId(""); return; }
+    const selection = invoiceSelectionForProject(project, companyId);
+    setProjectId(selection.projectId);
+    setCompanyId(selection.companyId);
+  };
 
   const addLine = () => setLineItems((items) => [...items, { description: "", quantity: "1", unit_amount: "" }]);
   const removeLine = (i: number) => setLineItems((items) => items.filter((_, idx) => idx !== i));
@@ -86,13 +97,16 @@ export function CreateInvoicePage() {
       <Card>
         <CardHeader><CardTitle>Invoice details</CardTitle></CardHeader>
         <CardContent className="space-y-4">
+          {(clientsError || projectsError) && (
+            <p role="alert" className="text-sm text-destructive">Could not load clients or projects. Refresh the page to try again.</p>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Client company</Label>
-              <Select value={companyId} onValueChange={setCompanyId}>
+              <Select value={companyId} onValueChange={selectCompany} disabled={clientsLoading || projectsLoading}>
                 <SelectTrigger><SelectValue placeholder="Select client" /></SelectTrigger>
                 <SelectContent>
-                  {clients.filter((c) => (c.company_type ?? "client") === "client").map((c) => (
+                  {billingClients.map((c) => (
                     <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                   ))}
                 </SelectContent>
@@ -100,14 +114,16 @@ export function CreateInvoicePage() {
             </div>
             <div className="space-y-2">
               <Label>Project (optional)</Label>
-              <Select value={projectId} onValueChange={setProjectId}>
+              <Select value={projectId} onValueChange={selectProject} disabled={clientsLoading || projectsLoading}>
                 <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
                 <SelectContent>
-                  {clientProjects.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  <SelectItem value="none">No project</SelectItem>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}{projectBillingCompany(p) && ` — ${clients.find((c) => c.id === projectBillingCompany(p))?.name ?? "Linked client"}`}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">Choosing a project selects its linked client for billing.</p>
             </div>
             <div className="space-y-2">
               <Label>Currency</Label>

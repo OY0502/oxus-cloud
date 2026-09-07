@@ -2084,6 +2084,8 @@ export function useInvoices(options?: { enabled?: boolean }): UseQueryResult<Inv
       const { data, error } = await supabase
         .from("invoices")
         .select("*, invoice_line_items(*)")
+        .or("sync_status.is.null,sync_status.neq.deleted")
+        .or("stripe_status.is.null,stripe_status.neq.deleted")
         .order("issued_at", { ascending: false, nullsFirst: false })
         .order("issue_date", { ascending: false });
       if (error) throw new Error(error.message);

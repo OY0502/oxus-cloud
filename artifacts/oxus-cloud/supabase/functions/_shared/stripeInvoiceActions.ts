@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import type Stripe from "npm:stripe@17.7.0";
 import { createStripeClient } from "./stripe.ts";
+import { isMissingStripeInvoice, markStripeInvoiceDeleted } from "./stripeInvoiceDeletion.ts";
 import { upsertStripeInvoice } from "./stripeInvoiceSync.ts";
 
 export type StripeInvoiceAction =
@@ -64,7 +65,20 @@ export async function executeStripeInvoiceAction(
   if (!local.external_id) throw new Error("Stripe external_id is missing on this invoice.");
 
   const externalId = local.external_id as string;
-  let current = await retrieveStripeInvoice(stripe, externalId);
+  let current: Stripe.Invoice;
+  try {
+    current = await retrieveStripeInvoice(stripe, externalId);
+  } catch (error) {
+    if (!isMissingStripeInvoice(error)) throw error;
+    await markStripeInvoiceDeleted(admin, externalId);
+    await logInvoiceAction(admin, {
+      invoice_id: invoiceId, external_id: externalId, action, actor_id: userId,
+      previous_stripe_status: local.stripe_status, resulting_stripe_status: "deleted", success: true,
+      metadata: { already_deleted_in_stripe: true },
+    });
+    return { invoice: { ...local, sync_status: "deleted", stripe_status: "deleted" },
+      already_done: true, message: "Invoice no longer exists in Stripe and has been removed from the app." };
+  }
   const prevStatus = current.status ?? null;
 
   if (action === "mark_paid_out_of_band") {
@@ -111,12 +125,12 @@ export async function executeStripeInvoiceAction(
     if (!DRAFT_STATUSES.has(current.status ?? "")) {
       throw new Error("Only draft invoices can be deleted.");
     }
-    await stripe.invoices.del(externalId);
-    await admin.from("invoices").update({
-      sync_status: "deleted",
-      stripe_status: "deleted",
-      last_synced_at: new Date().toISOString(),
-    }).eq("id", invoiceId);
+    try {
+      await stripe.invoices.del(externalId);
+    } catch (error) {
+      if (!isMissingStripeInvoice(error)) throw error;
+    }
+    await markStripeInvoiceDeleted(admin, externalId);
     await logInvoiceAction(admin, {
       invoice_id: invoiceId,
       external_id: externalId,
@@ -184,7 +198,7 @@ export async function updateInvoiceProjectMapping(
     if (stripe) {
       try {
         const inv = await stripe.invoices.retrieve(local.external_id as string);
-        if (inv.status !== "void" && inv.status !== "deleted") {
+        if (inv.status !== "void") {
           await stripe.invoices.update(local.external_id as string, {
             metadata: {
               ...(inv.metadata ?? {}),
