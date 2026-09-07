@@ -33,6 +33,8 @@ export function CreateInvoicePage() {
   const [currency, setCurrency] = useState("EUR");
   const [dueDate, setDueDate] = useState("");
   const [memo, setMemo] = useState("");
+  const [status, setStatus] = useState<"draft" | "sent" | "paid">("draft");
+  const [paidDate, setPaidDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [lineItems, setLineItems] = useState<LineItem[]>([
     { description: "", quantity: "1", unit_amount: "" },
   ]);
@@ -72,6 +74,8 @@ export function CreateInvoicePage() {
         issue_date: issueDate,
         due_date: dueDate || undefined,
         memo: memo.trim() || undefined,
+        status,
+        paid_date: status === "paid" ? paidDate : undefined,
         line_items: parseManualInvoiceLines(lineItems),
       });
       toast({ title: "Manual invoice saved", description: `${result.number} saved in OXUS.` });
@@ -122,7 +126,7 @@ export function CreateInvoicePage() {
                 <SelectContent>
                   <SelectItem value="none">No project</SelectItem>
                   {projects.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>{p.name}{projectBillingCompany(p) && ` — ${clients.find((c) => c.id === projectBillingCompany(p))?.name ?? "Linked client"}`}</SelectItem>
+                    <SelectItem key={p.id} value={p.id}>{p.name}{projectBillingCompany(p) && ` â€” ${clients.find((c) => c.id === projectBillingCompany(p))?.name ?? "Linked client"}`}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -143,6 +147,23 @@ export function CreateInvoicePage() {
               <Label>Due date</Label>
               <Input type="date" min={issueDate} value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
             </div>
+            <div className="space-y-2">
+              <Label>Initial status</Label>
+              <Select value={status} onValueChange={(value) => setStatus(value as typeof status)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="draft">Draft</SelectItem>
+                  <SelectItem value="sent">Sent</SelectItem>
+                  <SelectItem value="paid">Paid</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {status === "paid" && (
+              <div className="space-y-2">
+                <Label htmlFor="invoice-paid">Payment date</Label>
+                <Input id="invoice-paid" type="date" required value={paidDate} onChange={(e) => setPaidDate(e.target.value)} />
+              </div>
+            )}
           </div>
           <div className="space-y-2">
             <Label>Memo</Label>
@@ -195,11 +216,11 @@ export function CreateInvoicePage() {
       </Card>
 
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <p className="text-sm text-muted-foreground">Saved as a manual draft for internal tracking.</p>
+        <p className="text-sm text-muted-foreground">Saved only in OXUS with the selected status.</p>
         <div className="flex gap-2">
           <Button type="button" variant="outline" asChild><Link href="/invoices">Cancel</Link></Button>
           <Button type="submit" disabled={clientsLoading || projectsLoading || !!clientsError || !!projectsError}>
-            {createInvoice.isPending ? "Saving�" : "Save manual invoice"}
+            {createInvoice.isPending ? "Saving…" : "Save manual invoice"}
           </Button>
         </div>
       </div>

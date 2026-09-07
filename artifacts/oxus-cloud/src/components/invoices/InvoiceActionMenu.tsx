@@ -11,6 +11,7 @@ import {
   type Invoice,
   type InvoiceAction,
   type StripeInvoiceActionType,
+  type ManualInvoiceActionType,
   stripeDashboardUrl,
   getAssignProjectLabel,
 } from "@/lib/invoices";
@@ -23,6 +24,7 @@ import {
   Download,
   ExternalLink,
   Eye,
+  FileText,
   MoreHorizontal,
   Send,
   Trash2,
@@ -43,10 +45,14 @@ const ACTION_ICONS: Record<string, LucideIcon> = {
   void: Ban,
   mark_uncollectible: AlertTriangle,
   delete_draft: Trash2,
+  mark_sent: Send,
+  mark_paid: Wallet,
+  return_to_draft: FileText,
 };
 
 function actionIcon(action: InvoiceAction): LucideIcon {
   if (action.stripeAction) return ACTION_ICONS[action.stripeAction] ?? Send;
+  if (action.manualAction) return ACTION_ICONS[action.manualAction] ?? FileText;
   return ACTION_ICONS[action.id] ?? Eye;
 }
 
@@ -60,6 +66,7 @@ export interface InvoiceActionMenuHandlers {
   onAssignProject?: (invoice: Invoice) => void;
   onCopyLink?: (invoice: Invoice) => void;
   onStripeAction?: (invoice: Invoice, action: StripeInvoiceActionType) => void;
+  onManualAction?: (invoice: Invoice, action: ManualInvoiceActionType) => void;
 }
 
 interface InvoiceActionMenuProps {
@@ -167,6 +174,19 @@ export function InvoiceActionMenu({
           disabled={action.disabled}
           className={action.destructive ? "text-destructive focus:text-destructive" : undefined}
           onClick={() => handlers.onStripeAction?.(invoice, action.stripeAction!)}
+        >
+          {iconEl}
+          {label}
+        </DropdownMenuItem>
+      );
+    }
+    if (action.manualAction) {
+      return (
+        <DropdownMenuItem
+          key={action.id}
+          disabled={action.disabled}
+          className={action.destructive ? "text-destructive focus:text-destructive" : undefined}
+          onClick={() => handlers.onManualAction?.(invoice, action.manualAction!)}
         >
           {iconEl}
           {label}

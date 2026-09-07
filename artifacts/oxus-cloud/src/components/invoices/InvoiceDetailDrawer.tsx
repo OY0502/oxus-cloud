@@ -83,6 +83,7 @@ import {
   formatSyncBadge,
 
   type StripeInvoiceActionType,
+  type ManualInvoiceActionType,
 
 } from "@/lib/invoices";
 
@@ -105,12 +106,13 @@ interface InvoiceDetailDrawerProps {
   onOpenChange: (open: boolean) => void;
 
   onStripeAction?: (invoice: Invoice, action: StripeInvoiceActionType) => void;
+  onManualAction?: (invoice: Invoice, action: ManualInvoiceActionType) => void;
 
 }
 
 
 
-export function InvoiceDetailDrawer({ invoice, open, onOpenChange, onStripeAction }: InvoiceDetailDrawerProps) {
+export function InvoiceDetailDrawer({ invoice, open, onOpenChange, onStripeAction, onManualAction }: InvoiceDetailDrawerProps) {
 
   const { data: projects = [] } = useProjects();
 
@@ -277,6 +279,8 @@ export function InvoiceDetailDrawer({ invoice, open, onOpenChange, onStripeActio
   const overflowHandlers = {
 
     onStripeAction: handleDrawerStripeAction,
+
+    onManualAction,
 
   };
 
@@ -588,7 +592,7 @@ export function InvoiceDetailDrawer({ invoice, open, onOpenChange, onStripeActio
 
 
 
-          {isPaid ? (
+          {isPaid && (
 
             <div className="rounded-lg border border-success/20 bg-success-muted px-4 py-3 text-center text-sm font-medium text-success">
 
@@ -596,11 +600,13 @@ export function InvoiceDetailDrawer({ invoice, open, onOpenChange, onStripeActio
 
             </div>
 
-          ) : (actions.primary || actions.secondary || actions.drawerOverflow.length > 0) && (
+          )}
+
+          {(actions.primary || actions.secondary || actions.drawerOverflow.length > 0) && (
 
             <div className="flex flex-wrap items-center gap-2 border-t border-border pt-4">
 
-              {actions.primary?.stripeAction && (
+              {(actions.primary?.stripeAction || actions.primary?.manualAction) && (
 
                 <Button
 
@@ -608,7 +614,9 @@ export function InvoiceDetailDrawer({ invoice, open, onOpenChange, onStripeActio
 
                   disabled={stripeAction.isPending}
 
-                  onClick={() => invokeAction(actions.primary!.stripeAction!)}
+                  onClick={() => actions.primary?.stripeAction
+                    ? invokeAction(actions.primary.stripeAction)
+                    : actions.primary?.manualAction && onManualAction?.(invoice, actions.primary.manualAction)}
 
                 >
 
@@ -618,7 +626,7 @@ export function InvoiceDetailDrawer({ invoice, open, onOpenChange, onStripeActio
 
               )}
 
-              {actions.secondary?.stripeAction && (
+              {(actions.secondary?.stripeAction || actions.secondary?.manualAction) && (
 
                 <Button
 
@@ -628,7 +636,9 @@ export function InvoiceDetailDrawer({ invoice, open, onOpenChange, onStripeActio
 
                   disabled={stripeAction.isPending}
 
-                  onClick={() => invokeAction(actions.secondary!.stripeAction!)}
+                  onClick={() => actions.secondary?.stripeAction
+                    ? invokeAction(actions.secondary.stripeAction)
+                    : actions.secondary?.manualAction && onManualAction?.(invoice, actions.secondary.manualAction)}
 
                 >
 

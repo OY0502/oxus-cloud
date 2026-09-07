@@ -28,5 +28,7 @@ describe("manual invoices", () => {
     expect(source).not.toContain("useStripeCreateInvoice");
     expect(source).not.toContain("finalize_and_send");
     expect(source).toContain("Save manual invoice");
+    expect(source).toContain('<SelectItem value="paid">Paid</SelectItem>');
+    expect(source).toContain("paid_date");
   });
 });

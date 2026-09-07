@@ -28,7 +28,16 @@ await db.exec(foundation.slice(foundation.indexOf("alter table public.invoices")
 await db.exec(await migration("20260711150000_invoice_amount_eur.sql"));
 const fx = await migration("20260711160000_invoice_fx_reporting.sql");
 await db.exec(fx.slice(0, fx.indexOf("create table if not exists public.fx_rates")));
+await db.exec(`
+  alter table invoices drop constraint if exists invoices_status_check;
+  alter table invoices add constraint invoices_status_check check
+    (status in ('draft', 'sent', 'viewed', 'partial', 'overdue', 'paid', 'uncollectible', 'void'));
+  alter table invoices add column attention_dismissed_at timestamptz,
+    add column attention_dismissed_by uuid,
+    add column attention_dismiss_reason text;
+`);
 await db.exec(await migration("20260907230000_manual_invoice_creation.sql"));
+await db.exec(await migration("20260908000000_manual_invoice_status_actions.sql"));
 
 const user = "00000000-0000-4000-8000-000000000001";
 const company = "00000000-0000-4000-8000-000000000002";
@@ -42,7 +51,7 @@ const input = {
   currency: "EUR", issue_date: "2026-09-07", due_date: "2026-10-07", memo: "Internal memo",
   line_items: [{ description: "Work", quantity: 1.5, unit_amount: 99.99 }, { description: "Support", quantity: 2, unit_amount: 10.25 }],
 };
-const create = (value) => db.query("select public.create_manual_invoice($1::jsonb) as invoice", [JSON.stringify(value)]);
+const create = (value) => db.query("select public.create_manual_invoice_v2($1::jsonb) as invoice", [JSON.stringify(value)]);
 const first = await create(input);
 assert.equal(first.rows[0].invoice.id, input.id);
 const row = (await db.query("select * from invoices where id = $1", [input.id])).rows[0];
@@ -52,6 +61,14 @@ assert.equal(row.hosted_invoice_url, null); assert.equal(row.status, "draft");
 assert.equal(Number(row.total), 170.49); assert.equal(Number(row.amount_due_eur), 170.49);
 assert.equal(row.invoice_metadata.memo, "Internal memo");
 assert.equal((await db.query("select count(*)::int as n from invoice_line_items")).rows[0].n, 2);
+await db.query("select public.update_manual_invoice_status($1, 'mark_paid', '2026-09-08')", [input.id]);
+const paid = (await db.query("select status, amount_paid, amount_due, paid_date from invoices where id = $1", [input.id])).rows[0];
+assert.equal(paid.status, "paid"); assert.equal(Number(paid.amount_paid), 170.49);
+assert.equal(Number(paid.amount_due), 0); assert.equal(paid.paid_date.toISOString().slice(0, 10), "2026-09-08");
+await db.query("select public.update_manual_invoice_status($1, 'return_to_draft')", [input.id]);
+const draft = (await db.query("select status, amount_paid, amount_due, paid_date from invoices where id = $1", [input.id])).rows[0];
+assert.equal(draft.status, "draft"); assert.equal(Number(draft.amount_paid), 0);
+assert.equal(Number(draft.amount_due), 170.49); assert.equal(draft.paid_date, null);
 await create(input);
 assert.equal((await db.query("select count(*)::int as n from invoices")).rows[0].n, 1);
 assert.equal((await db.query("select count(*)::int as n from invoice_line_items")).rows[0].n, 2);
@@ -64,8 +81,19 @@ await db.exec(`create function reject_test_line() returns trigger language plpgs
   create trigger reject_test_line before insert on invoice_line_items for each row execute function reject_test_line();`);
 await assert.rejects(create({ ...next, line_items: [{ description: "Reject test line", quantity: 1, unit_amount: 10 }] }), /Test insert failure/);
 assert.equal((await db.query("select count(*)::int as n from invoices")).rows[0].n, 1, "Failed lines roll back the entire invoice");
+const createdPaid = { ...next, id: "00000000-0000-4000-8000-000000000012", status: "paid", paid_date: "2026-09-09" };
+await create(createdPaid);
+const createdPaidRow = (await db.query("select status, amount_paid, amount_due, paid_date from invoices where id = $1", [createdPaid.id])).rows[0];
+assert.equal(createdPaidRow.status, "paid"); assert.equal(Number(createdPaidRow.amount_due), 0);
+assert.equal(Number(createdPaidRow.amount_paid), 170.49);
+await db.query("select public.update_manual_invoice_status($1, 'mark_sent')", [createdPaid.id]);
+assert.equal((await db.query("select status from invoices where id = $1", [createdPaid.id])).rows[0].status, "sent");
+await db.query("select public.update_manual_invoice_status($1, 'void')", [createdPaid.id]);
+assert.equal((await db.query("select status from invoices where id = $1", [createdPaid.id])).rows[0].status, "void");
 await db.query("select set_config('test.admin', 'false', false)");
 await assert.rejects(create(next), /authorized administrator/);
 assert.equal((await db.query("select has_function_privilege('anon', 'public.create_manual_invoice(jsonb)', 'execute') as allowed")).rows[0].allowed, false);
-console.log("Manual invoice SQL checks passed: local-only fields, totals, memo, atomic rollback, retries, validation, authorization.");
+assert.equal((await db.query("select has_function_privilege('anon', 'public.create_manual_invoice_v2(jsonb)', 'execute') as allowed")).rows[0].allowed, false);
+assert.equal((await db.query("select has_function_privilege('anon', 'public.update_manual_invoice_status(uuid,text,date)', 'execute') as allowed")).rows[0].allowed, false);
+console.log("Manual invoice SQL checks passed: local-only fields, lifecycle actions, totals, memo, atomic rollback, retries, validation, authorization.");
 await db.close();

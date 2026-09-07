@@ -222,10 +222,13 @@ export type StripeInvoiceActionType =
   | "mark_uncollectible"
   | "delete_draft";
 
+export type ManualInvoiceActionType = "mark_sent" | "mark_paid" | "return_to_draft" | "void";
+
 export interface InvoiceAction {
   id: string;
   label: string;
   stripeAction?: StripeInvoiceActionType;
+  manualAction?: ManualInvoiceActionType;
   destructive?: boolean;
   disabled?: boolean;
 }
@@ -247,6 +250,10 @@ function stripeAction(
   destructive = false,
 ): InvoiceAction {
   return { id: action, label, stripeAction: action, destructive };
+}
+
+function manualAction(action: ManualInvoiceActionType, label: string, destructive = false): InvoiceAction {
+  return { id: action, label, manualAction: action, destructive };
 }
 
 function isStripeInvoice(inv: Invoice): boolean {
@@ -306,10 +313,31 @@ function stripeMutationActions(inv: Invoice): { normal: InvoiceAction[]; destruc
   return { normal, destructive };
 }
 
+function manualMutationActions(inv: Invoice): { normal: InvoiceAction[]; destructive: InvoiceAction[] } {
+  const normal: InvoiceAction[] = [];
+  const destructive: InvoiceAction[] = [];
+  if (inv.provider !== "manual") return { normal, destructive };
+  if (inv.status === "draft") {
+    normal.push(manualAction("mark_sent", "Mark as sent"));
+    normal.push(manualAction("mark_paid", "Mark as paid"));
+    destructive.push(manualAction("void", "Void invoice", true));
+  } else if (["sent", "viewed", "partial", "overdue"].includes(inv.status)) {
+    normal.push(manualAction("mark_paid", "Mark as paid"));
+    normal.push(manualAction("return_to_draft", "Return to draft"));
+    destructive.push(manualAction("void", "Void invoice", true));
+  } else if (inv.status === "paid" || inv.status === "void") {
+    normal.push(manualAction("return_to_draft", "Return to draft"));
+  }
+  return { normal, destructive };
+}
+
 /** Single source of truth for invoice actions across table, drawer, and Needs Attention. */
 export function getAvailableInvoiceActions(inv: Invoice): AvailableInvoiceActions {
   const browse = commonBrowseActions(inv);
   const { normal, destructive } = stripeMutationActions(inv);
+  const manual = manualMutationActions(inv);
+  normal.push(...manual.normal);
+  destructive.push(...manual.destructive);
   const life = stripeLifecycle(inv);
 
   const overflow = [...browse, ...normal, ...destructive];
@@ -328,6 +356,10 @@ export function getAvailableInvoiceActions(inv: Invoice): AvailableInvoiceAction
     drawerOverflow = destructive;
   } else if (life === "uncollectible" && isStripeInvoice(inv)) {
     primary = stripeAction("mark_paid_out_of_band", "Mark paid outside Stripe");
+    drawerOverflow = destructive;
+  } else if (inv.provider === "manual") {
+    primary = normal[0] ?? null;
+    secondary = normal[1] ?? null;
     drawerOverflow = destructive;
   }
 

@@ -2120,9 +2120,29 @@ export function useCreateManualInvoice() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: import("@/lib/manualInvoice").ManualInvoiceInput) => {
-      const { data, error } = await supabase.rpc("create_manual_invoice", { p_input: input });
+      const { data, error } = await supabase.rpc("create_manual_invoice_v2", { p_input: input });
       if (error) throw new Error(error.message);
       return data as { id: string; number: string };
+    },
+    onSuccess: () => invalidateInvoiceQueries(qc),
+  });
+}
+
+export function useManualInvoiceAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      invoice_id: string;
+      action: import("@/lib/invoices").ManualInvoiceActionType;
+      paid_date?: string;
+    }) => {
+      const { data, error } = await supabase.rpc("update_manual_invoice_status", {
+        p_invoice_id: input.invoice_id,
+        p_action: input.action,
+        p_paid_date: input.paid_date ?? null,
+      });
+      if (error) throw new Error(error.message);
+      return data as { id: string; status: string; message: string };
     },
     onSuccess: () => invalidateInvoiceQueries(qc),
   });

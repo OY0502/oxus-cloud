@@ -31,6 +31,7 @@ import {
   invoiceFinancialCategory,
 
   type StripeInvoiceActionType,
+  type ManualInvoiceActionType,
 
 } from "@/lib/invoices";
 
@@ -45,6 +46,7 @@ interface PriorityInvoiceCardProps {
   onDismiss?: () => void;
 
   onStripeAction?: (action: StripeInvoiceActionType) => void;
+  onManualAction?: (action: ManualInvoiceActionType) => void;
 
 }
 
@@ -74,7 +76,7 @@ const TONE_STYLES: Record<Tone, { bar: string; ring: string; chip: string }> = {
 
 
 
-export function PriorityInvoiceCard({ invoice, onView, onDismiss, onStripeAction }: PriorityInvoiceCardProps) {
+export function PriorityInvoiceCard({ invoice, onView, onDismiss, onStripeAction, onManualAction }: PriorityInvoiceCardProps) {
 
   const tone = getTone(invoice);
 
@@ -210,13 +212,16 @@ export function PriorityInvoiceCard({ invoice, onView, onDismiss, onStripeAction
 
       <div className="mt-auto flex items-center gap-2">
 
-        {!isPaid && primary?.stripeAction && onStripeAction && (
+        {!isPaid && (primary?.stripeAction || primary?.manualAction) && (
 
           <Button
 
             size="sm"
 
-            onClick={stop(() => onStripeAction(primary.stripeAction!))}
+            onClick={stop(() => {
+              if (primary.stripeAction) onStripeAction?.(primary.stripeAction);
+              if (primary.manualAction) onManualAction?.(primary.manualAction);
+            })}
 
             className={cn("h-9 flex-1", tone === "urgent" ? "bg-danger text-white hover:bg-danger/90" : "bg-primary text-primary-foreground")}
 

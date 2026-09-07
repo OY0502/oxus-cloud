@@ -30,5 +30,7 @@ export type ManualInvoiceInput = {
   issue_date: string;
   due_date?: string;
   memo?: string;
+  status: "draft" | "sent" | "paid";
+  paid_date?: string;
   line_items: ReturnType<typeof parseManualInvoiceLines>;
 };

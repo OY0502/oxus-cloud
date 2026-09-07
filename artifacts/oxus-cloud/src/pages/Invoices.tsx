@@ -34,6 +34,7 @@ import {
   useInvoices,
   useStripeSyncInvoices,
   useStripeInvoiceAction,
+  useManualInvoiceAction,
   useDismissInvoiceAttention,
   usePaidRevenueReconciliation,
   useReconcileStripePayments,
@@ -61,6 +62,7 @@ import {
   formatSyncBadge,
   formatPaymentTiming,
   type StripeInvoiceActionType,
+  type ManualInvoiceActionType,
 } from "@/lib/invoices";
 import { countMissingFxConversions, invoiceTotalEur, formatInvoiceEurDisplay } from "@/lib/invoiceEur";
 import {
@@ -106,6 +108,7 @@ export function Invoices() {
   const syncStripe = useStripeSyncInvoices();
   const reconcilePayments = useReconcileStripePayments();
   const stripeAction = useStripeInvoiceAction();
+  const manualAction = useManualInvoiceAction();
   const dismissAttention = useDismissInvoiceAttention();
   const { toast } = useToast();
   const [paidBreakdownOpen, setPaidBreakdownOpen] = useState(false);
@@ -124,7 +127,11 @@ export function Invoices() {
   const [dateRange, setDateRange] = useState<DateRange>("all");
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [attentionIndex, setAttentionIndex] = useState(0);
-  const [confirmAction, setConfirmAction] = useState<{ invoiceId: string; action: StripeInvoiceActionType } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<
+    { invoiceId: string; provider: "stripe"; action: StripeInvoiceActionType }
+    | { invoiceId: string; provider: "manual"; action: ManualInvoiceActionType }
+    | null
+  >(null);
 
   const clients = useMemo(() => Array.from(new Set(invoices.map((i) => i.client))).sort(), [invoices]);
 
@@ -190,10 +197,25 @@ export function Invoices() {
 
   const handleStripeAction = (invoice: Invoice, action: StripeInvoiceActionType) => {
     if (DESTRUCTIVE_ACTIONS.has(action)) {
-      setConfirmAction({ invoiceId: invoice.id, action });
+      setConfirmAction({ invoiceId: invoice.id, provider: "stripe", action });
     } else {
       void runStripeAction(invoice.id, action);
     }
+  };
+
+  const runManualAction = async (invoiceId: string, action: ManualInvoiceActionType) => {
+    try {
+      const result = await manualAction.mutateAsync({ invoice_id: invoiceId, action });
+      toast({ title: "Invoice updated", description: result.message });
+      setConfirmAction(null);
+    } catch (e) {
+      toast({ title: "Action failed", description: e instanceof Error ? e.message : "", variant: "destructive" });
+    }
+  };
+
+  const handleManualAction = (invoice: Invoice, action: ManualInvoiceActionType) => {
+    if (action === "void") setConfirmAction({ invoiceId: invoice.id, provider: "manual", action });
+    else void runManualAction(invoice.id, action);
   };
 
   const copyLink = (inv: Invoice) => {
@@ -220,6 +242,7 @@ export function Invoices() {
     onAssignProject: (inv: Invoice) => setSelectedInvoiceId(inv.id),
     onCopyLink: copyLink,
     onStripeAction: handleStripeAction,
+    onManualAction: handleManualAction,
   };
 
   return (
@@ -319,7 +342,7 @@ export function Invoices() {
               <div className="mb-5 flex items-center justify-between">
                 <div>
                   <h3 className="text-xl font-bold tracking-tight">Needs Attention</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">Overdue, due soon, and drafts. Dismiss permanently when handled.</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Overdue and due-soon invoices. Stripe drafts also appear here until handled.</p>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-xs font-medium text-muted-foreground">{attentionIndex + 1} of {attentionInvoices.length}</span>
@@ -348,6 +371,7 @@ export function Invoices() {
                 onView={() => setSelectedInvoiceId(attentionInvoices[attentionIndex].id)}
                 onDismiss={() => dismissInvoice(attentionInvoices[attentionIndex])}
                 onStripeAction={(action) => handleStripeAction(attentionInvoices[attentionIndex], action)}
+                onManualAction={(action) => handleManualAction(attentionInvoices[attentionIndex], action)}
               />
             </section>
           )}
@@ -475,6 +499,7 @@ export function Invoices() {
         open={!!selectedInvoiceId}
         onOpenChange={(open) => !open && setSelectedInvoiceId(null)}
         onStripeAction={handleStripeAction}
+        onManualAction={handleManualAction}
       />
 
       <AlertDialog open={!!confirmAction} onOpenChange={(o) => !o && setConfirmAction(null)}>
@@ -482,7 +507,9 @@ export function Invoices() {
           <AlertDialogHeader>
             <AlertDialogTitle>Confirm invoice action</AlertDialogTitle>
             <AlertDialogDescription>
-              This updates the invoice in Stripe and may be irreversible. Are you sure you want to continue?
+              {confirmAction?.provider === "stripe"
+                ? "This updates the invoice in Stripe and may be irreversible. Are you sure you want to continue?"
+                : "This will void the manual invoice in OXUS. Continue?"}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -490,7 +517,8 @@ export function Invoices() {
             <AlertDialogAction
               onClick={(e) => {
                 e.preventDefault();
-                if (confirmAction) void runStripeAction(confirmAction.invoiceId, confirmAction.action);
+                if (confirmAction?.provider === "stripe") void runStripeAction(confirmAction.invoiceId, confirmAction.action);
+                else if (confirmAction?.provider === "manual") void runManualAction(confirmAction.invoiceId, confirmAction.action);
               }}
             >
               Confirm

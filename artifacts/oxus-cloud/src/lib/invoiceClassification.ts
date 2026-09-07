@@ -165,7 +165,7 @@ function terminalState(
       countsTowardOutstanding: false,
       countsTowardOverdue: false,
       countsTowardDueSoon: false,
-      needsAttention: !dismissed,
+      needsAttention: fields.provider === "stripe" && !dismissed,
       amountDueEur,
       daysUntilDue,
       daysOverdue,
