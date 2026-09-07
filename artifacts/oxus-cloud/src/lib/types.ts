@@ -2092,6 +2092,7 @@ export interface StripeSyncResult {
 export type PaymentReconciliationBasis =
   | "stripe_actual_settlement"
   | "native_eur"
+  | "manual"
   | "ecb_reference"
   | "paid_out_of_band_reference"
   | "unavailable";
@@ -2135,6 +2136,7 @@ export interface InvoicePaymentReconciliation {
     external_id?: string | null;
     external_url?: string | null;
     hosted_invoice_url?: string | null;
+    provider?: InvoiceProvider;
   } | null;
 }
 

@@ -549,6 +549,7 @@ export function Invoices() {
           referenceFxDifferenceMinor: 0,
           paymentCount: 0,
           reconciledActualCount: 0,
+          manualCount: 0,
           referenceCount: 0,
           unresolvedCount: 0,
           lastReconciledAt: null,

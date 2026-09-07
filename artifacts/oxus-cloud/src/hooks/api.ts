@@ -26,7 +26,7 @@ import {
   sumOverdueReceivablesEur,
   sumOutstandingReceivablesEur,
 } from "@/lib/invoiceClassification";
-import { summarizePaidRevenueRows } from "@/lib/paymentReconciliation";
+import { manualInvoiceToPaidRevenueRow, summarizePaidRevenueRows } from "@/lib/paymentReconciliation";
 import { getReportingMonthKey } from "@/lib/reportingTimezone";
 import { getDefaultRate } from "@/lib/teamMemberRates";
 import { loadPaidRevenueExclusions, savePaidRevenueExclusions } from "@/lib/paidRevenueExclusions";
@@ -6421,13 +6421,26 @@ export function usePaidRevenueReconciliation(monthKey?: string) {
   return useQuery({
     queryKey: qk.paidRevenueReconciliation(month),
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("invoice_payment_reconciliations")
-        .select("*, invoices(number, client_name, external_id, external_url, hosted_invoice_url)")
-        .eq("reporting_month", month)
-        .order("paid_at", { ascending: false });
-      if (error) throw new Error(error.message);
-      const rows = (data ?? []) as import("@/lib/types").InvoicePaymentReconciliation[];
+      const [reconciliationsResult, manualInvoicesResult] = await Promise.all([
+        supabase
+          .from("invoice_payment_reconciliations")
+          .select("*, invoices(number, client_name, external_id, external_url, hosted_invoice_url, provider)")
+          .eq("reporting_month", month),
+        supabase
+          .from("invoices")
+          .select("*")
+          .eq("provider", "manual")
+          .eq("status", "paid"),
+      ]);
+      if (reconciliationsResult.error) throw new Error(reconciliationsResult.error.message);
+      if (manualInvoicesResult.error) throw new Error(manualInvoicesResult.error.message);
+
+      const reconciliationRows = (reconciliationsResult.data ?? []) as import("@/lib/types").InvoicePaymentReconciliation[];
+      const manualRows = ((manualInvoicesResult.data ?? []) as Invoice[])
+        .map((invoice) => manualInvoiceToPaidRevenueRow(invoice, month))
+        .filter((row): row is import("@/lib/types").InvoicePaymentReconciliation => row != null);
+      const rows = [...reconciliationRows, ...manualRows]
+        .sort((a, b) => b.paid_at.localeCompare(a.paid_at));
       return {
         rows,
         summary: summarizePaidRevenueRows(rows, month),

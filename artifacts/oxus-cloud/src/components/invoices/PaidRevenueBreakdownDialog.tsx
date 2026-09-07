@@ -45,6 +45,7 @@ function sourceVariant(basis: InvoicePaymentReconciliation["amount_basis"]) {
   switch (basis) {
     case "stripe_actual_settlement":
     case "native_eur":
+    case "manual":
       return "success" as const;
     case "ecb_reference":
     case "paid_out_of_band_reference":
@@ -111,7 +112,7 @@ function PaymentRow({
             {row.is_paid_out_of_band && <Badge variant="outline">Paid outside Stripe</Badge>}
             {excluded && <Badge variant="outline">Excluded from totals</Badge>}
           </div>
-          <dl className="grid gap-2 sm:grid-cols-2 text-xs">
+          {row.provider !== "manual" && <dl className="grid gap-2 sm:grid-cols-2 text-xs">
             <div><dt className="text-muted-foreground">Invoice Payment ID</dt><dd className="font-mono break-all">{row.external_invoice_payment_id ?? "—"}</dd></div>
             <div><dt className="text-muted-foreground">PaymentIntent ID</dt><dd className="font-mono break-all">{row.external_payment_intent_id ?? "—"}</dd></div>
             <div><dt className="text-muted-foreground">Charge ID</dt><dd className="font-mono break-all">{row.external_charge_id ?? "—"}</dd></div>
@@ -120,7 +121,7 @@ function PaymentRow({
             <div><dt className="text-muted-foreground">Stripe exchange rate</dt><dd>{row.stripe_exchange_rate != null ? Number(row.stripe_exchange_rate).toFixed(6) : "—"}</dd></div>
             <div><dt className="text-muted-foreground">Reference ECB rate/date</dt><dd>{row.reference_rate_to_eur != null ? `${Number(row.reference_rate_to_eur).toFixed(6)} on ${row.reference_rate_date ?? "—"}` : "—"}</dd></div>
             <div><dt className="text-muted-foreground">Reference EUR</dt><dd>{formatMinorEur(row.reference_eur_minor)}</dd></div>
-          </dl>
+          </dl>}
           {row.fee_details.length > 0 && (
             <div>
               <p className="text-xs font-medium mb-1">Stripe fee details</p>
@@ -201,7 +202,7 @@ export function PaidRevenueBreakdownDialog({
         <DialogHeader>
           <DialogTitle>Paid revenue breakdown — {monthLabel}</DialogTitle>
           <DialogDescription>
-            Gross paid revenue reconciled from Stripe payments and balance transactions. Reporting timezone: {REPORTING_TIMEZONE}.
+            Gross paid revenue from manual invoices and reconciled Stripe payments. Reporting timezone: {REPORTING_TIMEZONE}.
             Uncheck a payment to exclude it from totals.
           </DialogDescription>
         </DialogHeader>
@@ -241,9 +242,10 @@ export function PaidRevenueBreakdownDialog({
           </div>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-4 text-xs text-muted-foreground">
+        <div className="grid gap-2 sm:grid-cols-5 text-xs text-muted-foreground">
           <span>Payments included: {summary.paymentCount}</span>
-          <span>Stripe actual/native: {summary.reconciledActualCount}</span>
+          <span>Stripe/native: {summary.reconciledActualCount}</span>
+          <span>Manual: {summary.manualCount}</span>
           <span>Reference/unresolved: {summary.referenceCount + summary.unresolvedCount}</span>
           {excludedCount > 0 && <span className="text-warning">Excluded: {excludedCount}</span>}
         </div>
@@ -262,7 +264,7 @@ export function PaidRevenueBreakdownDialog({
           <p className="text-sm text-muted-foreground py-8 text-center">Loading reconciliation…</p>
         ) : rows.length === 0 ? (
           <p className="text-sm text-muted-foreground py-8 text-center">
-            No payment reconciliations for {monthLabel} yet. Run Sync latest or Reconcile from Stripe.
+            No paid invoices for {monthLabel} yet.
           </p>
         ) : (
           <div className="space-y-2">
