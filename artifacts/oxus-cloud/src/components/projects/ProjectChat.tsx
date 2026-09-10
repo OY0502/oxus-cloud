@@ -10,6 +10,7 @@ import {
   Clock3,
   Database,
   FileText,
+  Image as ImageIcon,
   ListChecks,
   Loader2,
   Paperclip,
@@ -26,9 +27,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   uploadProjectAgentIntakeFile,
+  getAttachmentUrl,
   useAgentToolRuns,
+  useAttachments,
   useConfirmAgentToolRun,
   useCreateProjectChatSession,
   useDeleteProjectChatSession,
@@ -66,6 +70,13 @@ type MemoryCitation = {
   url?: string;
 };
 
+type ChatAttachment = {
+  id: string;
+  fileName: string;
+  filePath: string;
+  mimeType?: string;
+};
+
 function messageMetadata(value: unknown): {
   fileReview: boolean;
   failed: boolean;
@@ -76,9 +87,11 @@ function messageMetadata(value: unknown): {
   memoryMatches?: number;
   memorySources: string[];
   memoryCitations: MemoryCitation[];
+  attachments: ChatAttachment[];
+  uploadedFileCount: number;
 } {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { fileReview: false, failed: false, questions: [], memorySources: [], memoryCitations: [] };
+    return { fileReview: false, failed: false, questions: [], memorySources: [], memoryCitations: [], attachments: [], uploadedFileCount: 0 };
   }
   const metadata = value as Record<string, unknown>;
   const questions = Array.isArray(metadata.clarification_questions)
@@ -121,7 +134,74 @@ function messageMetadata(value: unknown): {
           }];
         }).slice(0, 10)
       : [],
+    attachments: Array.isArray(metadata.attachments)
+      ? metadata.attachments.flatMap((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+          const row = entry as Record<string, unknown>;
+          const id = typeof row.id === "string" ? row.id : "";
+          const filePath = typeof row.file_path === "string" ? row.file_path : "";
+          if (!id || !filePath) return [];
+          return [{
+            id,
+            fileName: typeof row.file_name === "string" ? row.file_name : "Screenshot",
+            filePath,
+            mimeType: typeof row.mime_type === "string" ? row.mime_type : undefined,
+          }];
+        })
+      : [],
+    uploadedFileCount: typeof metadata.uploaded_file_count === "number" ? metadata.uploaded_file_count : 0,
   };
+}
+
+function ChatImageAttachments({ attachments }: { attachments: ChatAttachment[] }) {
+  const images = attachments.filter((attachment) => attachment.mimeType?.startsWith("image/"));
+  const [urls, setUrls] = useState<Record<string, string>>({});
+  const [selected, setSelected] = useState<ChatAttachment | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all(images.map(async (attachment) => [attachment.id, await getAttachmentUrl(attachment.filePath)] as const))
+      .then((entries) => {
+        if (!cancelled) setUrls(Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => !!entry[1])));
+      });
+    return () => { cancelled = true; };
+  }, [attachments]);
+
+  if (images.length === 0) return null;
+  return (
+    <>
+      <div className="mt-2 grid max-w-md grid-cols-2 gap-2" aria-label="Message screenshots">
+        {images.map((attachment) => (
+          <button
+            key={attachment.id}
+            type="button"
+            onClick={() => setSelected(attachment)}
+            disabled={!urls[attachment.id]}
+            className="group overflow-hidden rounded-lg border border-primary-foreground/20 bg-background/10 text-left disabled:opacity-60"
+            aria-label={`View ${attachment.fileName}`}
+          >
+            {urls[attachment.id] ? (
+              <img src={urls[attachment.id]} alt={attachment.fileName} className="h-28 w-full object-cover transition-transform group-hover:scale-[1.02]" />
+            ) : (
+              <span className="flex h-28 items-center justify-center"><Loader2 className="h-4 w-4 animate-spin" /></span>
+            )}
+            <span className="block truncate border-t border-primary-foreground/15 px-2 py-1 text-[11px]">{attachment.fileName}</span>
+          </button>
+        ))}
+      </div>
+      <Dialog open={!!selected} onOpenChange={(open) => { if (!open) setSelected(null); }}>
+        <DialogContent className="max-h-[92vh] max-w-5xl overflow-auto p-3 sm:p-4">
+          <DialogHeader className="pr-8 text-left">
+            <DialogTitle className="truncate text-sm">{selected?.fileName}</DialogTitle>
+            <DialogDescription className="sr-only">Full-size screenshot attached to this chat message.</DialogDescription>
+          </DialogHeader>
+          {selected && urls[selected.id] && (
+            <img src={urls[selected.id]} alt={selected.fileName} className="mx-auto max-h-[80vh] max-w-full rounded-md object-contain" />
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 }
 
 function inlineMessageText(value: string): React.ReactNode[] {
@@ -323,6 +403,7 @@ function withoutDuplicatedClarifications(content: string, hasInteractiveQuestion
 export function ProjectChat({ projectId, className }: { projectId: string; className?: string }) {
   const { toast } = useToast();
   const { data: chatSessions = [], isLoading: sessionsLoading, refetch: refetchSessions } = useProjectChatSessions(projectId);
+  const { data: projectAttachments = [] } = useAttachments("project", projectId);
   const [activeSessionId, setActiveSessionId] = useState<string>();
   const [chatPickerOpen, setChatPickerOpen] = useState(false);
   const { data: messages = [], isLoading, refetch } = useProjectChatMessages(projectId, activeSessionId);
@@ -433,7 +514,18 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
       all.findIndex((candidate) => candidate.name === file.name && candidate.size === file.size && candidate.lastModified === file.lastModified) === index
     );
     if (combined.length > 20) {
-      toast({ title: "Too many files", description: "You can import up to 20 recordings or transcripts in one batch.", variant: "destructive" });
+      toast({ title: "Too many files", description: "You can attach up to 20 files at once.", variant: "destructive" });
+      return;
+    }
+    const oversizedImage = combined.find((file) => file.type.startsWith("image/") && file.size > 12 * 1024 * 1024);
+    if (oversizedImage) {
+      toast({ title: "Image is too large", description: `${oversizedImage.name} exceeds the 12 MB image limit.`, variant: "destructive" });
+      return;
+    }
+    const hasImage = combined.some((file) => file.type.startsWith("image/"));
+    const hasRecording = combined.some((file) => file.type.startsWith("audio/") || file.type.startsWith("video/"));
+    if (hasImage && hasRecording) {
+      toast({ title: "Attach screenshots separately", description: "Send screenshots in one message, then import recordings in another.", variant: "destructive" });
       return;
     }
     const oversized = combined.find((file) => file.size > 1024 * 1024 * 1024);
@@ -468,9 +560,12 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
         setActiveSessionId(session.id);
       }
       const reviewingFiles = files.length > 0;
+      const reviewingImages = files.some((file) => file.type.startsWith("image/"));
       const message = respondingToClarification
         ? `Clarification responses\n\n${text}`
-        : text || `Review the attached ${files.length === 1 ? "meeting file" : "meeting files"} as a project manager. Compare every action item against the current ClickUp board, identify what is already covered, ask specific clarification questions, and prepare confirmation cards for genuinely missing tasks.`;
+        : text || (reviewingImages
+          ? `Review the attached ${files.length === 1 ? "client conversation screenshot" : "client conversation screenshots"}. Extract the client's requests, compare them with the current ClickUp board, and suggest a few clear, non-duplicate ClickUp tasks for genuinely missing work. Prepare confirmation cards so I can review each task before creation.`
+          : `Review the attached ${files.length === 1 ? "meeting file" : "meeting files"} as a project manager. Compare every action item against the current ClickUp board, identify what is already covered, ask specific clarification questions, and prepare confirmation cards for genuinely missing tasks.`);
       if (reviewingFiles) {
         const selectedFiles = [...files];
         const uploadedFileIds = new Array<string>(selectedFiles.length);
@@ -486,6 +581,24 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
             });
           }
         }));
+        if (reviewingImages) {
+          const result = await runAgent.mutateAsync({
+            project_id: projectId,
+            input_text: message,
+            uploaded_file_ids: uploadedFileIds,
+            mode: "auto",
+            chat: true,
+            chat_session_id: chatSessionId,
+          });
+          setInput("");
+          setFiles([]);
+          setUploadProgress({});
+          if (fileInputRef.current) fileInputRef.current.value = "";
+          setActiveRunId(result.agent_run_id);
+          await Promise.all([refetch(), refetchSessions()]);
+          if (!result.async) setActiveRunId(undefined);
+          return;
+        }
         const batch = await startMeetingIngestion.mutateAsync({
           project_id: projectId,
           chat_session_id: chatSessionId,
@@ -723,6 +836,25 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
             {messages.map((message) => {
               const fromUser = message.role === "user";
               const metadata = messageMetadata(message.metadata);
+              const fallbackImages = fromUser && metadata.attachments.length === 0 && metadata.uploadedFileCount > 0
+                ? projectAttachments
+                  .filter((attachment) => {
+                    if (!attachment.file_path || !attachment.mime_type?.startsWith("image/")) return false;
+                    if (message.user_id && attachment.uploaded_by !== message.user_id) return false;
+                    const ageMs = new Date(message.created_at).getTime() - new Date(attachment.created_at).getTime();
+                    return ageMs >= -30_000 && ageMs <= 5 * 60_000;
+                  })
+                  .sort((a, b) => Math.abs(new Date(message.created_at).getTime() - new Date(a.created_at).getTime())
+                    - Math.abs(new Date(message.created_at).getTime() - new Date(b.created_at).getTime()))
+                  .slice(0, metadata.uploadedFileCount)
+                  .map((attachment) => ({
+                    id: attachment.id,
+                    fileName: attachment.file_name ?? "Screenshot",
+                    filePath: attachment.file_path!,
+                    mimeType: attachment.mime_type ?? undefined,
+                  }))
+                : [];
+              const messageAttachments = metadata.attachments.length > 0 ? metadata.attachments : fallbackImages;
               return (
                 <div key={message.id} className={cn("flex gap-2.5", fromUser && "flex-row-reverse")}>
                   <div className={cn(
@@ -739,7 +871,10 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
                         : "rounded-tl-sm border border-border/70 bg-muted/30 text-foreground",
                     )}>
                       {fromUser ? (
-                        <p className="whitespace-pre-wrap">{message.content}</p>
+                        <div>
+                          <p className="whitespace-pre-wrap">{message.content}</p>
+                          <ChatImageAttachments attachments={messageAttachments} />
+                        </div>
                       ) : (
                         <ChatMessageContent
                           content={withoutDuplicatedClarifications(message.content, metadata.questions.length > 0)}
@@ -894,9 +1029,10 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
               {files.map((file, index) => {
                 const progress = uploadProgress[`${index}:${file.name}`];
                 const media = file.type.startsWith("audio/") || file.type.startsWith("video/");
+                const image = file.type.startsWith("image/");
                 return (
                 <span key={`${file.name}-${index}`} className="inline-flex items-center gap-1.5 rounded-lg bg-muted px-2.5 py-1.5 text-xs">
-                  {media ? <AudioLines className="h-3.5 w-3.5 text-info" /> : <FileText className="h-3.5 w-3.5" />}
+                  {media ? <AudioLines className="h-3.5 w-3.5 text-info" /> : image ? <ImageIcon className="h-3.5 w-3.5 text-info" /> : <FileText className="h-3.5 w-3.5" />}
                   <span className="max-w-52 truncate">{file.name}</span>
                   {progress != null && <span className="tabular-nums text-muted-foreground">{progress}%</span>}
                   <button type="button" disabled={uploading} onClick={() => setFiles((current) => current.filter((_, i) => i !== index))} aria-label={`Remove ${file.name}`}>
@@ -904,7 +1040,7 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
                   </button>
                 </span>
               )})}
-              <span className="self-center text-[11px] text-muted-foreground">{files.length}/20 · processed in background</span>
+              <span className="self-center text-[11px] text-muted-foreground">{files.length}/20 · {files.some((file) => file.type.startsWith("image/")) ? "screenshots will be read by AI" : "processed in background"}</span>
             </div>
           )}
 
@@ -914,19 +1050,38 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
               type="file"
               multiple
               className="hidden"
-              accept=".txt,.md,.csv,.json,.vtt,.srt,.mp3,.mp4,.m4a,.wav,.webm,.ogg,.oga,.aac,.flac,.mov,.mpeg,.mpg,text/*,audio/*,video/*"
+              accept=".png,.jpg,.jpeg,.webp,.gif,.txt,.md,.csv,.json,.vtt,.srt,.mp3,.mp4,.m4a,.wav,.webm,.ogg,.oga,.aac,.flac,.mov,.mpeg,.mpg,image/png,image/jpeg,image/webp,image/gif,text/*,audio/*,video/*"
               onChange={(event) => {
                 selectMeetingFiles(Array.from(event.target.files ?? []));
                 event.currentTarget.value = "";
               }}
             />
-            <Button type="button" size="icon" variant="ghost" className="shrink-0" disabled={uploading} onClick={() => fileInputRef.current?.click()} aria-label="Attach meeting recordings, transcripts, or project files">
+            <Button type="button" size="icon" variant="ghost" className="shrink-0" disabled={uploading} onClick={() => fileInputRef.current?.click()} aria-label="Attach screenshots, recordings, transcripts, or project files">
               <Paperclip className="h-4 w-4" />
             </Button>
             <Textarea
               ref={textareaRef}
               value={input}
               onChange={(event) => setInput(event.target.value)}
+              onPaste={(event) => {
+                const pastedImages = Array.from(event.clipboardData.items)
+                  .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+                  .flatMap((item, index) => {
+                    const pasted = item.getAsFile();
+                    if (!pasted) return [];
+                    const extension = pasted.type.split("/")[1]?.replace("jpeg", "jpg") || "png";
+                    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+                    return [new File([pasted], `screenshot-${stamp}-${index + 1}.${extension}`, {
+                      type: pasted.type,
+                      lastModified: Date.now(),
+                    })];
+                  });
+                if (pastedImages.length > 0) {
+                  event.preventDefault();
+                  selectMeetingFiles(pastedImages);
+                  toast({ title: pastedImages.length === 1 ? "Screenshot attached" : `${pastedImages.length} screenshots attached`, description: "Add an instruction, or send now to get ClickUp task suggestions." });
+                }
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
@@ -941,7 +1096,7 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
               {running || uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             </Button>
           </div>
-          <p className="mt-1.5 text-[11px] text-muted-foreground">Attach up to 20 recordings or transcripts. Large uploads resume automatically; processing continues after you leave.</p>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">Attach up to 20 recordings or transcripts, or paste/attach screenshots with Ctrl+V. Large recording uploads resume automatically; processing continues after you leave. Screenshot tasks are always shown for confirmation before ClickUp creation.</p>
         </div>
       </CardContent>
     </Card>

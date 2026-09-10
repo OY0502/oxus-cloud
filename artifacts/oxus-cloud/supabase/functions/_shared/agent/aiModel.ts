@@ -41,8 +41,13 @@ export type OpenRouterUsage = {
   };
 };
 
+type OpenRouterMessageContent = string | Array<
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }
+>;
+
 async function callOpenRouterJson(args: {
-  messages: { role: "system" | "user"; content: string }[];
+  messages: { role: "system" | "user"; content: OpenRouterMessageContent }[];
   trace?: TraceMetadata;
   traceName?: string;
   model?: string;
@@ -134,6 +139,62 @@ async function callOpenRouterJson(args: {
     traceId: traceHandle?.traceId ?? null,
     generationId,
   };
+}
+
+export async function extractImageEvidence(args: {
+  dataUrl: string;
+  fileName: string;
+  trace?: TraceMetadata;
+}): Promise<string> {
+  const { content } = await callOpenRouterJson({
+    trace: { ...args.trace, prompt_type: "extractImageEvidence" },
+    traceName: "extractImageEvidence",
+    model: Deno.env.get("OPENROUTER_VISION_MODEL")?.trim()
+      || Deno.env.get("OPENROUTER_CHAT_MODEL")?.trim()
+      || "openai/gpt-5-mini",
+    maxTokens: Number(Deno.env.get("OPENROUTER_VISION_MAX_TOKENS") ?? "2200"),
+    reasoningEffort: "low",
+    jsonSchema: {
+      name: "project_image_evidence",
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          visible_text: { type: "string" },
+          context_summary: { type: "string" },
+          action_items: { type: "array", items: { type: "string" }, maxItems: 20 },
+          uncertainties: { type: "array", items: { type: "string" }, maxItems: 10 },
+        },
+        required: ["visible_text", "context_summary", "action_items", "uncertainties"],
+      },
+    },
+    messages: [
+      {
+        role: "system",
+        content: "Extract project evidence from screenshots accurately. Transcribe all legible text in reading order, summarize the context without inventing facts, identify explicit or implied action items, and call out anything uncertain. Output valid JSON only.",
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: `Analyze the uploaded project image: ${args.fileName}` },
+          { type: "image_url", image_url: { url: args.dataUrl, detail: "high" } },
+        ],
+      },
+    ],
+  });
+  const parsed = JSON.parse(content) as {
+    visible_text?: string;
+    context_summary?: string;
+    action_items?: string[];
+    uncertainties?: string[];
+  };
+  return [
+    `Image: ${args.fileName}`,
+    parsed.visible_text?.trim() ? `Visible text:\n${parsed.visible_text.trim()}` : "",
+    parsed.context_summary?.trim() ? `Context summary:\n${parsed.context_summary.trim()}` : "",
+    parsed.action_items?.length ? `Potential action items:\n${parsed.action_items.map((item) => `- ${item}`).join("\n")}` : "",
+    parsed.uncertainties?.length ? `Uncertainties:\n${parsed.uncertainties.map((item) => `- ${item}`).join("\n")}` : "",
+  ].filter(Boolean).join("\n\n");
 }
 
 export async function generateStructuredObject<T>(args: {
@@ -797,7 +858,7 @@ export async function generateAgentPlan(args: {
     systemPrompt: [
       "You are the OXUS Cloud project agent.",
        args.reviewUploadedFiles
-         ? "You are reviewing newly uploaded meeting evidence inside project chat. Build durable dated meeting memory, reconcile action items against the supplied ClickUp task snapshot, ask targeted questions, and prepare only confirmation-gated task suggestions."
+         ? "You are reviewing newly uploaded project evidence (such as meeting transcripts or client-chat screenshots) inside project chat. Extract requests faithfully, reconcile action items against the supplied ClickUp task snapshot, ask targeted questions only when needed, and prepare only confirmation-gated task suggestions. Only build dated meeting memory when the evidence is actually from a meeting."
        : args.isChat
         ? "You are in the project's persistent chat. Give a direct, useful answer that reflects the freshest available project state. For weekly planning, anchor on the latest structured meeting and reconcile it with live ClickUp and Slack. Use the recent conversation only for continuity."
         : "This is a single-shot intake, NOT a chat.",

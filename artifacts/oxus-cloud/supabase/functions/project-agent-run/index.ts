@@ -72,6 +72,25 @@ Deno.serve(async (req) => {
 
     const admin = getServiceRoleSupabase();
     const inputSummary = inputText.slice(0, 500);
+    const { data: uploadedAttachments, error: attachmentsError } = uploadedFileIds.length > 0
+      ? await admin
+        .from("attachments")
+        .select("id, file_name, file_path, mime_type")
+        .in("id", uploadedFileIds)
+        .eq("entity_type", "project")
+        .eq("entity_id", projectId)
+      : { data: [], error: null };
+    if (attachmentsError) return err("Failed to validate chat attachments.", 500, "DB_ERROR", attachmentsError.message);
+    const attachmentById = new Map((uploadedAttachments ?? []).map((attachment) => [String(attachment.id), attachment]));
+    const chatAttachments = uploadedFileIds.flatMap((id) => {
+      const attachment = attachmentById.get(id);
+      return attachment ? [{
+        id: String(attachment.id),
+        file_name: String(attachment.file_name ?? "Attachment"),
+        file_path: String(attachment.file_path ?? ""),
+        mime_type: typeof attachment.mime_type === "string" ? attachment.mime_type : null,
+      }] : [];
+    });
     let chatSessionId: string | null = null;
     if (body.chat) {
       const requestedSessionId = body.chat_session_id?.trim();
@@ -125,7 +144,10 @@ Deno.serve(async (req) => {
         role: "user",
         content: inputText,
         agent_run_id: agentRun.id,
-        metadata: { uploaded_file_count: uploadedFileIds.length },
+        metadata: {
+          uploaded_file_count: chatAttachments.length,
+          attachments: chatAttachments,
+        },
       });
       if (messageError) {
         await admin

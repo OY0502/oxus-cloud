@@ -129,6 +129,42 @@ describe("project chat architecture", () => {
     expect(transcriber).toContain('"openai/whisper-1"');
   });
 
+  it("pastes screenshots into project chat and analyzes them before proposing ClickUp tasks", async () => {
+    const fs = await import("node:fs/promises");
+    const [chat, api, orchestration, model] = await Promise.all([
+      fs.readFile(new URL("../components/projects/ProjectChat.tsx", import.meta.url), "utf8"),
+      fs.readFile(new URL("../hooks/api.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/functions/_shared/agent/orchestration.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/functions/_shared/agent/aiModel.ts", import.meta.url), "utf8"),
+    ]);
+
+    expect(chat).toContain("onPaste={(event)");
+    expect(chat).toContain('item.type.startsWith("image/")');
+    expect(chat).toContain("uploaded_file_ids: uploadedFileIds");
+    expect(chat).toContain('mode: "auto"');
+    expect(chat).toContain("confirmation before ClickUp creation");
+    expect(api).toContain('if (file.type.startsWith("image/"))');
+    expect(api).toContain("await supabase.auth.refreshSession()");
+    expect(api).toContain("screenshotUploadTokenRefresh");
+    expect(api).toContain("supabase.storage.from(DOCUMENTS_BUCKET).upload");
+    expect(api).toContain("Your session has expired. Sign in again and retry the upload.");
+    expect(orchestration).toContain("extractImageEvidence");
+    expect(orchestration).toContain("Keep screenshots below 12 MB");
+    expect(model).toContain("project_image_evidence");
+    expect(model).toContain('detail: "high"');
+    expect(model).toContain("confirmation-gated task suggestions");
+    expect(chat).toContain("ChatImageAttachments");
+    expect(chat).toContain("Message screenshots");
+    expect(chat).toContain("Full-size screenshot attached to this chat message");
+    expect(chat).toContain("getAttachmentUrl");
+    expect(chat).toContain('useAttachments("project", projectId)');
+    expect(chat).toContain("ageMs <= 5 * 60_000");
+    expect(orchestration).toContain("extractImageEvidence");
+    const runEntry = await fs.readFile(new URL("../../supabase/functions/project-agent-run/index.ts", import.meta.url), "utf8");
+    expect(runEntry).toContain("attachments: chatAttachments");
+    expect(runEntry).toContain('select("id, file_name, file_path, mime_type")');
+  });
+
   it("scans a newly connected ClickUp space into knowledge and posts an initial chat summary", async () => {
     const fs = await import("node:fs/promises");
     const [ensure, scan, context] = await Promise.all([

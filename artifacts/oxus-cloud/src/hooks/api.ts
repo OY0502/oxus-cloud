@@ -1929,24 +1929,56 @@ export function useDeleteAttachment() {
   });
 }
 
+let screenshotUploadTokenRefresh: Promise<string> | null = null;
+
+async function getFreshScreenshotUploadToken(): Promise<string> {
+  if (!screenshotUploadTokenRefresh) {
+    screenshotUploadTokenRefresh = (async () => {
+      const { data, error } = await supabase.auth.refreshSession();
+      const token = data.session?.access_token;
+      if (error || !token) throw new Error("Your session has expired. Sign in again and retry the upload.");
+      return token;
+    })();
+  }
+  const pending = screenshotUploadTokenRefresh;
+  try {
+    return await pending;
+  } finally {
+    if (screenshotUploadTokenRefresh === pending) screenshotUploadTokenRefresh = null;
+  }
+}
+
 export async function uploadProjectAgentIntakeFile(
   projectId: string,
   file: File,
   onProgress?: (percent: number) => void,
 ): Promise<string> {
-  const [{ data: auth }, { data: sessionData, error: sessionError }] = await Promise.all([
-    supabase.auth.getUser(),
-    supabase.auth.getSession(),
-  ]);
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) throw new Error(sessionError.message);
+  const accessToken = file.type.startsWith("image/")
+    ? await getFreshScreenshotUploadToken()
+    : sessionData.session?.access_token;
+  if (!accessToken) throw new Error("You must be signed in.");
+  const { data: auth, error: authError } = await supabase.auth.getUser(accessToken);
+  if (authError || !auth.user) throw new Error("Your session has expired. Sign in again and retry the upload.");
   const safeName = file.name.replace(/[^\w.\-]+/g, "_");
   const path = `project/${projectId}/${crypto.randomUUID()}_${safeName}`;
-  const accessToken = sessionData.session?.access_token;
-  if (!accessToken) throw new Error("You must be signed in.");
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
   const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
 
-  await new Promise<void>((resolve, reject) => {
+  if (file.type.startsWith("image/")) {
+    // Screenshots are small enough for a normal Storage upload. This path uses
+    // the Supabase client's managed auth session and avoids stale JWTs being
+    // captured by the long-lived TUS resumable uploader.
+    onProgress?.(0);
+    const { error: uploadError } = await supabase.storage.from(DOCUMENTS_BUCKET).upload(path, file, {
+      contentType: file.type,
+      cacheControl: "3600",
+      upsert: false,
+    });
+    if (uploadError) throw new Error(uploadError.message);
+    onProgress?.(100);
+  } else await new Promise<void>((resolve, reject) => {
     const upload = new Upload(file, {
       endpoint: `${supabaseUrl}/storage/v1/upload/resumable`,
       headers: { authorization: `Bearer ${accessToken}`, apikey: publishableKey },

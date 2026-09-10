@@ -6,6 +6,7 @@ import {
   generateAgentPlan,
   generateClickupCommentDraft,
   generateMeetingMemory,
+  extractImageEvidence,
   buildAgentContextBlock,
   isLangfuseEnabled,
 } from "./aiModel.ts";
@@ -666,22 +667,41 @@ async function resolveUploadedIntakeFiles(args: {
   const resolvedSources: Array<{ sourceId: string; fileName: string; sourceText: string }> = [];
   const textExtensions = new Set(["txt", "md", "csv", "json", "vtt", "srt"]);
 
+  const blobToBase64 = async (blob: Blob): Promise<string> => {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = "";
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+    }
+    return btoa(binary);
+  };
+
   for (const att of attachments ?? []) {
     const extension = String(att.file_name ?? "").split(".").pop()?.toLowerCase() ?? "";
     const mimeType = String(att.mime_type ?? "").toLowerCase();
     const isTextFile = mimeType.startsWith("text/") ||
       ["application/json", "application/csv"].includes(mimeType) ||
       textExtensions.has(extension);
-    if (!isTextFile) {
+    const isImage = mimeType.startsWith("image/") && ["png", "jpg", "jpeg", "webp", "gif"].includes(extension);
+    if (!isTextFile && !isImage) {
       throw new Error(
-        `Unsupported chat attachment: ${att.file_name}. Upload a text transcript (TXT, MD, CSV, JSON, VTT, or SRT).`,
+        `Unsupported chat attachment: ${att.file_name}. Upload an image (PNG, JPG, WEBP, or GIF) or a text file (TXT, MD, CSV, JSON, VTT, or SRT).`,
       );
     }
     const { data: blob, error: dlErr } = await args.admin.storage.from("documents").download(att.file_path);
     if (dlErr || !blob) continue;
-    const text = (await blob.text()).trim();
+    if (isImage && blob.size > 12 * 1024 * 1024) {
+      throw new Error(`Image is too large: ${att.file_name}. Keep screenshots below 12 MB.`);
+    }
+    const text = isImage
+      ? (await extractImageEvidence({
+        dataUrl: `data:${mimeType};base64,${await blobToBase64(blob)}`,
+        fileName: String(att.file_name),
+        trace: { project_id: args.projectId },
+      })).trim()
+      : (await blob.text()).trim();
     if (!text) continue;
-    parts.push(`--- Uploaded file: ${att.file_name} ---\n${text}`);
+    parts.push(`--- Uploaded ${isImage ? "image" : "file"}: ${att.file_name} ---\n${text}`);
     const sourceId = await storeUploadedFileSource({
       admin: args.admin,
       projectId: args.projectId,
