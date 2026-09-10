@@ -213,4 +213,5 @@ export type ProjectAgentRunInput = {
   chat?: boolean;
   chat_session_id?: string;
   chat_action?: "clarification_response";
+  clarification_source_agent_run_id?: string;
 };

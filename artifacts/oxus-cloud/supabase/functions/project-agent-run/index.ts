@@ -52,6 +52,7 @@ Deno.serve(async (req) => {
       chat?: boolean;
       chat_session_id?: string;
       chat_action?: "clarification_response";
+      clarification_source_agent_run_id?: string;
     } = {};
     try {
       body = await req.json();
@@ -168,6 +169,7 @@ Deno.serve(async (req) => {
       chat: body.chat === true,
       chat_session_id: chatSessionId ?? undefined,
       chat_action: body.chat_action,
+      clarification_source_agent_run_id: body.clarification_source_agent_run_id?.trim() || undefined,
     };
 
     if (isTriggerDevConfigured()) {

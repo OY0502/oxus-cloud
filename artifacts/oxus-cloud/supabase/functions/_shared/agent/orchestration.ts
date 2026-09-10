@@ -651,8 +651,9 @@ async function resolveUploadedIntakeFiles(args: {
   combinedText: string;
   sourceIds: string[];
   sources: Array<{ sourceId: string; fileName: string; sourceText: string }>;
+  containsImages: boolean;
 }> {
-  if (!args.fileIds.length) return { combinedText: "", sourceIds: [], sources: [] };
+  if (!args.fileIds.length) return { combinedText: "", sourceIds: [], sources: [], containsImages: false };
 
   const { data: attachments, error } = await args.admin
     .from("attachments")
@@ -665,6 +666,7 @@ async function resolveUploadedIntakeFiles(args: {
   const parts: string[] = [];
   const sourceIds: string[] = [];
   const resolvedSources: Array<{ sourceId: string; fileName: string; sourceText: string }> = [];
+  let containsImages = false;
   const textExtensions = new Set(["txt", "md", "csv", "json", "vtt", "srt"]);
 
   const blobToBase64 = async (blob: Blob): Promise<string> => {
@@ -683,6 +685,7 @@ async function resolveUploadedIntakeFiles(args: {
       ["application/json", "application/csv"].includes(mimeType) ||
       textExtensions.has(extension);
     const isImage = mimeType.startsWith("image/") && ["png", "jpg", "jpeg", "webp", "gif"].includes(extension);
+    if (isImage) containsImages = true;
     if (!isTextFile && !isImage) {
       throw new Error(
         `Unsupported chat attachment: ${att.file_name}. Upload an image (PNG, JPG, WEBP, or GIF) or a text file (TXT, MD, CSV, JSON, VTT, or SRT).`,
@@ -717,7 +720,7 @@ async function resolveUploadedIntakeFiles(args: {
     }
   }
 
-  return { combinedText: parts.join("\n\n"), sourceIds, sources: resolvedSources };
+  return { combinedText: parts.join("\n\n"), sourceIds, sources: resolvedSources, containsImages };
 }
 
 async function prepareToolInput(args: {
@@ -906,6 +909,7 @@ export async function runProjectAgent(args: {
   // controls transcript publication, not whether structured meeting memory is
   // extracted and persisted.
   const isFileReview = fileIntake.sourceIds.length > 0;
+  const isMeetingFileReview = isFileReview && !fileIntake.containsImages;
   const isClarificationResponse = input.chat === true && input.chat_action === "clarification_response";
   const isTaskReview = isFileReview || isClarificationResponse;
   const embeddingWarnings: string[] = [];
@@ -1060,6 +1064,58 @@ export async function runProjectAgent(args: {
         .limit(8)
     : { data: [] as Array<{ role: string; content: string }> };
   const chatHistory = ((chatHistoryRes.data ?? []) as Array<{ role: string; content: string }>).reverse();
+  let clarificationSourceRunId: string | null = null;
+  let priorTaskSuggestions: unknown[] = [];
+  let clarificationEvidence: unknown[] = [];
+  const requestedClarificationRunId = isClarificationResponse
+    ? String(input.clarification_source_agent_run_id ?? "").trim()
+    : "";
+  if (requestedClarificationRunId) {
+    const { data: sourceRun } = await args.admin
+      .from("project_agent_runs")
+      .select("id")
+      .eq("id", requestedClarificationRunId)
+      .eq("project_id", input.project_id)
+      .eq("chat_session_id", chatSessionId)
+      .maybeSingle();
+    if (sourceRun?.id) {
+      clarificationSourceRunId = String(sourceRun.id);
+      const [priorToolsRes, originalMessageRes] = await Promise.all([
+        args.admin
+          .from("agent_tool_runs")
+          .select("input_payload, status")
+          .eq("agent_run_id", clarificationSourceRunId)
+          .eq("tool_name", "create_clickup_task")
+          .in("status", ["pending", "needs_confirmation"])
+          .order("created_at", { ascending: true }),
+        args.admin
+          .from("project_chat_messages")
+          .select("content, metadata")
+          .eq("agent_run_id", clarificationSourceRunId)
+          .eq("role", "user")
+          .maybeSingle(),
+      ]);
+      priorTaskSuggestions = (priorToolsRes.data ?? []).map((row) => row.input_payload);
+      const relatedAttention = ((attentionRes.data ?? []) as Array<Record<string, unknown>>).filter((item) => {
+        const metadata = item.metadata;
+        return !!metadata && typeof metadata === "object" && !Array.isArray(metadata)
+          && String((metadata as Record<string, unknown>).agent_run_id ?? "") === clarificationSourceRunId;
+      });
+      const sourceIds = [...new Set(relatedAttention.flatMap((item) =>
+        typeof item.source_knowledge_source_id === "string" ? [item.source_knowledge_source_id] : []
+      ))];
+      const { data: sourceRows } = sourceIds.length > 0
+        ? await args.admin
+          .from("project_knowledge_sources")
+          .select("id, source_title, source_type, source_text, created_at")
+          .in("id", sourceIds)
+        : { data: [] as unknown[] };
+      clarificationEvidence = [
+        ...(originalMessageRes.data ? [{ original_message: originalMessageRes.data }] : []),
+        ...((sourceRows ?? []) as unknown[]),
+      ];
+    }
+  }
   const retrievalQuery = buildHistoryAwareRetrievalQuery(
     agentInputText || "Review the current project context and summarize the current state.",
     chatHistory,
@@ -1115,6 +1171,8 @@ export async function runProjectAgent(args: {
     chunks: retrieval.chunks,
     openAttention: attentionRes.data ?? [],
     proposedTasks: tasksRes.data ?? [],
+    priorTaskSuggestions,
+    clarificationEvidence,
     pmActions: pmActionsRes.data ?? [],
     timeline: timelineRes.data ?? [],
     signals: signalsRes.data ?? [],
@@ -1249,7 +1307,7 @@ export async function runProjectAgent(args: {
   plan.answer = validateAnswerSourceCitations(plan.answer, retrieval.chunks);
 
   const meetingMemoryWarnings: string[] = [];
-  if (isFileReview && plan.meeting_memory && fileIntake.sources[0]) {
+  if (isMeetingFileReview && plan.meeting_memory && fileIntake.sources[0]) {
     try {
       await persistMeetingMemory({
         admin: args.admin,
@@ -1346,6 +1404,10 @@ export async function runProjectAgent(args: {
     plan.memory_updates = {};
     plan.proposed_tasks = [];
     plan.workflows = [];
+    const today = new Date().toISOString().slice(0, 10);
+    const validDate = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? value
+      : null;
     plan.tool_calls = clickupTaskSnapshot.source === "unavailable"
       ? []
       : (plan.tool_calls ?? [])
@@ -1364,7 +1426,29 @@ export async function runProjectAgent(args: {
             })),
           }).is_duplicate;
         })
-        .slice(0, 6);
+        .map((call) => {
+          const requestedStart = validDate(call.input?.start_date);
+          const startDate = requestedStart && requestedStart >= today ? requestedStart : today;
+          const requestedDue = validDate(call.input?.due_date_hint ?? call.input?.due_date);
+          const dueDate = requestedDue && requestedDue >= startDate ? requestedDue : null;
+          return {
+            ...call,
+            input: {
+              ...call.input,
+              status: "to do",
+              start_date: startDate,
+              due_date_hint: dueDate,
+            },
+          };
+        });
+    if (clarificationSourceRunId) {
+      await args.admin
+        .from("agent_tool_runs")
+        .update({ status: "cancelled", completed_at: new Date().toISOString() })
+        .eq("agent_run_id", clarificationSourceRunId)
+        .eq("tool_name", "create_clickup_task")
+        .in("status", ["pending", "needs_confirmation"]);
+    }
   }
 
   const toolRunIds: string[] = [];

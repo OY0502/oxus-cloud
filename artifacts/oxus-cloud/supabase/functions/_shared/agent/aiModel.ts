@@ -150,10 +150,10 @@ export async function extractImageEvidence(args: {
     trace: { ...args.trace, prompt_type: "extractImageEvidence" },
     traceName: "extractImageEvidence",
     model: Deno.env.get("OPENROUTER_VISION_MODEL")?.trim()
-      || Deno.env.get("OPENROUTER_CHAT_MODEL")?.trim()
-      || "openai/gpt-5-mini",
-    maxTokens: Number(Deno.env.get("OPENROUTER_VISION_MAX_TOKENS") ?? "2200"),
-    reasoningEffort: "low",
+      || Deno.env.get("OPENROUTER_PROJECT_CHAT_MODEL")?.trim()
+      || "openai/gpt-5.1",
+    maxTokens: Number(Deno.env.get("OPENROUTER_VISION_MAX_TOKENS") ?? "5000"),
+    reasoningEffort: "medium",
     jsonSchema: {
       name: "project_image_evidence",
       schema: {
@@ -297,6 +297,8 @@ export function buildAgentContextBlock(ctx: {
   chunks: RetrievalChunk[];
   openAttention?: unknown[];
   proposedTasks?: unknown[];
+  priorTaskSuggestions?: unknown[];
+  clarificationEvidence?: unknown[];
   pmActions?: unknown[];
   timeline?: unknown[];
   signals?: unknown[];
@@ -409,6 +411,16 @@ export function buildAgentContextBlock(ctx: {
   }
   if (ctx.openAttention?.length) parts.push(`Open clarification items:\n${JSON.stringify(ctx.openAttention, null, 2)}`);
   if (ctx.proposedTasks?.length) parts.push(`Existing proposed tasks:\n${JSON.stringify(ctx.proposedTasks, null, 2)}`);
+  if (ctx.priorTaskSuggestions?.length) {
+    parts.push(
+      `Task suggestions from the run being clarified (drafts to revise, not immutable decisions):\n${JSON.stringify(ctx.priorTaskSuggestions, null, 2)}\nUse the user's clarification answers to regenerate the complete task set. Preserve useful details from these drafts, correct anything the answers changed, add newly revealed work, and omit drafts that are no longer needed.`,
+    );
+  }
+  if (ctx.clarificationEvidence?.length) {
+    parts.push(
+      `Original uploaded evidence associated with the clarification questions (authoritative for this revision):\n${JSON.stringify(ctx.clarificationEvidence, null, 2)}\nRe-read this evidence together with the clarification answers and the rest of the current project context.`,
+    );
+  }
   if (ctx.pmActions?.length) parts.push(`Active PM actions:\n${JSON.stringify(ctx.pmActions, null, 2)}`);
   if (ctx.timeline?.length) parts.push(`Recent timeline:\n${JSON.stringify(ctx.timeline, null, 2)}`);
   if (ctx.signals?.length) parts.push(`Recent signals:\n${JSON.stringify(ctx.signals, null, 2)}`);
@@ -630,7 +642,7 @@ const FILE_REVIEW_SCHEMA = `Return strict JSON:
     "open_questions": ["string"],
     "participants": ["string"],
     "confidence": 0.0
-  },
+  } | null,
   "proposed_tasks": [],
   "clarification_questions": [{
     "question": "string",
@@ -645,8 +657,13 @@ const FILE_REVIEW_SCHEMA = `Return strict JSON:
       "title": "string",
       "description": "string",
       "priority": "low|medium|high|urgent",
+      "status": "to do",
+      "start_date": "YYYY-MM-DD|null",
       "due_date_hint": "string|null",
       "assignee_hint": "string|null",
+      "time_estimate_minutes": "number|null",
+      "implementation_notes": ["string"],
+      "acceptance_criteria": ["string"],
       "destination": { "type": "list", "id": "string", "name": "string", "path": "string", "reason": "string" },
       "source_context": { "meeting_action": "string", "evidence": "string" }
     }
@@ -656,9 +673,9 @@ const FILE_REVIEW_SCHEMA = `Return strict JSON:
   "confidence": 0.0
 }
 Rules:
-- Review the uploaded meeting as a PM, not merely as a summarizer.
+- Review uploaded client evidence as a senior project manager, not merely as a summarizer. It may be a meeting transcript, a client-chat screenshot, or a clarification response.
 - Extract concrete action items, decisions, unresolved ownership, dependencies, and follow-ups.
-- Build meeting_memory as a dated, reusable project record. Separate work already completed or being demonstrated from current-cycle focus and from explicit next-meeting deliverables.
+- Build meeting_memory only when the source is actually a meeting; otherwise return null. For a meeting, build a dated, reusable project record and separate work already completed or being demonstrated from current-cycle focus and explicit next-meeting deliverables.
 - A next-meeting deliverable must be an artifact, result, decision, or demo the team committed to show/review at the next meeting. Do not classify every action item as a deliverable.
 - When a work item is already finished, in demo, or in client review, put it in completed_or_demo and do not also list it as future work unless the meeting explicitly requests a new follow-up.
 - Use a date encoded in the recording filename when present. Treat a weekly pattern or an explicit statement about weekly meetings as cadence_signal=weekly.
@@ -667,11 +684,17 @@ Rules:
 - Format answer as readable Markdown with section headings and short bullet lists. Never return a dense wall of prose.
 - Never include a Questions or Questions to clarify section, clarification question objects, or their reasons in answer. clarification_questions are rendered separately as interactive controls.
 - Ask up to 3 specific, answerable clarification questions that materially improve ownership, scope, due date, acceptance criteria, or whether work is still required. Never ask generic questions such as "Anything else?".
-- For each high-confidence action item with no semantically equivalent ClickUp task, emit one create_clickup_task tool call. It will only become a pending confirmation card; do not claim it was created.
+- For every actionable unit of missing work with no semantically equivalent ClickUp task, emit one create_clickup_task tool call. Do not target three, five, or any other fixed count: return exactly as many tasks as the evidence and project context require, splitting only when work has a distinct outcome, owner, or delivery path. It will only become a pending confirmation card; do not claim it was created.
 - Do not emit a task for a vague discussion, completed work, a low-priority idea explicitly deferred, or an item that needs clarification first.
 - Never duplicate an existing open, in-progress, or completed ClickUp task unless the meeting clearly defines distinct new follow-up work.
 - If the task snapshot source is unavailable, state that ClickUp could not be verified and emit no create_clickup_task calls.
 - Use the existing ClickUp hierarchy to choose the best destination list. Never create or reorganize folders/lists.
+- Use all useful supplied context, including the screenshot/transcript, recent conversation, project memory, live ClickUp, Slack, and clarification evidence. The current upload is important but must not erase relevant established context.
+- Every task description must be implementation-ready Markdown, not a restatement of the title. Include: objective/outcome; relevant client and project context; scope and implementation notes; dependencies or constraints when known; and concrete, testable acceptance criteria. Preserve important names, UI behavior, edge cases, and rationale from the evidence. Do not leave description empty or generic.
+- Default every new task to status "to do". Set start_date to today unless the evidence supports a later start. Never emit a start or due date earlier than the current date in Freshness policy.
+- Infer a due date when reasonably possible. Prefer a date before the next meeting when the task can realistically fit; for work too large or uncertain to schedule responsibly, use null. Never invent a past due date.
+- Estimate time only when the scope is sufficiently bounded; otherwise use null.
+- On a clarification response, regenerate the complete set of pending task suggestions using the original evidence, prior drafts, the new answers, and current project context. Replace obsolete drafts; do not merely append a short answer or leave stale proposals alongside revised ones.
 - Keep memory_updates, proposed_tasks, and workflows empty.`;
 
 const MEETING_MEMORY_JSON_SCHEMA: Record<string, unknown> = {
@@ -736,7 +759,7 @@ const FILE_REVIEW_JSON_SCHEMA: Record<string, unknown> = {
       description: "A concise PM review under 900 words with only relevant sections.",
     },
     memory_updates: { type: "object", additionalProperties: false, properties: {} },
-    meeting_memory: MEETING_MEMORY_JSON_SCHEMA,
+    meeting_memory: { anyOf: [MEETING_MEMORY_JSON_SCHEMA, { type: "null" }] },
     proposed_tasks: { type: "array", maxItems: 0, items: { type: "string" } },
     clarification_questions: {
       type: "array",
@@ -755,7 +778,7 @@ const FILE_REVIEW_JSON_SCHEMA: Record<string, unknown> = {
     },
     tool_calls: {
       type: "array",
-      maxItems: 5,
+      maxItems: 20,
       items: {
         type: "object",
         additionalProperties: false,
@@ -767,10 +790,15 @@ const FILE_REVIEW_JSON_SCHEMA: Record<string, unknown> = {
             additionalProperties: false,
             properties: {
               title: { type: "string" },
-              description: { type: "string", description: "Concise objective, context, and acceptance criteria." },
+              description: { type: "string", minLength: 120, description: "Implementation-ready Markdown with objective, context, scope, constraints, and testable acceptance criteria." },
               priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
+              status: { type: "string", enum: ["to do"] },
+              start_date: { type: ["string", "null"] },
               due_date_hint: { type: ["string", "null"] },
               assignee_hint: { type: ["string", "null"] },
+              time_estimate_minutes: { type: ["number", "null"], minimum: 1 },
+              implementation_notes: { type: "array", maxItems: 12, items: { type: "string" } },
+              acceptance_criteria: { type: "array", minItems: 1, maxItems: 12, items: { type: "string" } },
               destination: {
                 type: "object",
                 additionalProperties: false,
@@ -797,8 +825,13 @@ const FILE_REVIEW_JSON_SCHEMA: Record<string, unknown> = {
               "title",
               "description",
               "priority",
+              "status",
+              "start_date",
               "due_date_hint",
               "assignee_hint",
+              "time_estimate_minutes",
+              "implementation_notes",
+              "acceptance_criteria",
               "destination",
               "source_context",
             ],
@@ -848,17 +881,19 @@ export async function generateAgentPlan(args: {
       : args.isChat
       ? { name: "project_chat_response", schema: CHAT_RESPONSE_JSON_SCHEMA }
       : undefined,
-    reasoningEffort: args.reviewUploadedFiles || args.isChat ? "low" : undefined,
-    model: args.isChat ? Deno.env.get("OPENROUTER_CHAT_MODEL")?.trim() || "openai/gpt-5-mini" : undefined,
+    reasoningEffort: args.reviewUploadedFiles || args.isChat ? "medium" : undefined,
+    model: args.isChat
+      ? Deno.env.get("OPENROUTER_PROJECT_CHAT_MODEL")?.trim() || "openai/gpt-5.1"
+      : undefined,
      maxTokens: args.reviewUploadedFiles
-       ? Number(Deno.env.get("OPENROUTER_FILE_REVIEW_MAX_TOKENS") ?? "6000")
+       ? Number(Deno.env.get("OPENROUTER_FILE_REVIEW_MAX_TOKENS") ?? "10000")
        : args.isChat
-       ? Number(Deno.env.get("OPENROUTER_CHAT_MAX_TOKENS") ?? "1800")
+       ? Number(Deno.env.get("OPENROUTER_CHAT_MAX_TOKENS") ?? "5000")
        : undefined,
     systemPrompt: [
       "You are the OXUS Cloud project agent.",
        args.reviewUploadedFiles
-         ? "You are reviewing newly uploaded project evidence (such as meeting transcripts or client-chat screenshots) inside project chat. Extract requests faithfully, reconcile action items against the supplied ClickUp task snapshot, ask targeted questions only when needed, and prepare only confirmation-gated task suggestions. Only build dated meeting memory when the evidence is actually from a meeting."
+         ? "You are reviewing newly uploaded project evidence or revising an earlier review after clarifications inside project chat. Think like a senior project manager: extract requests faithfully, carry forward all useful project context, reconcile every action against the current ClickUp snapshot, and produce complete, detailed, confirmation-gated task suggestions. Only build dated meeting memory when the evidence is actually from a meeting."
        : args.isChat
         ? "You are in the project's persistent chat. Give a direct, useful answer that reflects the freshest available project state. For weekly planning, anchor on the latest structured meeting and reconcile it with live ClickUp and Slack. Use the recent conversation only for continuity."
         : "This is a single-shot intake, NOT a chat.",

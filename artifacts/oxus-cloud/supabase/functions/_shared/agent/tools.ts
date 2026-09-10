@@ -321,6 +321,20 @@ export function prepareCreateClickupTaskToolRunInput(args: {
   clickupLink?: Record<string, unknown> | null;
 }): Record<string, unknown> {
   const input = { ...args.rawInput };
+  const asList = (value: unknown) => Array.isArray(value)
+    ? value.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+  const implementationNotes = asList(input.implementation_notes);
+  const acceptanceCriteria = asList(input.acceptance_criteria);
+  let description = typeof input.description === "string" ? input.description.trim() : "";
+  if (implementationNotes.length > 0 && !/^#{1,6}\s+implementation|\*\*implementation/im.test(description)) {
+    description += `${description ? "\n\n" : ""}### Implementation notes\n${implementationNotes.map((item) => `- ${item}`).join("\n")}`;
+  }
+  if (acceptanceCriteria.length > 0 && !/^#{1,6}\s+acceptance|\*\*acceptance/im.test(description)) {
+    description += `${description ? "\n\n" : ""}### Acceptance criteria\n${acceptanceCriteria.map((item) => `- ${item}`).join("\n")}`;
+  }
+  input.description = description;
+  if (!String(input.status ?? "").trim()) input.status = "to do";
   if (!input.destination && args.hierarchyRows && args.hierarchyRows.length > 0) {
     const suggested = suggestTaskDestination({
       rows: args.hierarchyRows,

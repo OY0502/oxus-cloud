@@ -69,7 +69,7 @@ describe("project chat architecture", () => {
     expect(chat).toContain("keeps the project's shared memory and documents");
   });
 
-  it("uses the existing OpenRouter account for embeddings and a lower-cost chat model", async () => {
+  it("uses the existing OpenRouter account for embeddings and a high-intelligence project chat model", async () => {
     const fs = await import("node:fs/promises");
     const [embeddings, model] = await Promise.all([
       fs.readFile(
@@ -84,7 +84,8 @@ describe("project chat architecture", () => {
 
     expect(embeddings).toContain('provider === "openrouter"');
     expect(embeddings).toContain('"openai/text-embedding-3-small"');
-    expect(model).toContain('"openai/gpt-5-mini"');
+    expect(model).toContain('"openai/gpt-5.1"');
+    expect(model).toContain('Deno.env.get("OPENROUTER_PROJECT_CHAT_MODEL")');
     expect(model).toContain("session_id:");
     expect(model).toContain("usage: completion.usage ?? {}");
   });
@@ -203,11 +204,12 @@ describe("project chat architecture", () => {
     expect(model).toContain("FILE_REVIEW_SCHEMA");
     expect(model).toContain('type: "json_schema"');
     expect(model).toContain('strict: true');
-    expect(model).toContain('reasoningEffort: args.reviewUploadedFiles || args.isChat ? "low"');
+    expect(model).toContain('reasoningEffort: args.reviewUploadedFiles || args.isChat ? "medium"');
     expect(model).toContain("Compare every concrete action item against the Current ClickUp task snapshot");
     expect(chat).toContain("AgentToolConfirmationList");
     expect(chat).toContain(">Clarifications<");
     expect(chat).toContain('chat_action: respondingToClarification ? "clarification_response"');
+    expect(chat).toContain("clarification_source_agent_run_id");
   });
 
   it("uses a single desktop workspace viewport without nested sticky panels", async () => {
@@ -245,6 +247,15 @@ describe("project chat architecture", () => {
     expect(orchestration).toContain("detectDuplicateTask");
     expect(creation).toContain("assertNoMatchingClickupTask");
     expect(model).toContain("Never include a Questions or Questions to clarify section");
+    expect(model).toContain("Do not target three, five, or any other fixed count");
+    expect(model).toContain('Default every new task to status "to do"');
+    expect(model).toContain("Every task description must be implementation-ready Markdown");
+    expect(orchestration).toContain('status: "to do"');
+    expect(orchestration).toContain("requestedDue && requestedDue >= startDate");
+    expect(orchestration).toContain('status: "cancelled"');
+    expect(orchestration).toContain("priorTaskSuggestions");
+    expect(confirmation).toContain("shadow-sm");
+    expect(confirmation).not.toContain("border-l-warning");
   });
 
   it("lets the trusted confirmation worker finish an already-running ClickUp action", async () => {

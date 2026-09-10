@@ -541,7 +541,11 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
     setFiles(combined);
   };
 
-  const send = async (suggestedPrompt?: string, questions?: ChatClarification[]) => {
+  const send = async (
+    suggestedPrompt?: string,
+    questions?: ChatClarification[],
+    clarificationSourceAgentRunId?: string,
+  ) => {
     const answeredQuestions = (questions ?? []).flatMap((question) => {
       const answer = clarificationAnswers[question.question]?.trim();
       return answer ? [{ question: question.question, answer }] : [];
@@ -564,7 +568,7 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
       const message = respondingToClarification
         ? `Clarification responses\n\n${text}`
         : text || (reviewingImages
-          ? `Review the attached ${files.length === 1 ? "client conversation screenshot" : "client conversation screenshots"}. Extract the client's requests, compare them with the current ClickUp board, and suggest a few clear, non-duplicate ClickUp tasks for genuinely missing work. Prepare confirmation cards so I can review each task before creation.`
+          ? `Review the attached ${files.length === 1 ? "client conversation screenshot" : "client conversation screenshots"}. Extract every actionable client request, reconcile it with all useful project context and the current ClickUp board, and propose exactly the non-duplicate tasks needed to cover the work. Make each description implementation-ready with context and acceptance criteria. Prepare confirmation cards so I can review each task before creation.`
           : `Review the attached ${files.length === 1 ? "meeting file" : "meeting files"} as a project manager. Compare every action item against the current ClickUp board, identify what is already covered, ask specific clarification questions, and prepare confirmation cards for genuinely missing tasks.`);
       if (reviewingFiles) {
         const selectedFiles = [...files];
@@ -625,6 +629,7 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
         chat: true,
         chat_session_id: chatSessionId,
         chat_action: respondingToClarification ? "clarification_response" : undefined,
+        clarification_source_agent_run_id: respondingToClarification ? clarificationSourceAgentRunId : undefined,
       });
       setInput("");
       setFiles([]);
@@ -938,13 +943,13 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
                     )}
 
                     {!fromUser && metadata.questions.length > 0 && (
-                      <div className="rounded-lg border border-warning/25 bg-warning-muted/65 p-3">
+                      <div className="rounded-lg border border-info/20 bg-info-muted/30 p-3">
                         <div className="mb-1 flex items-center gap-2">
-                          <CircleHelp className="h-4 w-4 text-warning" />
+                          <CircleHelp className="h-4 w-4 text-info" />
                           <p className="text-sm font-semibold">Clarifications</p>
                           <span className="text-xs text-muted-foreground">{metadata.questions.length}</span>
                         </div>
-                        <div className="divide-y divide-warning/15">
+                        <div className="divide-y divide-info/10">
                           {metadata.questions.map((question, index) => (
                             <div key={question.question} className="space-y-2 py-2.5">
                               <p className="text-sm font-medium leading-5">
@@ -964,13 +969,13 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
                             </div>
                           ))}
                         </div>
-                        <div className="mt-2 flex justify-end border-t border-warning/15 pt-3">
+                        <div className="mt-2 flex justify-end border-t border-info/10 pt-3">
                           <Button
                             type="button"
                             size="sm"
                             className="h-8"
                             disabled={running || !metadata.questions.some((question) => clarificationAnswers[question.question]?.trim())}
-                            onClick={() => void send(undefined, metadata.questions)}
+                            onClick={() => void send(undefined, metadata.questions, message.agent_run_id ?? undefined)}
                           >
                             Submit answers
                           </Button>

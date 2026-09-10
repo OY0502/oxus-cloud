@@ -70,6 +70,7 @@ export function AgentToolConfirmationList({
   const failedCount = visible.filter((r) => r.status === "failed").length;
   const runningCount = visible.filter((r) => r.status === "running" && !isStaleAgentToolRun(r)).length;
   const allSucceeded = visible.every((r) => r.status === "succeeded");
+  const taskProposalCount = visible.filter((r) => r.tool_name === "create_clickup_task").length;
 
   return (
     <div className={presentation === "chat" ? "space-y-2.5" : "space-y-3"}>
@@ -80,7 +81,9 @@ export function AgentToolConfirmationList({
             ? "Confirmations & retries"
             : allSucceeded
               ? "Completed actions"
-              : "Pending confirmations"}
+              : taskProposalCount === visible.length
+                ? `${taskProposalCount} proposed task${taskProposalCount === 1 ? "" : "s"}`
+                : "Pending confirmations"}
       </p>
 
       {workflows.map((workflow) => (
@@ -152,7 +155,7 @@ function WorkflowConfirmationGroup({
   };
 
   return (
-    <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.06] p-4 space-y-3">
+    <div className="rounded-xl border border-info/25 bg-info-muted/20 p-4 space-y-3">
       <div className="flex items-start justify-between gap-2">
         <div>
           <p className="text-sm font-semibold text-foreground">{workflow.workflow_name}</p>
@@ -326,8 +329,8 @@ function AgentToolConfirmationCard({
             : compact
               ? ""
               : presentation === "chat"
-                ? "border-border border-l-2 border-l-warning bg-card"
-                : "border-warning/30 bg-warning-muted/45"
+                ? "border-border/80 bg-card shadow-sm"
+                : "border-info/25 bg-info-muted/25"
       }`}
     >
       <div className="flex items-center justify-between gap-2">
@@ -337,7 +340,7 @@ function AgentToolConfirmationCard({
         </p>
         <span className={isSucceeded
           ? "rounded-full bg-success-muted px-2 py-0.5 text-xs font-medium text-success"
-          : "rounded-full bg-warning-muted px-2 py-0.5 text-xs font-medium text-warning-foreground"}
+          : "rounded-full border border-info/20 bg-info-muted/60 px-2 py-0.5 text-xs font-medium text-info"}
         >{toolRun.status.replace(/_/g, " ")}</span>
       </div>
 
