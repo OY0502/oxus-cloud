@@ -778,7 +778,6 @@ const FILE_REVIEW_JSON_SCHEMA: Record<string, unknown> = {
     },
     tool_calls: {
       type: "array",
-      maxItems: 20,
       items: {
         type: "object",
         additionalProperties: false,
