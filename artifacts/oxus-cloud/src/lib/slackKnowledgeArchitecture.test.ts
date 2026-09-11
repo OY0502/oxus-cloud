@@ -46,6 +46,7 @@ describe("Slack project knowledge architecture", () => {
     expect(trigger).not.toMatch(/slack[\s\S]{0,120}schedules\.task/i);
     expect(trigger).toContain('id: "sync-slack-project-channel"');
     expect(trigger).toContain('queue: { name: "slack-project-channel-sync", concurrencyLimit: 2 }');
+    expect(trigger).toContain("maxDuration: 1800");
     expect(trigger).toContain("defer_post_processing: true");
     expect(trigger).toContain('slack_sync_status: "completed"');
     expect(sync).toContain("shouldQueueTriggerDevTasks()");

@@ -164,7 +164,7 @@ export const processProjectSignalsTask = task({
 export const syncSlackProjectChannelTask = task({
   id: "sync-slack-project-channel",
   queue: { name: "slack-project-channel-sync", concurrencyLimit: 2 },
-  maxDuration: 600,
+  maxDuration: 1800,
   run: async (payload: {
     project_id: string;
     project_slack_link_id?: string;
