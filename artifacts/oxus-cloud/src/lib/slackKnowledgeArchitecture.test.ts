@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 describe("Slack project knowledge architecture", () => {
   it("turns linked Slack threads into durable source-linked knowledge", async () => {
     const fs = await import("node:fs/promises");
-    const [memory, webhook, reprocess, migration] = await Promise.all([
+    const [memory, webhook, reprocess, processJobs, pmActions, migration] = await Promise.all([
       fs.readFile(new URL("../../supabase/functions/_shared/slackKnowledgeMemory.ts", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/functions/slack-events/index.ts", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/functions/_shared/reprocessSlackEvents.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/functions/_shared/processAiJobs.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/functions/_shared/slackPmActions.ts", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/migrations/20260825123000_slack_thread_knowledge.sql", import.meta.url), "utf8"),
     ]);
 
@@ -22,6 +24,8 @@ describe("Slack project knowledge architecture", () => {
     expect(memory).toContain("chunkKnowledgeText");
     expect(webhook).toContain("syncSlackThreadKnowledge");
     expect(reprocess).toContain("syncSlackThreadKnowledge");
+    expect(processJobs).toContain("threadKeys: [...new Set(meaningfulRows.map");
+    expect(pmActions).toContain('eventsQuery = eventsQuery.in("slack_thread_ts"');
     expect(migration).toContain("idx_project_knowledge_sources_slack_thread_unique");
   });
 

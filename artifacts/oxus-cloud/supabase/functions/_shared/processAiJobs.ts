@@ -121,6 +121,7 @@ async function processAnalyzeProjectSignalsJob(args: {
     admin: args.admin,
     projectId,
     createdBy: args.createdBy,
+    threadKeys: [...new Set(meaningfulRows.map((row) => row.thread_key).filter(Boolean))],
   });
 
   for (const signal of meaningfulRows) {

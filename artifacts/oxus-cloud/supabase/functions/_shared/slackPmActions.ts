@@ -435,6 +435,7 @@ export async function processSlackThreadIntelligenceForProject(args: {
   admin: SupabaseClient;
   projectId: string;
   createdBy?: string | null;
+  threadKeys?: string[];
 }): Promise<SlackPmProcessResult> {
   const result: SlackPmProcessResult = {
     threads_checked: 0,
@@ -463,12 +464,19 @@ export async function processSlackThreadIntelligenceForProject(args: {
     });
   }
 
-  const { data: events, error } = await args.admin
+  let eventsQuery = args.admin
     .from("project_slack_events")
     .select("*")
     .eq("project_id", args.projectId)
     .order("slack_ts", { ascending: true })
     .limit(500);
+  const requestedRoots = args.threadKeys?.length
+    ? [...new Set(args.threadKeys.map((key) => key.split(":").at(-1) ?? "").filter((value) => /^\d+\.\d+$/.test(value)))]
+    : [];
+  if (requestedRoots.length > 0) {
+    eventsQuery = eventsQuery.in("slack_thread_ts", requestedRoots.slice(0, 100));
+  }
+  const { data: events, error } = await eventsQuery;
   if (error) throw new Error(error.message);
   if (!events || events.length === 0) {
     result.reasons.push("no_slack_events");
