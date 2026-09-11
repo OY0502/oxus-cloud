@@ -44,7 +44,7 @@ const NAME_ASSIGN_PREFIX =
 const CAN_NAME =
   /\b(?:can|could|should)\s+([A-Z][a-zA-Z'-]+)\s+(?:please\s+)?(?:send|add|update|fix|implement|prepare|write|share|complete|do)\b/i;
 const ASSIGN_TO = /\bassign(?:\s+this)?\s+to\s+@?([A-Z][a-zA-Z'-]+)\b/i;
-const AT_NAME = /@([A-Z][a-zA-Z'-]+)\b/;
+const AT_NAME = /@([A-Z][a-zA-Z'-]+)\b/g;
 
 function formatDateYmd(d: Date): string {
   const y = d.getFullYear();
