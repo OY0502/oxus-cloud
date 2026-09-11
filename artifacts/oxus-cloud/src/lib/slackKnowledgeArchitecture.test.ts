@@ -3,12 +3,13 @@ import { describe, expect, it } from "vitest";
 describe("Slack project knowledge architecture", () => {
   it("turns linked Slack threads into durable source-linked knowledge", async () => {
     const fs = await import("node:fs/promises");
-    const [memory, webhook, reprocess, processJobs, pmActions, migration] = await Promise.all([
+    const [memory, webhook, reprocess, processJobs, pmActions, pmUpsert, migration] = await Promise.all([
       fs.readFile(new URL("../../supabase/functions/_shared/slackKnowledgeMemory.ts", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/functions/slack-events/index.ts", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/functions/_shared/reprocessSlackEvents.ts", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/functions/_shared/processAiJobs.ts", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/functions/_shared/slackPmActions.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/functions/_shared/pmActionUpsert.ts", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/migrations/20260825123000_slack_thread_knowledge.sql", import.meta.url), "utf8"),
     ]);
 
@@ -28,6 +29,8 @@ describe("Slack project knowledge architecture", () => {
     expect(processJobs).toContain("const batchSignalIds = signalIds.slice(0, 10)");
     expect(processJobs).toContain("payload: { ...payload, signal_ids: jobResult.remaining_signal_ids }");
     expect(pmActions).toContain('eventsQuery = eventsQuery.in("slack_thread_ts"');
+    expect(pmUpsert).toContain("retryOnUniqueCollision");
+    expect(pmUpsert).toContain('error.code === "23505"');
     expect(migration).toContain("idx_project_knowledge_sources_slack_thread_unique");
   });
 

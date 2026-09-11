@@ -172,6 +172,7 @@ export async function upsertPmActionFromSignal(args: {
   admin: SupabaseClient;
   input: UpsertPmActionInput;
   existingItems: Record<string, unknown>[];
+  retryOnUniqueCollision?: boolean;
 }): Promise<UpsertPmActionResult & { workingItems: Record<string, unknown>[] }> {
   const now = args.input.signal_at ?? new Date().toISOString();
   const proposed = proposedFromInput(args.input);
@@ -369,7 +370,41 @@ export async function upsertPmActionFromSignal(args: {
     .insert(insertRow)
     .select()
     .single();
-  if (error) throw new Error(error.message);
+  if (error) {
+    const uniqueCollision = error.code === "23505" || /unique constraint/i.test(error.message);
+    if (uniqueCollision && args.retryOnUniqueCollision !== false) {
+      let collision: Record<string, unknown> | null = null;
+      const { data: byIdentity } = await args.admin
+        .from("project_pm_action_items")
+        .select("*")
+        .eq("project_id", args.input.project_id)
+        .eq("action_identity", args.input.action_identity)
+        .in("status", ["open", "in_progress"])
+        .maybeSingle();
+      collision = byIdentity as Record<string, unknown> | null;
+      if (!collision && args.input.action_key) {
+        const { data: byActionKey } = await args.admin
+          .from("project_pm_action_items")
+          .select("*")
+          .eq("project_id", args.input.project_id)
+          .eq("action_key", args.input.action_key)
+          .in("status", ["open", "in_progress"])
+          .maybeSingle();
+        collision = byActionKey as Record<string, unknown> | null;
+      }
+      if (collision) {
+        return upsertPmActionFromSignal({
+          ...args,
+          existingItems: [
+            collision,
+            ...args.existingItems.filter((item) => item.id !== collision?.id),
+          ],
+          retryOnUniqueCollision: false,
+        });
+      }
+    }
+    throw new Error(error.message);
+  }
 
   workingItems.unshift(data);
   return {
