@@ -179,7 +179,7 @@ export async function upsertPmActionFromSignal(args: {
   let match = findExistingActionForSignal(args.existingItems, proposed);
 
   const byIdentity = findByIdentity(args.existingItems, args.input.action_identity);
-  if (byIdentity && !match.item) {
+  if (byIdentity && match.item?.id !== byIdentity.id) {
     const status = byIdentity.status as string;
     if (status === "open" || status === "in_progress") {
       match = { kind: "open", item: byIdentity, shouldSuppress: false, shouldUpdate: true, shouldReopen: false };
