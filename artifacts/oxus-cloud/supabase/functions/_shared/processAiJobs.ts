@@ -67,8 +67,8 @@ async function processAnalyzeProjectSignalsJob(args: {
   const signalIds = Array.isArray(payload.signal_ids)
     ? payload.signal_ids.filter((id): id is string => typeof id === "string")
     : [];
-  const batchSignalIds = signalIds.slice(0, 10);
-  const remainingSignalIds = signalIds.slice(10);
+  const batchSignalIds = signalIds.slice(0, 1);
+  const remainingSignalIds = signalIds.slice(1);
 
   let query = args.admin
     .from("project_signals")
@@ -77,7 +77,7 @@ async function processAnalyzeProjectSignalsJob(args: {
     .in("signal_status", ["new", "processing"]);
 
   if (batchSignalIds.length > 0) query = query.in("id", batchSignalIds);
-  query = query.limit(10);
+  query = query.limit(1);
 
   const { data: signals, error } = await query;
   if (error) throw new Error(error.message);
