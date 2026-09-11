@@ -27,11 +27,12 @@ describe("Slack project knowledge architecture", () => {
 
   it("supports bounded historical import without adding a Slack polling cron", async () => {
     const fs = await import("node:fs/promises");
-    const [link, sync, panel, trigger] = await Promise.all([
+    const [link, sync, panel, trigger, migration] = await Promise.all([
       fs.readFile(new URL("../../supabase/functions/slack-link-project-channel/index.ts", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/functions/slack-sync-project-channel/index.ts", import.meta.url), "utf8"),
       fs.readFile(new URL("../components/slack/ProjectSlackPanel.tsx", import.meta.url), "utf8"),
       fs.readFile(new URL("../trigger/index.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/migrations/20260911120000_allow_bounded_slack_history.sql", import.meta.url), "utf8"),
     ]);
 
     expect(link).toContain("history_days?: number");
@@ -43,6 +44,8 @@ describe("Slack project knowledge architecture", () => {
     expect(panel).toContain("Last 90 days · recommended");
     expect(panel).toContain("no extra polling job is added");
     expect(trigger).not.toMatch(/slack[\s\S]{0,120}schedules\.task/i);
+    expect(migration).toContain("project_slack_links_sync_mode_check");
+    expect(migration).toContain("'bounded_history'");
   });
 
   it("feeds all active AI-enabled Slack channels into chat and resolves links per channel", async () => {
