@@ -96,7 +96,7 @@ import type {
   ProjectSlackLink,
   ReprocessSlackEventsResult,
   SlackPipelineDiagnostics,
-  SlackSyncProjectChannelResult,
+  SlackSyncProjectChannelStart,
   SlackWorkspace,
   ProjectWithAssignees,
   UserClickupConnection,
@@ -3045,6 +3045,16 @@ export function useProjectSlackLinks(projectId: string): UseQueryResult<ProjectS
       if (error) throw new Error(error.message);
       return (data ?? []) as ProjectSlackLink[];
     },
+    refetchInterval: (query) => {
+      const links = query.state.data as ProjectSlackLink[] | undefined;
+      const running = links?.some((link) => {
+        const metadata = link.metadata && typeof link.metadata === "object" && !Array.isArray(link.metadata)
+          ? link.metadata as Record<string, unknown>
+          : {};
+        return metadata.slack_sync_status === "queued" || metadata.slack_sync_status === "running";
+      });
+      return running ? 2_500 : false;
+    },
   });
 }
 
@@ -3124,25 +3134,6 @@ export function useSlackLinkProjectChannel() {
       qc.invalidateQueries({ queryKey: qk.projectSlackLinks(vars.project_id) });
     },
   });
-}
-
-function normalizeSlackSyncResult(data: Partial<SlackSyncProjectChannelResult>): SlackSyncProjectChannelResult {
-  return {
-    imported_count: data.imported_count ?? 0,
-    thread_replies_imported_count: data.thread_replies_imported_count ?? 0,
-    skipped_count: data.skipped_count ?? 0,
-    events_upserted_count: data.events_upserted_count ?? 0,
-    signals_upserted_count: data.signals_upserted_count ?? 0,
-    meaningful_signals_count: data.meaningful_signals_count ?? 0,
-    signal_threads_upserted_count: data.signal_threads_upserted_count ?? 0,
-    jobs_queued_count: data.jobs_queued_count ?? 0,
-    latest_messages_preview: Array.isArray(data.latest_messages_preview) ? data.latest_messages_preview : [],
-    warnings: Array.isArray(data.warnings) ? data.warnings : [],
-    reprocessed: data.reprocessed,
-    knowledge_sources_created_count: data.knowledge_sources_created_count ?? 0,
-    knowledge_sources_updated_count: data.knowledge_sources_updated_count ?? 0,
-    knowledge_sources_unchanged_count: data.knowledge_sources_unchanged_count ?? 0,
-  };
 }
 
 export function useProjectInvoicing(
@@ -3239,7 +3230,7 @@ export function useSlackSyncProjectChannel() {
       reprocess?: boolean;
     }) => {
       const token = await getAuthToken();
-      const { data, error } = await supabase.functions.invoke<Partial<SlackSyncProjectChannelResult>>(
+      const { data, error } = await supabase.functions.invoke<SlackSyncProjectChannelStart>(
         "slack-sync-project-channel",
         {
           body: input,
@@ -3247,8 +3238,8 @@ export function useSlackSyncProjectChannel() {
         },
       );
       if (error) await throwEdgeFunctionError(error);
-      if (!data) throw new Error("No Slack sync result returned.");
-      return normalizeSlackSyncResult(data);
+      if (!data?.trigger_run_id) throw new Error("Slack sync was not queued.");
+      return data;
     },
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: qk.projectSlackLinks(vars.project_id) });

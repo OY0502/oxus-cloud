@@ -44,6 +44,15 @@ describe("Slack project knowledge architecture", () => {
     expect(panel).toContain("Last 90 days · recommended");
     expect(panel).toContain("no extra polling job is added");
     expect(trigger).not.toMatch(/slack[\s\S]{0,120}schedules\.task/i);
+    expect(trigger).toContain('id: "sync-slack-project-channel"');
+    expect(trigger).toContain('queue: { name: "slack-project-channel-sync", concurrencyLimit: 2 }');
+    expect(trigger).toContain("defer_post_processing: true");
+    expect(trigger).toContain('slack_sync_status: "completed"');
+    expect(sync).toContain("shouldQueueTriggerDevTasks()");
+    expect(sync).toContain('triggerDevTask("sync-slack-project-channel"');
+    expect(sync).toContain("authenticateInternalWorker(req)");
+    expect(sync).toContain("(!serviceRole || body.enqueue === true)");
+    expect(panel).toContain("running safely in the background via Trigger.dev");
     expect(migration).toContain("project_slack_links_sync_mode_check");
     expect(migration).toContain("'bounded_history'");
   });

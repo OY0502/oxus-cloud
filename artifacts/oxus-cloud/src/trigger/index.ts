@@ -163,10 +163,133 @@ export const processProjectSignalsTask = task({
 
 export const syncSlackProjectChannelTask = task({
   id: "sync-slack-project-channel",
-  run: async (payload: { project_id: string; user_id: string }) => {
-    return workerPost("slack-sync-project-channel", {
-      project_id: payload.project_id,
+  queue: { name: "slack-project-channel-sync", concurrencyLimit: 2 },
+  maxDuration: 600,
+  run: async (payload: {
+    project_id: string;
+    project_slack_link_id?: string;
+    limit?: number;
+    reprocess?: boolean;
+    force?: boolean;
+    user_id: string;
+  }) => {
+    const admin = getServiceClient();
+    const loadLinks = async () => {
+      let query = admin.from("project_slack_links").select("id, metadata")
+        .eq("project_id", payload.project_id).eq("status", "active");
+      if (payload.project_slack_link_id) query = query.eq("id", payload.project_slack_link_id);
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      return data ?? [];
+    };
+    const updateState = async (patch: Record<string, unknown>, lastError?: string | null) => {
+      for (const link of await loadLinks()) {
+        const metadata = link.metadata && typeof link.metadata === "object" && !Array.isArray(link.metadata)
+          ? link.metadata as Record<string, unknown>
+          : {};
+        const update: Record<string, unknown> = { metadata: { ...metadata, ...patch } };
+        if (lastError !== undefined) update.last_error = lastError;
+        const { error } = await admin.from("project_slack_links").update(update).eq("id", link.id);
+        if (error) throw new Error(error.message);
+      }
+    };
+    const summarize = (result: Record<string, unknown>) => ({
+      imported_count: Number(result.imported_count ?? 0),
+      thread_replies_imported_count: Number(result.thread_replies_imported_count ?? 0),
+      skipped_count: Number(result.skipped_count ?? 0),
+      events_upserted_count: Number(result.events_upserted_count ?? 0),
+      signals_upserted_count: Number(result.signals_upserted_count ?? 0),
+      meaningful_signals_count: Number(result.meaningful_signals_count ?? 0),
+      signal_threads_upserted_count: Number(result.signal_threads_upserted_count ?? 0),
+      jobs_queued_count: Number(result.jobs_queued_count ?? 0),
+      knowledge_sources_created_count: Number(result.knowledge_sources_created_count ?? 0),
+      knowledge_sources_updated_count: Number(result.knowledge_sources_updated_count ?? 0),
+      knowledge_sources_unchanged_count: Number(result.knowledge_sources_unchanged_count ?? 0),
+      warnings: Array.isArray(result.warnings) ? result.warnings.slice(0, 20) : [],
     });
+    const totalLimit = Math.min(Math.max(payload.limit ?? 100, 15), 500);
+    const batchLimit = Math.min(totalLimit, 50);
+    const initialLinks = await loadLinks();
+    const initialMetadata = initialLinks[0]?.metadata && typeof initialLinks[0].metadata === "object"
+      && !Array.isArray(initialLinks[0].metadata)
+      ? initialLinks[0].metadata as Record<string, unknown>
+      : {};
+    const partial = initialMetadata.slack_sync_partial_result
+      && typeof initialMetadata.slack_sync_partial_result === "object"
+      && !Array.isArray(initialMetadata.slack_sync_partial_result)
+      ? initialMetadata.slack_sync_partial_result as Record<string, unknown>
+      : {};
+    const aggregate: Record<string, unknown> = {
+      imported_count: Number(partial.imported_count ?? 0),
+      thread_replies_imported_count: Number(partial.thread_replies_imported_count ?? 0),
+      skipped_count: Number(partial.skipped_count ?? 0),
+      events_upserted_count: Number(partial.events_upserted_count ?? 0),
+      signals_upserted_count: Number(partial.signals_upserted_count ?? 0),
+      meaningful_signals_count: Number(partial.meaningful_signals_count ?? 0),
+      signal_threads_upserted_count: Number(partial.signal_threads_upserted_count ?? 0),
+      jobs_queued_count: Number(partial.jobs_queued_count ?? 0),
+      knowledge_sources_created_count: Number(partial.knowledge_sources_created_count ?? 0),
+      knowledge_sources_updated_count: Number(partial.knowledge_sources_updated_count ?? 0),
+      knowledge_sources_unchanged_count: Number(partial.knowledge_sources_unchanged_count ?? 0),
+      warnings: Array.isArray(partial.warnings) ? [...partial.warnings] : [] as unknown[],
+    };
+    const addResult = (result: Record<string, unknown>) => {
+      for (const key of [
+        "imported_count", "thread_replies_imported_count", "skipped_count", "events_upserted_count",
+        "signals_upserted_count", "meaningful_signals_count", "signal_threads_upserted_count",
+        "jobs_queued_count", "knowledge_sources_created_count", "knowledge_sources_updated_count",
+        "knowledge_sources_unchanged_count",
+      ]) aggregate[key] = Number(aggregate[key] ?? 0) + Number(result[key] ?? 0);
+      (aggregate.warnings as unknown[]).push(...(Array.isArray(result.warnings) ? result.warnings : []));
+    };
+
+    await updateState({
+      slack_sync_status: "running",
+      slack_sync_started_at: new Date().toISOString(),
+      slack_sync_error: null,
+    }, null);
+    try {
+      if (payload.reprocess) {
+        addResult(await workerPost("slack-sync-project-channel", { ...payload, reprocess: true }));
+      } else {
+        let processed = Math.min(Math.max(Number(initialMetadata.slack_sync_processed ?? 0), 0), totalLimit);
+        let hasMore = true;
+        while (processed < totalLimit && hasMore) {
+          const currentLimit = Math.min(batchLimit, totalLimit - processed);
+          const result = await workerPost("slack-sync-project-channel", {
+            ...payload,
+            limit: currentLimit,
+            defer_post_processing: true,
+          });
+          addResult(result);
+          processed += currentLimit;
+          hasMore = result.history_has_more === true;
+          await updateState({
+            slack_sync_processed: processed,
+            slack_sync_partial_result: summarize(aggregate),
+          });
+        }
+        addResult(await workerPost("slack-sync-project-channel", { ...payload, reprocess: true }));
+      }
+      const result = summarize(aggregate);
+      await updateState({
+        slack_sync_status: "completed",
+        slack_sync_completed_at: new Date().toISOString(),
+        slack_sync_failed_at: null,
+        slack_sync_error: null,
+        slack_sync_result: result,
+        slack_sync_partial_result: null,
+      }, null);
+      return result;
+    } catch (error) {
+      const message = errorMessage(error);
+      await updateState({
+        slack_sync_status: "failed",
+        slack_sync_failed_at: new Date().toISOString(),
+        slack_sync_error: message.slice(0, 1000),
+      }, message.slice(0, 1000));
+      throw error;
+    }
   },
 });
 

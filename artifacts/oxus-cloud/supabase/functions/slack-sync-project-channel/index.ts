@@ -22,6 +22,12 @@ import {
 import type { ProjectSlackLinkRow } from "../_shared/slack-auth.ts";
 import { buildSlackThreadKey, type SignalPipelineStats } from "../_shared/projectSignalPipeline.ts";
 import { syncSlackThreadKnowledge } from "../_shared/slackKnowledgeMemory.ts";
+import { authenticateInternalWorker } from "../_shared/internalWorkerAuth.ts";
+import {
+  getTriggerKeyEnvironment,
+  shouldQueueTriggerDevTasks,
+  triggerDevTask,
+} from "../_shared/agent/triggerDev.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,6 +44,33 @@ function json(body: unknown, status = 200) {
 
 function err(message: string, status: number, code: string, details?: string) {
   return json({ error: message, details, code }, status);
+}
+
+function object(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+async function updateQueuedSyncMetadata(
+  admin: ReturnType<typeof getServiceRoleSupabase>,
+  links: ProjectSlackLinkRow[],
+  patch: Record<string, unknown>,
+) {
+  for (const link of links) {
+    const { data: current, error: loadError } = await admin
+      .from("project_slack_links")
+      .select("metadata")
+      .eq("id", link.id)
+      .maybeSingle();
+    if (loadError) throw new Error(loadError.message);
+    const metadata = object(current?.metadata ?? link.metadata);
+    const { error } = await admin
+      .from("project_slack_links")
+      .update({ metadata: { ...metadata, ...patch } })
+      .eq("id", link.id);
+    if (error) throw new Error(error.message);
+  }
 }
 
 function emptyPipeline(): SignalPipelineStats {
@@ -97,6 +130,7 @@ async function syncLink(args: {
   link: ProjectSlackLinkRow & { slack_channel_id: string; slack_team_id: string; channel_name?: string | null };
   token: string;
   limit: number;
+  deferPostProcessing?: boolean;
 }) {
   let imported = 0;
   let threadReplies = 0;
@@ -277,12 +311,14 @@ async function syncLink(args: {
     warnings.push("Slack messages imported but none were classified as meaningful signals during import.");
   }
 
-  const reprocess = await reprocessSlackEventsForProject({
-    admin: args.admin,
-    projectId: args.link.project_id,
-    projectSlackLinkId: args.link.id,
-  });
-  if (savedCursor && importedThreadKeys.size > 0) {
+  const reprocess = args.deferPostProcessing
+    ? null
+    : await reprocessSlackEventsForProject({
+      admin: args.admin,
+      projectId: args.link.project_id,
+      projectSlackLinkId: args.link.id,
+    });
+  if (reprocess && savedCursor && importedThreadKeys.size > 0) {
     try {
       const historicalKnowledge = await syncSlackThreadKnowledge({
         admin: args.admin,
@@ -304,17 +340,19 @@ async function syncLink(args: {
       warnings.push(`Older Slack memory extraction needs a retry: ${(error as Error).message}`);
     }
   }
-  mergeReprocessIntoAggregate(
-    {
-      signals_upserted_count: pipeline.signals_upserted_count,
-      meaningful_signals_count: pipeline.meaningful_signals_count,
-      signal_threads_upserted_count: pipeline.signal_threads_upserted_count,
-      jobs_queued_count: pipeline.jobs_queued_count,
-      warnings,
-      latest_messages_preview: previews,
-    },
-    reprocess,
-  );
+  if (reprocess) {
+    mergeReprocessIntoAggregate(
+      {
+        signals_upserted_count: pipeline.signals_upserted_count,
+        meaningful_signals_count: pipeline.meaningful_signals_count,
+        signal_threads_upserted_count: pipeline.signal_threads_upserted_count,
+        jobs_queued_count: pipeline.jobs_queued_count,
+        warnings,
+        latest_messages_preview: previews,
+      },
+      reprocess,
+    );
+  }
 
   await args.admin
     .from("project_slack_links")
@@ -338,16 +376,18 @@ async function syncLink(args: {
     thread_replies_imported_count: threadReplies,
     skipped_count: skipped,
     events_upserted_count: eventsUpserted,
-    signals_upserted_count: Math.max(pipeline.signals_upserted_count, reprocess.signals_upserted),
-    meaningful_signals_count: Math.max(pipeline.meaningful_signals_count, reprocess.meaningful_signals),
-    signal_threads_upserted_count: Math.max(pipeline.signal_threads_upserted_count, reprocess.threads_upserted),
-    jobs_queued_count: Math.max(pipeline.jobs_queued_count, reprocess.jobs_queued),
+    signals_upserted_count: Math.max(pipeline.signals_upserted_count, reprocess?.signals_upserted ?? 0),
+    meaningful_signals_count: Math.max(pipeline.meaningful_signals_count, reprocess?.meaningful_signals ?? 0),
+    signal_threads_upserted_count: Math.max(pipeline.signal_threads_upserted_count, reprocess?.threads_upserted ?? 0),
+    jobs_queued_count: Math.max(pipeline.jobs_queued_count, reprocess?.jobs_queued ?? 0),
     latest_messages_preview: previews.slice(-10),
     warnings,
     reprocess,
-    knowledge_sources_created_count: reprocess.knowledge.sources_created,
-    knowledge_sources_updated_count: reprocess.knowledge.sources_updated,
-    knowledge_sources_unchanged_count: reprocess.knowledge.sources_unchanged,
+    knowledge_sources_created_count: reprocess?.knowledge.sources_created ?? 0,
+    knowledge_sources_updated_count: reprocess?.knowledge.sources_updated ?? 0,
+    knowledge_sources_unchanged_count: reprocess?.knowledge.sources_unchanged ?? 0,
+    history_has_more: backfillHasMore,
+    history_backfill_complete: !boundedBackfill || !backfillHasMore,
   };
 }
 
@@ -356,20 +396,15 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return err("Method not allowed.", 405, "INVALID_INPUT");
 
   try {
-    let auth;
-    try {
-      auth = await assertInternalOxusUser(req);
-    } catch (e) {
-      if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
-      throw e;
-    }
-
     let body: {
       project_id?: string;
       project_slack_link_id?: string;
       limit?: number;
       reprocess?: boolean;
       force?: boolean;
+      user_id?: string;
+      defer_post_processing?: boolean;
+      enqueue?: boolean;
     } = {};
     try {
       body = await req.json();
@@ -380,6 +415,21 @@ Deno.serve(async (req) => {
     const projectId = body.project_id?.trim();
     if (!projectId) return err("project_id is required.", 400, "INVALID_INPUT");
     const limit = Math.min(Math.max(body.limit ?? 100, 15), 500);
+
+    const workerAuth = await authenticateInternalWorker(req);
+    const serviceRole = workerAuth.ok;
+    let userId = body.user_id?.trim();
+    if (!serviceRole) {
+      try {
+        const auth = await assertInternalOxusUser(req);
+        userId = auth.userId;
+      } catch (e) {
+        if (e instanceof InternalOxusAuthError) return internalOxusAuthErrorResponse(e, corsHeaders);
+        throw e;
+      }
+    } else if (!userId) {
+      return err("user_id is required for internal sync workers.", 400, "INVALID_INPUT");
+    }
 
     const admin = getServiceRoleSupabase();
 
@@ -423,6 +473,57 @@ Deno.serve(async (req) => {
     if (linksError) return err("Failed to load Slack links.", 500, "DB_ERROR", linksError.message);
     if (!links || links.length === 0) {
       return err("No active Slack channel links found for this project.", 404, "NOT_FOUND");
+    }
+
+    if (shouldQueueTriggerDevTasks() && (!serviceRole || body.enqueue === true)) {
+      const attempts = (links as ProjectSlackLinkRow[]).map((link) =>
+        Number(object(link.metadata).slack_sync_attempt ?? 0)
+      );
+      const attempt = Math.max(0, ...attempts) + 1;
+      const queuedPatch = {
+        slack_sync_status: "queued",
+        slack_sync_attempt: attempt,
+        slack_sync_queued_at: new Date().toISOString(),
+        slack_sync_started_at: null,
+        slack_sync_completed_at: null,
+        slack_sync_failed_at: null,
+        slack_sync_error: null,
+        slack_sync_result: null,
+        slack_sync_processed: 0,
+        slack_sync_partial_result: null,
+      };
+      await updateQueuedSyncMetadata(admin, links as ProjectSlackLinkRow[], queuedPatch);
+      try {
+        const triggered = await triggerDevTask("sync-slack-project-channel", {
+          project_id: projectId,
+          project_slack_link_id: body.project_slack_link_id?.trim(),
+          limit,
+          reprocess: body.reprocess === true,
+          force: body.force === true,
+          user_id: userId,
+        }, {
+          idempotencyKey: `slack-sync:${projectId}:${body.project_slack_link_id?.trim() ?? "all"}:${attempt}`,
+        });
+        await updateQueuedSyncMetadata(admin, links as ProjectSlackLinkRow[], {
+          slack_sync_trigger_run_id: triggered.id,
+        });
+        return json({
+          async: true,
+          status: "queued",
+          trigger_run_id: triggered.id,
+          trigger_environment: getTriggerKeyEnvironment(),
+          message: "Slack import queued via Trigger.dev.",
+        }, 202);
+      } catch (triggerError) {
+        const message = (triggerError as Error).message;
+        await updateQueuedSyncMetadata(admin, links as ProjectSlackLinkRow[], {
+          ...queuedPatch,
+          slack_sync_status: "failed",
+          slack_sync_failed_at: new Date().toISOString(),
+          slack_sync_error: message.slice(0, 1000),
+        });
+        return err("Slack import could not be queued.", 503, "TRIGGER_QUEUE_ERROR", message);
+      }
     }
 
     if (body.reprocess) {
@@ -477,6 +578,8 @@ Deno.serve(async (req) => {
       knowledge_sources_created_count: 0,
       knowledge_sources_updated_count: 0,
       knowledge_sources_unchanged_count: 0,
+      history_has_more: false,
+      history_backfill_complete: true,
     };
 
     for (const link of links as ProjectSlackLinkRow[]) {
@@ -487,6 +590,7 @@ Deno.serve(async (req) => {
           link: link as ProjectSlackLinkRow & { slack_channel_id: string; slack_team_id: string },
           token,
           limit,
+          deferPostProcessing: body.defer_post_processing === true,
         });
         aggregate.imported_count += result.imported_count;
         aggregate.thread_replies_imported_count += result.thread_replies_imported_count;
@@ -501,6 +605,8 @@ Deno.serve(async (req) => {
         aggregate.knowledge_sources_created_count += result.knowledge_sources_created_count;
         aggregate.knowledge_sources_updated_count += result.knowledge_sources_updated_count;
         aggregate.knowledge_sources_unchanged_count += result.knowledge_sources_unchanged_count;
+        aggregate.history_has_more = aggregate.history_has_more || result.history_has_more;
+        aggregate.history_backfill_complete = aggregate.history_backfill_complete && result.history_backfill_complete;
       } catch (e) {
         await admin
           .from("project_slack_links")

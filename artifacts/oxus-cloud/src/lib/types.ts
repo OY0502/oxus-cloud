@@ -339,6 +339,14 @@ export type SlackSyncProjectChannelResult = {
   knowledge_sources_unchanged_count?: number;
 };
 
+export type SlackSyncProjectChannelStart = {
+  async: true;
+  status: "queued";
+  trigger_run_id: string;
+  trigger_environment?: string;
+  message: string;
+};
+
 export type ProcessAiJobsResult = {
   processed_count: number;
   failed_count: number;

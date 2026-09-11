@@ -80,6 +80,24 @@ function historyBackfillPending(link: ProjectSlackLink) {
   return link.sync_mode === "bounded_history" && metadata.history_backfill_complete !== true;
 }
 
+function slackSyncMetadata(link: ProjectSlackLink): Record<string, unknown> {
+  return link.metadata && typeof link.metadata === "object" && !Array.isArray(link.metadata)
+    ? link.metadata as Record<string, unknown>
+    : {};
+}
+
+function slackSyncPending(link: ProjectSlackLink) {
+  const status = slackSyncMetadata(link).slack_sync_status;
+  return status === "queued" || status === "running";
+}
+
+function persistedSlackSyncResult(link: ProjectSlackLink): SlackSyncProjectChannelResult | null {
+  const result = slackSyncMetadata(link).slack_sync_result;
+  return result && typeof result === "object" && !Array.isArray(result)
+    ? result as SlackSyncProjectChannelResult
+    : null;
+}
+
 function SlackLinkDiagnostics({
   projectId,
   link,
@@ -294,6 +312,7 @@ function LinkCard({
   reprocessResult?: ReprocessSlackEventsResult | null;
   reprocessBusy?: boolean;
 }) {
+  const backgroundStatus = slackSyncMetadata(link).slack_sync_status;
   return (
     <div className="rounded-lg border border-border/70 bg-card p-3 space-y-2">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -325,7 +344,9 @@ function LinkCard({
         </div>
         <div className="text-[11px] text-muted-foreground text-right space-y-0.5">
           <p>Linked {formatDistanceToNow(new Date(link.created_at), { addSuffix: true })}</p>
-          <p>Sync: {link.last_error ? "error" : link.last_synced_at ? "ok" : "not synced"}</p>
+          <p>Sync: {backgroundStatus === "queued" || backgroundStatus === "running"
+            ? String(backgroundStatus)
+            : link.last_error ? "error" : link.last_synced_at ? "ok" : "not synced"}</p>
           {link.last_processed_ts && (
             <p>Last processed {link.last_processed_ts}</p>
           )}
@@ -339,7 +360,7 @@ function LinkCard({
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" className="h-7 text-xs gap-1" disabled={busy} onClick={onSync}>
           <RefreshCw className={`h-3 w-3 ${busy ? "animate-spin" : ""}`} />
-          {historyBackfillPending(link) ? "Continue import" : "Sync latest"}
+          {slackSyncPending(link) ? "Importing…" : historyBackfillPending(link) ? "Continue import" : "Sync latest"}
         </Button>
         <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={busy} onClick={onDisable}>
           Unlink
@@ -376,7 +397,6 @@ export function ProjectSlackPanel({ projectId }: { projectId: string }) {
   const [includeInClientUpdates, setIncludeInClientUpdates] = useState(false);
   const [historyDays, setHistoryDays] = useState(90);
   const [channels, setChannels] = useState<SlackChannelOption[]>([]);
-  const [syncResults, setSyncResults] = useState<Record<string, SlackSyncProjectChannelResult>>({});
   const [reprocessResults, setReprocessResults] = useState<Record<string, ReprocessSlackEventsResult>>({});
 
   const activeLinks = links.filter((l) => l.status === "active");
@@ -458,16 +478,14 @@ export function ProjectSlackPanel({ projectId }: { projectId: string }) {
     setLinkOpen(false);
     resetLinkForm();
     try {
-      const result = await syncChannel.mutateAsync({
+      await syncChannel.mutateAsync({
         project_id: projectId,
         project_slack_link_id: linked.id,
         limit: historyDays > 0 ? 500 : 100,
       });
-      setSyncResults((prev) => ({ ...prev, [linked.id]: result }));
-      const memories = (result.knowledge_sources_created_count ?? 0) + (result.knowledge_sources_updated_count ?? 0);
       toast({
         title: "Slack channel connected",
-        description: `${result.imported_count} message(s) imported and ${memories} conversation memory piece(s) prepared.`,
+        description: "History import is running safely in the background via Trigger.dev.",
       });
     } catch (e) {
       toast({
@@ -480,14 +498,13 @@ export function ProjectSlackPanel({ projectId }: { projectId: string }) {
 
   const syncLink = async (link: ProjectSlackLink) => {
     try {
-      const result = await syncChannel.mutateAsync({
+      await syncChannel.mutateAsync({
         project_id: projectId,
         project_slack_link_id: link.id,
       });
-      setSyncResults((prev) => ({ ...prev, [link.id]: result }));
       toast({
-        title: "Slack sync complete",
-        description: `${result.imported_count} message(s), ${result.thread_replies_imported_count} thread reply(ies), ${result.meaningful_signals_count} meaningful signal(s).`,
+        title: "Slack sync queued",
+        description: "Import is continuing in the background. This page will update automatically.",
       });
     } catch (e) {
       toast({ title: "Slack sync failed", description: (e as Error).message, variant: "destructive" });
@@ -569,11 +586,11 @@ export function ProjectSlackPanel({ projectId }: { projectId: string }) {
                         key={link.id}
                         link={link}
                         projectId={projectId}
-                        busy={busy}
+                        busy={busy || slackSyncPending(link)}
                         onSync={() => syncLink(link)}
                         onDisable={() => disableLink(link)}
                         onReprocess={() => reprocessLink(link)}
-                        syncResult={syncResults[link.id]}
+                        syncResult={persistedSlackSyncResult(link)}
                         reprocessResult={reprocessResults[link.id]}
                         reprocessBusy={reprocessSlackEvents.isPending}
                       />
