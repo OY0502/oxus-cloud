@@ -147,19 +147,40 @@ export const projectAgentRunTask = task({
 
 export const processProjectSignalsTask = task({
   id: "process-project-signals",
+  queue: { name: "project-signal-processing", concurrencyLimit: 1 },
+  maxDuration: 1800,
   run: async (payload: {
     project_id: string;
     user_id?: string;
     limit?: number;
     ensure_pending?: boolean;
   }) => {
-    return workerPost("process-ai-jobs", {
-      project_id: payload.project_id,
-      user_id: payload.user_id,
-      limit: payload.limit,
-      ensure_pending: payload.ensure_pending ?? true,
-      async: false,
-    });
+    const maxJobs = Math.min(Math.max(payload.limit ?? 5, 1), 20);
+    const batches: Array<Record<string, unknown>> = [];
+    for (let index = 0; index < maxJobs; index++) {
+      const result = await workerPost("process-ai-jobs", {
+        project_id: payload.project_id,
+        user_id: payload.user_id,
+        limit: 1,
+        ensure_pending: index === 0 ? payload.ensure_pending ?? true : false,
+        async: false,
+      });
+      const processed = Number(result.processed_count ?? 0);
+      const failed = Number(result.failed_count ?? 0);
+      batches.push({
+        processed_count: processed,
+        failed_count: failed,
+        actions_created_count: Number(result.actions_created_count ?? 0),
+        actions_updated_count: Number(result.actions_updated_count ?? 0),
+        signals_checked: Number(result.signals_checked ?? 0),
+      });
+      if (processed + failed === 0) break;
+    }
+    return {
+      processed_count: batches.reduce((sum, batch) => sum + Number(batch.processed_count ?? 0), 0),
+      failed_count: batches.reduce((sum, batch) => sum + Number(batch.failed_count ?? 0), 0),
+      batches,
+    };
   },
 });
 

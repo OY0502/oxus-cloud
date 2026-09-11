@@ -54,6 +54,9 @@ describe("Slack project knowledge architecture", () => {
     expect(trigger).toContain('tasks.trigger("process-project-signals"');
     expect(trigger).toContain("slack_sync_analysis_trigger_run_id: analysisRunId");
     expect(trigger).toContain("ensure_pending: false");
+    expect(trigger).toContain('queue: { name: "project-signal-processing", concurrencyLimit: 1 }');
+    expect(trigger).toContain("const maxJobs = Math.min(Math.max(payload.limit ?? 5, 1), 20)");
+    expect(trigger).toContain("limit: 1");
     const processJobs = await fs.readFile(new URL("../../supabase/functions/process-ai-jobs/index.ts", import.meta.url), "utf8");
     expect(processJobs).toContain("authenticateInternalWorker(req)");
     expect(processJobs).toContain("user_id is required for internal job workers");
