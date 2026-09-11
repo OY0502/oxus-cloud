@@ -208,7 +208,7 @@ export const syncSlackProjectChannelTask = task({
       warnings: Array.isArray(result.warnings) ? result.warnings.slice(0, 20) : [],
     });
     const totalLimit = Math.min(Math.max(payload.limit ?? 100, 15), 500);
-    const batchLimit = Math.min(totalLimit, 50);
+    let batchLimit = Math.min(totalLimit, 10);
     const initialLinks = await loadLinks();
     const initialMetadata = initialLinks[0]?.metadata && typeof initialLinks[0].metadata === "object"
       && !Array.isArray(initialLinks[0].metadata)
@@ -256,11 +256,28 @@ export const syncSlackProjectChannelTask = task({
         let hasMore = true;
         while (processed < totalLimit && hasMore) {
           const currentLimit = Math.min(batchLimit, totalLimit - processed);
-          const result = await workerPost("slack-sync-project-channel", {
-            ...payload,
-            limit: currentLimit,
-            defer_post_processing: true,
-          });
+          let result: Record<string, unknown>;
+          try {
+            result = await workerPost("slack-sync-project-channel", {
+              ...payload,
+              limit: currentLimit,
+              defer_post_processing: true,
+            });
+          } catch (error) {
+            const message = errorMessage(error);
+            const edgeRequestTimedOut = /(?:504|IDLE_TIMEOUT|Request idle timeout)/i.test(message);
+            if (edgeRequestTimedOut && currentLimit > 1) {
+              batchLimit = Math.max(1, Math.floor(currentLimit / 2));
+              console.warn("Slack import batch exceeded the Edge request window; retrying a smaller batch", {
+                projectId: payload.project_id,
+                projectSlackLinkId: payload.project_slack_link_id,
+                previousBatchLimit: currentLimit,
+                nextBatchLimit: batchLimit,
+              });
+              continue;
+            }
+            throw error;
+          }
           addResult(result);
           processed += currentLimit;
           hasMore = result.history_has_more === true;

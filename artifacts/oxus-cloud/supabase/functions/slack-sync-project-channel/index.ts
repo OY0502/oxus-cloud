@@ -414,7 +414,10 @@ Deno.serve(async (req) => {
 
     const projectId = body.project_id?.trim();
     if (!projectId) return err("project_id is required.", 400, "INVALID_INPUT");
-    const limit = Math.min(Math.max(body.limit ?? 100, 15), 500);
+    // Trigger.dev deliberately uses small batches so thread-heavy channels stay
+    // below the Edge request idle timeout. Interactive callers still default to
+    // 100, while authenticated workers may request a single-message slice.
+    const limit = Math.min(Math.max(body.limit ?? 100, 1), 500);
 
     const workerAuth = await authenticateInternalWorker(req);
     const serviceRole = workerAuth.ok;
