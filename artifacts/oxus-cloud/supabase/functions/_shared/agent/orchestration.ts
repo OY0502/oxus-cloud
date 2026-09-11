@@ -1085,7 +1085,7 @@ export async function runProjectAgent(args: {
           .from("agent_tool_runs")
           .select("input_payload, status")
           .eq("agent_run_id", clarificationSourceRunId)
-          .eq("tool_name", "create_clickup_task")
+          .in("tool_name", ["create_clickup_task", "add_clickup_comment"])
           .in("status", ["pending", "needs_confirmation"])
           .order("created_at", { ascending: true }),
         args.admin
@@ -1408,45 +1408,110 @@ export async function runProjectAgent(args: {
     const validDate = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
       ? value
       : null;
-    plan.tool_calls = clickupTaskSnapshot.source === "unavailable"
-      ? []
-      : (plan.tool_calls ?? [])
-        .filter((call) => call.tool_name === "create_clickup_task")
-        .filter((call) => {
-          const title = typeof call.input?.title === "string" ? call.input.title : "";
-          if (!title.trim()) return false;
-          return !detectDuplicateTask({
-            request: `${title}\n${String(call.input?.description ?? "")}`,
-            proposedTitle: title,
-            existingTasks: clickupTaskSnapshot.tasks.map((task) => ({
-              id: task.id,
-              title: task.name,
-              status: task.status ?? undefined,
-              source: task.url ?? undefined,
-            })),
-          }).is_duplicate;
-        })
-        .map((call) => {
-          const requestedStart = validDate(call.input?.start_date);
-          const startDate = requestedStart && requestedStart >= today ? requestedStart : today;
-          const requestedDue = validDate(call.input?.due_date_hint ?? call.input?.due_date);
-          const dueDate = requestedDue && requestedDue >= startDate ? requestedDue : null;
-          return {
-            ...call,
-            input: {
-              ...call.input,
-              status: "to do",
-              start_date: startDate,
-              due_date_hint: dueDate,
-            },
-          };
+    const existingTaskRefs = clickupTaskSnapshot.tasks.map((task) => ({
+      id: task.id,
+      title: task.name,
+      status: task.status ?? undefined,
+      source: task.url ?? undefined,
+    }));
+    const normalizeTaskCall = (call: NonNullable<AgentPlan["tool_calls"]>[number]) => {
+      const requestedStart = validDate(call.input?.start_date);
+      const startDate = requestedStart && requestedStart >= today ? requestedStart : today;
+      const requestedDue = validDate(call.input?.due_date_hint ?? call.input?.due_date);
+      const dueDate = requestedDue && requestedDue >= startDate ? requestedDue : null;
+      return {
+        ...call,
+        input: {
+          ...call.input,
+          status: "to do",
+          start_date: startDate,
+          due_date_hint: dueDate,
+        },
+      };
+    };
+    const normalizeCommentCall = (
+      call: NonNullable<AgentPlan["tool_calls"]>[number],
+      taskId: string,
+      fallbackText?: string,
+    ) => {
+      const target = clickupTaskSnapshot.tasks.find((task) => task.id === taskId);
+      const rawComment = String(call.input?.comment_text ?? fallbackText ?? "").trim();
+      if (!target || rawComment.length < 20) return null;
+      const allowClientMentions = explicitlyAllowsMentions(inputText);
+      const commentText = (allowClientMentions ? rawComment : removeMentionSyntax(rawComment)).slice(0, 8000);
+      if (commentText.length < 20) return null;
+      return {
+        ...call,
+        tool_name: "add_clickup_comment" as const,
+        requires_confirmation: true,
+        input: {
+          task_id: target.id,
+          task_name: target.name,
+          task_url: target.url ?? "",
+          comment_text: commentText,
+          source_links: linkedReferenceResolution.references.map((reference) => reference.url),
+          allow_client_mentions: allowClientMentions,
+          requested_by_user: false,
+        },
+      };
+    };
+    type PlannedToolCall = NonNullable<AgentPlan["tool_calls"]>[number];
+    const normalizedCalls: PlannedToolCall[] = [];
+    if (clickupTaskSnapshot.source !== "unavailable") {
+      for (const call of plan.tool_calls ?? []) {
+        if (call.tool_name === "add_clickup_comment") {
+          const normalized = normalizeCommentCall(call, String(call.input?.task_id ?? ""));
+          if (normalized) normalizedCalls.push(normalized);
+          continue;
+        }
+        if (call.tool_name !== "create_clickup_task") continue;
+        const title = typeof call.input?.title === "string" ? call.input.title.trim() : "";
+        if (!title) continue;
+        const duplicate = detectDuplicateTask({
+          request: `${title}\n${String(call.input?.description ?? "")}`,
+          proposedTitle: title,
+          existingTasks: existingTaskRefs,
         });
+        if (!duplicate.is_duplicate || !duplicate.duplicate_candidate_id) {
+          normalizedCalls.push(normalizeTaskCall(call));
+          continue;
+        }
+        const sourceContext = call.input?.source_context as Record<string, unknown> | undefined;
+        const evidence = String(sourceContext?.evidence ?? sourceContext?.meeting_action ?? "").trim();
+        const fallbackComment = evidence
+          ? `Update from the latest client/project context:\n\n${evidence}`
+          : String(call.input?.description ?? "").trim();
+        const normalized = normalizeCommentCall(call, duplicate.duplicate_candidate_id, fallbackComment);
+        if (normalized) normalizedCalls.push(normalized);
+      }
+    }
+    const mergedCalls: PlannedToolCall[] = [];
+    for (const call of normalizedCalls) {
+      if (call.tool_name !== "add_clickup_comment") {
+        mergedCalls.push(call);
+        continue;
+      }
+      const taskId = String(call.input?.task_id ?? "");
+      const existingComment = mergedCalls.find((candidate) =>
+        candidate.tool_name === "add_clickup_comment" && String(candidate.input?.task_id ?? "") === taskId
+      );
+      if (!existingComment) {
+        mergedCalls.push(call);
+        continue;
+      }
+      const currentText = String(existingComment.input?.comment_text ?? "");
+      const nextText = String(call.input?.comment_text ?? "");
+      if (nextText && !currentText.includes(nextText)) {
+        existingComment.input = { ...existingComment.input, comment_text: `${currentText}\n\n${nextText}`.slice(0, 8000) };
+      }
+    }
+    plan.tool_calls = mergedCalls;
     if (clarificationSourceRunId) {
       await args.admin
         .from("agent_tool_runs")
         .update({ status: "cancelled", completed_at: new Date().toISOString() })
         .eq("agent_run_id", clarificationSourceRunId)
-        .eq("tool_name", "create_clickup_task")
+        .in("tool_name", ["create_clickup_task", "add_clickup_comment"])
         .in("status", ["pending", "needs_confirmation"]);
     }
   }
@@ -1987,7 +2052,11 @@ export async function executeConfirmedToolRun(args: {
   // Mention permission is attached server-side from the original request and
   // cannot be elevated by an edited confirmation payload.
   if (toolRun.tool_name === "add_clickup_comment") {
-    payload.allow_client_mentions = (toolRun.input_payload as Record<string, unknown>).allow_client_mentions === true;
+    const originalPayload = toolRun.input_payload as Record<string, unknown>;
+    payload.task_id = originalPayload.task_id;
+    payload.task_name = originalPayload.task_name;
+    payload.task_url = originalPayload.task_url;
+    payload.allow_client_mentions = originalPayload.allow_client_mentions === true;
   }
 
   if (toolRun.tool_name === "create_clickup_doc") {

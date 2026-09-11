@@ -70,7 +70,9 @@ export function AgentToolConfirmationList({
   const failedCount = visible.filter((r) => r.status === "failed").length;
   const runningCount = visible.filter((r) => r.status === "running" && !isStaleAgentToolRun(r)).length;
   const allSucceeded = visible.every((r) => r.status === "succeeded");
-  const taskProposalCount = visible.filter((r) => r.tool_name === "create_clickup_task").length;
+  const clickupProposalCount = visible.filter((r) =>
+    r.tool_name === "create_clickup_task" || r.tool_name === "add_clickup_comment"
+  ).length;
 
   return (
     <div className={presentation === "chat" ? "space-y-2.5" : "space-y-3"}>
@@ -81,8 +83,8 @@ export function AgentToolConfirmationList({
             ? "Confirmations & retries"
             : allSucceeded
               ? "Completed actions"
-              : taskProposalCount === visible.length
-                ? `${taskProposalCount} proposed task${taskProposalCount === 1 ? "" : "s"}`
+              : clickupProposalCount === visible.length
+                ? `${clickupProposalCount} proposed ClickUp action${clickupProposalCount === 1 ? "" : "s"}`
                 : "Pending confirmations"}
       </p>
 
@@ -336,7 +338,7 @@ function AgentToolConfirmationCard({
       <div className="flex items-center justify-between gap-2">
         <p className="text-sm font-medium text-foreground">
           {stepIndex != null && <span className="text-muted-foreground mr-1.5">Step {stepIndex}.</span>}
-          {toolDisplayName(toolRun.tool_name)}
+          {isComment ? "Proposed ClickUp comment" : toolDisplayName(toolRun.tool_name)}
         </p>
         <span className={isSucceeded
           ? "rounded-full bg-success-muted px-2 py-0.5 text-xs font-medium text-success"
@@ -426,7 +428,7 @@ function AgentToolConfirmationCard({
           <div>
             <p className="text-sm font-semibold leading-5 text-foreground">
               {isComment
-                ? `Comment on ${payloadField(payload, "task_name") || "ClickUp task"}`
+                ? `Comment to “${payloadField(payload, "task_name") || "ClickUp task"}”`
                 : (isTask ? taskValues.title : title) || "Untitled action"}
             </p>
             {(isComment ? commentText : isTask ? taskValues.description : description) && (

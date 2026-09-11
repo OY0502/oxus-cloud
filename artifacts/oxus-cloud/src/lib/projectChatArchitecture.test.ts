@@ -11,7 +11,8 @@ describe("project chat architecture", () => {
     expect(source).toContain("if ((input.chat && !isTaskReview) || mode === \"answer_only\")");
     expect(source).toContain("plan.memory_updates = {}");
     expect(source).toContain("if (isTaskReview)");
-    expect(source).toContain('call.tool_name === "create_clickup_task"');
+    expect(source).toContain('call.tool_name !== "create_clickup_task"');
+    expect(source).toContain('call.tool_name === "add_clickup_comment"');
     expect(source).toContain("!input.chat || isClarificationResponse");
   });
 
@@ -210,6 +211,28 @@ describe("project chat architecture", () => {
     expect(chat).toContain(">Clarifications<");
     expect(chat).toContain('chat_action: respondingToClarification ? "clarification_response"');
     expect(chat).toContain("clarification_source_agent_run_id");
+  });
+
+  it("routes updates for existing ClickUp tasks into confirmation-gated comment proposals", async () => {
+    const fs = await import("node:fs/promises");
+    const [model, orchestration, confirmation] = await Promise.all([
+      fs.readFile(new URL("../../supabase/functions/_shared/agent/aiModel.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/functions/_shared/agent/orchestration.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../components/ai/AgentToolConfirmation.tsx", import.meta.url), "utf8"),
+    ]);
+
+    expect(model).toContain("FILE_REVIEW_COMMENT_TOOL_JSON_SCHEMA");
+    expect(model).toContain("emit an add_clickup_comment call for that exact task instead of create_clickup_task");
+    expect(model).toContain("Do not emit both a new task and a comment for the same action item");
+    expect(orchestration).toContain("normalizeCommentCall");
+    expect(orchestration).toContain("task.id === taskId");
+    expect(orchestration).toContain("removeMentionSyntax(rawComment)");
+    expect(orchestration).toContain("duplicate.duplicate_candidate_id");
+    expect(orchestration).toContain("mergedCalls");
+    expect(orchestration).toContain("payload.task_id = originalPayload.task_id");
+    expect(confirmation).toContain("proposed ClickUp action");
+    expect(confirmation).toContain("Proposed ClickUp comment");
+    expect(confirmation).toContain("Comment to “");
   });
 
   it("uses a single desktop workspace viewport without nested sticky panels", async () => {

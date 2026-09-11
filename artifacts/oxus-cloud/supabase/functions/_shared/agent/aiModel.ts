@@ -667,6 +667,16 @@ const FILE_REVIEW_SCHEMA = `Return strict JSON:
       "destination": { "type": "list", "id": "string", "name": "string", "path": "string", "reason": "string" },
       "source_context": { "meeting_action": "string", "evidence": "string" }
     }
+  } OR {
+    "tool_name": "add_clickup_comment",
+    "requires_confirmation": true,
+    "input": {
+      "task_id": "exact ID from Current ClickUp task snapshot",
+      "task_name": "exact existing task name",
+      "task_url": "existing task URL|null",
+      "comment_text": "concise, useful update grounded in the new evidence",
+      "source_links": ["string"]
+    }
   }],
   "workflows": [],
   "summary": "string",
@@ -680,14 +690,17 @@ Rules:
 - When a work item is already finished, in demo, or in client review, put it in completed_or_demo and do not also list it as future work unless the meeting explicitly requests a new follow-up.
 - Use a date encoded in the recording filename when present. Treat a weekly pattern or an explicit statement about weekly meetings as cadence_signal=weekly.
 - Compare every concrete action item against the Current ClickUp task snapshot. Match by meaning, not exact wording.
-- In answer, use only the relevant short sections from: Decisions, Already covered in ClickUp, Suggested new tasks. Omit empty sections.
+- Classify each actionable item as either new work or an update to existing work. If an equivalent ClickUp task already exists and the new evidence adds status, progress, client feedback, a decision, clarification, blocker, changed requirement, or acceptance information, emit an add_clickup_comment call for that exact task instead of create_clickup_task.
+- The proposed comment must state only the useful new update, preserve relevant source context, and be ready for PM review. Never post automatically. Do not tag, @mention, ping, or directly call out a client unless the current user message explicitly asks for it.
+- In answer, use only the relevant short sections from: Decisions, Existing tasks with proposed updates, Suggested new tasks. Omit empty sections.
 - Format answer as readable Markdown with section headings and short bullet lists. Never return a dense wall of prose.
 - Never include a Questions or Questions to clarify section, clarification question objects, or their reasons in answer. clarification_questions are rendered separately as interactive controls.
 - Ask up to 3 specific, answerable clarification questions that materially improve ownership, scope, due date, acceptance criteria, or whether work is still required. Never ask generic questions such as "Anything else?".
 - For every actionable unit of missing work with no semantically equivalent ClickUp task, emit one create_clickup_task tool call. Do not target three, five, or any other fixed count: return exactly as many tasks as the evidence and project context require, splitting only when work has a distinct outcome, owner, or delivery path. It will only become a pending confirmation card; do not claim it was created.
 - Do not emit a task for a vague discussion, completed work, a low-priority idea explicitly deferred, or an item that needs clarification first.
 - Never duplicate an existing open, in-progress, or completed ClickUp task unless the meeting clearly defines distinct new follow-up work.
-- If the task snapshot source is unavailable, state that ClickUp could not be verified and emit no create_clickup_task calls.
+- Do not emit both a new task and a comment for the same action item. Do not propose a comment when the new input adds no meaningful information to the existing task.
+- If the task snapshot source is unavailable, state that ClickUp could not be verified and emit no create_clickup_task or add_clickup_comment calls.
 - Use the existing ClickUp hierarchy to choose the best destination list. Never create or reorganize folders/lists.
 - Use all useful supplied context, including the screenshot/transcript, recent conversation, project memory, live ClickUp, Slack, and clarification evidence. The current upload is important but must not erase relevant established context.
 - Every task description must be implementation-ready Markdown, not a restatement of the title. Include: objective/outcome; relevant client and project context; scope and implementation notes; dependencies or constraints when known; and concrete, testable acceptance criteria. Preserve important names, UI behavior, edge cases, and rationale from the evidence. Do not leave description empty or generic.
@@ -749,6 +762,80 @@ const MEETING_MEMORY_JSON_SCHEMA: Record<string, unknown> = {
   ],
 };
 
+const FILE_REVIEW_TASK_TOOL_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    tool_name: { type: "string", enum: ["create_clickup_task"] },
+    requires_confirmation: { type: "boolean", enum: [true] },
+    input: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        title: { type: "string" },
+        description: { type: "string", minLength: 120, description: "Implementation-ready Markdown with objective, context, scope, constraints, and testable acceptance criteria." },
+        priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
+        status: { type: "string", enum: ["to do"] },
+        start_date: { type: ["string", "null"] },
+        due_date_hint: { type: ["string", "null"] },
+        assignee_hint: { type: ["string", "null"] },
+        time_estimate_minutes: { type: ["number", "null"], minimum: 1 },
+        implementation_notes: { type: "array", maxItems: 12, items: { type: "string" } },
+        acceptance_criteria: { type: "array", minItems: 1, maxItems: 12, items: { type: "string" } },
+        destination: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            type: { type: "string", enum: ["list"] },
+            id: { type: "string" },
+            name: { type: "string" },
+            path: { type: "string" },
+            reason: { type: "string" },
+          },
+          required: ["type", "id", "name", "path", "reason"],
+        },
+        source_context: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            meeting_action: { type: "string" },
+            evidence: { type: "string" },
+          },
+          required: ["meeting_action", "evidence"],
+        },
+      },
+      required: [
+        "title", "description", "priority", "status", "start_date", "due_date_hint",
+        "assignee_hint", "time_estimate_minutes", "implementation_notes", "acceptance_criteria",
+        "destination", "source_context",
+      ],
+    },
+  },
+  required: ["tool_name", "requires_confirmation", "input"],
+};
+
+const FILE_REVIEW_COMMENT_TOOL_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    tool_name: { type: "string", enum: ["add_clickup_comment"] },
+    requires_confirmation: { type: "boolean", enum: [true] },
+    input: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        task_id: { type: "string" },
+        task_name: { type: "string" },
+        task_url: { type: ["string", "null"] },
+        comment_text: { type: "string", minLength: 20 },
+        source_links: { type: "array", items: { type: "string" } },
+      },
+      required: ["task_id", "task_name", "task_url", "comment_text", "source_links"],
+    },
+  },
+  required: ["tool_name", "requires_confirmation", "input"],
+};
+
 const FILE_REVIEW_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
   additionalProperties: false,
@@ -778,66 +865,7 @@ const FILE_REVIEW_JSON_SCHEMA: Record<string, unknown> = {
     },
     tool_calls: {
       type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          tool_name: { type: "string", enum: ["create_clickup_task"] },
-          requires_confirmation: { type: "boolean", enum: [true] },
-          input: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              title: { type: "string" },
-              description: { type: "string", minLength: 120, description: "Implementation-ready Markdown with objective, context, scope, constraints, and testable acceptance criteria." },
-              priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
-              status: { type: "string", enum: ["to do"] },
-              start_date: { type: ["string", "null"] },
-              due_date_hint: { type: ["string", "null"] },
-              assignee_hint: { type: ["string", "null"] },
-              time_estimate_minutes: { type: ["number", "null"], minimum: 1 },
-              implementation_notes: { type: "array", maxItems: 12, items: { type: "string" } },
-              acceptance_criteria: { type: "array", minItems: 1, maxItems: 12, items: { type: "string" } },
-              destination: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  type: { type: "string", enum: ["list"] },
-                  id: { type: "string" },
-                  name: { type: "string" },
-                  path: { type: "string" },
-                  reason: { type: "string" },
-                },
-                required: ["type", "id", "name", "path", "reason"],
-              },
-              source_context: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  meeting_action: { type: "string" },
-                  evidence: { type: "string" },
-                },
-                required: ["meeting_action", "evidence"],
-              },
-            },
-            required: [
-              "title",
-              "description",
-              "priority",
-              "status",
-              "start_date",
-              "due_date_hint",
-              "assignee_hint",
-              "time_estimate_minutes",
-              "implementation_notes",
-              "acceptance_criteria",
-              "destination",
-              "source_context",
-            ],
-          },
-        },
-        required: ["tool_name", "requires_confirmation", "input"],
-      },
+      items: { anyOf: [FILE_REVIEW_TASK_TOOL_JSON_SCHEMA, FILE_REVIEW_COMMENT_TOOL_JSON_SCHEMA] },
     },
     workflows: { type: "array", maxItems: 0, items: { type: "string" } },
     summary: { type: "string" },
