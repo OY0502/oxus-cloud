@@ -151,11 +151,13 @@ export const processProjectSignalsTask = task({
     project_id: string;
     user_id?: string;
     limit?: number;
+    ensure_pending?: boolean;
   }) => {
     return workerPost("process-ai-jobs", {
       project_id: payload.project_id,
+      user_id: payload.user_id,
       limit: payload.limit,
-      ensure_pending: true,
+      ensure_pending: payload.ensure_pending ?? true,
       async: false,
     });
   },
@@ -292,6 +294,7 @@ export const syncSlackProjectChannelTask = task({
             project_id: payload.project_id,
             user_id: payload.user_id,
             limit: 100,
+            ensure_pending: false,
           });
           analysisRunId = analysisRun.id;
         } catch (error) {

@@ -1,4 +1,5 @@
 import { getServiceRoleSupabase } from "../_shared/clickup-auth.ts";
+import { authenticateInternalWorker } from "../_shared/internalWorkerAuth.ts";
 import { isTriggerDevConfigured, triggerDevTask } from "../_shared/agent/triggerDev.ts";
 import { getAuthenticatedUser } from "../_shared/slack-auth.ts";
 import { processAiJobsForProject, ensureSlackSignalsProcessed } from "../_shared/processAiJobs.ts";
@@ -25,14 +26,25 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return err("Method not allowed.", 405, "INVALID_INPUT");
 
   try {
-    const auth = await getAuthenticatedUser(req.headers.get("Authorization"));
-    if (!auth) return err("Authentication required.", 401, "AUTH_REQUIRED");
-
-    let body: { project_id?: string; limit?: number; ensure_pending?: boolean } = {};
+    let body: {
+      project_id?: string;
+      limit?: number;
+      ensure_pending?: boolean;
+      async?: boolean;
+      user_id?: string;
+    } = {};
     try {
       body = await req.json();
     } catch {
       return err("Request body must be valid JSON.", 400, "INVALID_INPUT");
+    }
+
+    const workerAuth = await authenticateInternalWorker(req);
+    const auth = workerAuth.ok ? null : await getAuthenticatedUser(req.headers.get("Authorization"));
+    if (!workerAuth.ok && !auth) return err("Authentication required.", 401, "AUTH_REQUIRED");
+    const actorUserId = auth?.userId ?? body.user_id?.trim();
+    if (workerAuth.ok && !actorUserId) {
+      return err("user_id is required for internal job workers.", 400, "INVALID_INPUT");
     }
 
     const admin = getServiceRoleSupabase();
@@ -76,7 +88,7 @@ Deno.serve(async (req) => {
       try {
         const triggered = await triggerDevTask("process-project-signals", {
           project_id: projectId,
-          user_id: auth.userId,
+          user_id: actorUserId,
           limit: body.limit,
         });
         if (triggered?.id) {
@@ -103,12 +115,12 @@ Deno.serve(async (req) => {
       ? await ensureSlackSignalsProcessed({
         admin,
         projectId: body.project_id.trim(),
-        createdBy: auth.userId,
+        createdBy: actorUserId,
       })
       : await processAiJobsForProject({
         admin,
         projectId: body.project_id?.trim(),
-        createdBy: auth.userId,
+        createdBy: actorUserId,
         limit: body.limit,
       });
 

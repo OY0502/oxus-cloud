@@ -53,6 +53,10 @@ describe("Slack project knowledge architecture", () => {
     expect(trigger.split('addResult(await workerPost("slack-sync-project-channel", { ...payload, reprocess: true }));')).toHaveLength(2);
     expect(trigger).toContain('tasks.trigger("process-project-signals"');
     expect(trigger).toContain("slack_sync_analysis_trigger_run_id: analysisRunId");
+    expect(trigger).toContain("ensure_pending: false");
+    const processJobs = await fs.readFile(new URL("../../supabase/functions/process-ai-jobs/index.ts", import.meta.url), "utf8");
+    expect(processJobs).toContain("authenticateInternalWorker(req)");
+    expect(processJobs).toContain("user_id is required for internal job workers");
     expect(trigger).toContain('slack_sync_status: "completed"');
     expect(sync).toContain("shouldQueueTriggerDevTasks()");
     expect(sync).toContain('triggerDevTask("sync-slack-project-channel"');
