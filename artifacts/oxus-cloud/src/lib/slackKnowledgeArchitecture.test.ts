@@ -25,6 +25,8 @@ describe("Slack project knowledge architecture", () => {
     expect(webhook).toContain("syncSlackThreadKnowledge");
     expect(reprocess).toContain("syncSlackThreadKnowledge");
     expect(processJobs).toContain("threadKeys: [...new Set(meaningfulRows.map");
+    expect(processJobs).toContain("const batchSignalIds = signalIds.slice(0, 10)");
+    expect(processJobs).toContain("payload: { ...payload, signal_ids: jobResult.remaining_signal_ids }");
     expect(pmActions).toContain('eventsQuery = eventsQuery.in("slack_thread_ts"');
     expect(migration).toContain("idx_project_knowledge_sources_slack_thread_unique");
   });

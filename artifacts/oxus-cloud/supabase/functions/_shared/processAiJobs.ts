@@ -58,6 +58,7 @@ async function processAnalyzeProjectSignalsJob(args: {
   signals_checked: number;
   signals_new: number;
   signals_already_processed: number;
+  remaining_signal_ids: string[];
   reasons: string[];
   suppression_reasons: SuppressionReason[];
 }> {
@@ -66,6 +67,8 @@ async function processAnalyzeProjectSignalsJob(args: {
   const signalIds = Array.isArray(payload.signal_ids)
     ? payload.signal_ids.filter((id): id is string => typeof id === "string")
     : [];
+  const batchSignalIds = signalIds.slice(0, 10);
+  const remainingSignalIds = signalIds.slice(10);
 
   let query = args.admin
     .from("project_signals")
@@ -73,7 +76,8 @@ async function processAnalyzeProjectSignalsJob(args: {
     .eq("project_id", projectId)
     .in("signal_status", ["new", "processing"]);
 
-  if (signalIds.length > 0) query = query.in("id", signalIds);
+  if (batchSignalIds.length > 0) query = query.in("id", batchSignalIds);
+  query = query.limit(10);
 
   const { data: signals, error } = await query;
   if (error) throw new Error(error.message);
@@ -112,6 +116,7 @@ async function processAnalyzeProjectSignalsJob(args: {
       signals_checked: rows.length,
       signals_new: 0,
       signals_already_processed: rows.length,
+      remaining_signal_ids: remainingSignalIds,
       reasons,
       suppression_reasons: [],
     };
@@ -158,6 +163,7 @@ async function processAnalyzeProjectSignalsJob(args: {
     signals_checked: rows.length,
     signals_new: meaningfulRows.length,
     signals_already_processed: 0,
+    remaining_signal_ids: remainingSignalIds,
     reasons: [...reasons, ...threadResult.reasons],
     suppression_reasons: threadResult.suppression_reasons,
   };
@@ -240,14 +246,30 @@ export async function processAiJobsForProject(args: {
       result.job_ids.push(job.id);
       result.suppression_reasons.push(...jobResult.suppression_reasons);
 
-      await args.admin
-        .from("ai_processing_jobs")
-        .update({
-          status: "completed",
-          completed_at: new Date().toISOString(),
-          result: jobResult,
-        })
-        .eq("id", job.id);
+      if (jobResult.remaining_signal_ids.length > 0) {
+        const payload = (job.payload ?? {}) as Record<string, unknown>;
+        const { error: remainderError } = await args.admin
+          .from("ai_processing_jobs")
+          .update({
+            status: "queued",
+            started_at: null,
+            completed_at: null,
+            error_message: null,
+            payload: { ...payload, signal_ids: jobResult.remaining_signal_ids },
+            result: jobResult,
+          })
+          .eq("id", job.id);
+        if (remainderError) throw new Error(remainderError.message);
+      } else {
+        await args.admin
+          .from("ai_processing_jobs")
+          .update({
+            status: "completed",
+            completed_at: new Date().toISOString(),
+            result: jobResult,
+          })
+          .eq("id", job.id);
+      }
     } catch (e) {
       result.failed_count++;
       result.reasons.push((e as Error).message);
