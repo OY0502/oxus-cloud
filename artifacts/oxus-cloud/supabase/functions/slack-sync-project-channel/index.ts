@@ -318,6 +318,23 @@ async function syncLink(args: {
       projectId: args.link.project_id,
       projectSlackLinkId: args.link.id,
     });
+  let deferredKnowledge: Awaited<ReturnType<typeof syncSlackThreadKnowledge>> | null = null;
+  if (args.deferPostProcessing && importedThreadKeys.size > 0) {
+    try {
+      // Keep historical memory generation inside the same bounded slice. Signal
+      // normalization and AI-job enqueueing already happen per event above, so
+      // Trigger.dev does not need a second unbounded reprocess request.
+      deferredKnowledge = await syncSlackThreadKnowledge({
+        admin: args.admin,
+        projectId: args.link.project_id,
+        projectSlackLinkId: args.link.id,
+        threadKeys: [...importedThreadKeys],
+        limit: 500,
+      });
+    } catch (error) {
+      warnings.push(`Slack memory extraction needs a retry: ${(error as Error).message}`);
+    }
+  }
   if (reprocess && savedCursor && importedThreadKeys.size > 0) {
     try {
       const historicalKnowledge = await syncSlackThreadKnowledge({
@@ -383,9 +400,12 @@ async function syncLink(args: {
     latest_messages_preview: previews.slice(-10),
     warnings,
     reprocess,
-    knowledge_sources_created_count: reprocess?.knowledge.sources_created ?? 0,
-    knowledge_sources_updated_count: reprocess?.knowledge.sources_updated ?? 0,
-    knowledge_sources_unchanged_count: reprocess?.knowledge.sources_unchanged ?? 0,
+    knowledge_sources_created_count:
+      deferredKnowledge?.sources_created ?? reprocess?.knowledge.sources_created ?? 0,
+    knowledge_sources_updated_count:
+      deferredKnowledge?.sources_updated ?? reprocess?.knowledge.sources_updated ?? 0,
+    knowledge_sources_unchanged_count:
+      deferredKnowledge?.sources_unchanged ?? reprocess?.knowledge.sources_unchanged ?? 0,
     history_has_more: backfillHasMore,
     history_backfill_complete: !boundedBackfill || !backfillHasMore,
   };

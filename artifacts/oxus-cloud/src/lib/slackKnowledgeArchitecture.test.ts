@@ -50,11 +50,13 @@ describe("Slack project knowledge architecture", () => {
     expect(trigger).toContain("let batchLimit = Math.min(totalLimit, 10)");
     expect(trigger).toContain("edgeRequestTimedOut && currentLimit > 1");
     expect(trigger).toContain("defer_post_processing: true");
+    expect(trigger.split('addResult(await workerPost("slack-sync-project-channel", { ...payload, reprocess: true }));')).toHaveLength(2);
     expect(trigger).toContain('slack_sync_status: "completed"');
     expect(sync).toContain("shouldQueueTriggerDevTasks()");
     expect(sync).toContain('triggerDevTask("sync-slack-project-channel"');
     expect(sync).toContain("authenticateInternalWorker(req)");
     expect(sync).toContain("Math.max(body.limit ?? 100, 1)");
+    expect(sync).toContain("deferredKnowledge = await syncSlackThreadKnowledge");
     expect(sync).toContain("(!serviceRole || body.enqueue === true)");
     expect(panel).toContain("running safely in the background via Trigger.dev");
     expect(migration).toContain("project_slack_links_sync_mode_check");

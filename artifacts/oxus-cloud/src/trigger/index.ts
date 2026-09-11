@@ -286,7 +286,6 @@ export const syncSlackProjectChannelTask = task({
             slack_sync_partial_result: summarize(aggregate),
           });
         }
-        addResult(await workerPost("slack-sync-project-channel", { ...payload, reprocess: true }));
       }
       const result = summarize(aggregate);
       await updateState({
