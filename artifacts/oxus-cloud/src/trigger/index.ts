@@ -249,6 +249,7 @@ export const syncSlackProjectChannelTask = task({
       slack_sync_error: null,
     }, null);
     try {
+      let analysisRunId: string | null = null;
       if (payload.reprocess) {
         addResult(await workerPost("slack-sync-project-channel", { ...payload, reprocess: true }));
       } else {
@@ -286,6 +287,18 @@ export const syncSlackProjectChannelTask = task({
             slack_sync_partial_result: summarize(aggregate),
           });
         }
+        try {
+          const analysisRun = await tasks.trigger("process-project-signals", {
+            project_id: payload.project_id,
+            user_id: payload.user_id,
+            limit: 100,
+          });
+          analysisRunId = analysisRun.id;
+        } catch (error) {
+          (aggregate.warnings as unknown[]).push(
+            `Slack AI analysis could not be queued automatically: ${errorMessage(error)}`,
+          );
+        }
       }
       const result = summarize(aggregate);
       await updateState({
@@ -295,6 +308,7 @@ export const syncSlackProjectChannelTask = task({
         slack_sync_error: null,
         slack_sync_result: result,
         slack_sync_partial_result: null,
+        slack_sync_analysis_trigger_run_id: analysisRunId,
       }, null);
       return result;
     } catch (error) {
