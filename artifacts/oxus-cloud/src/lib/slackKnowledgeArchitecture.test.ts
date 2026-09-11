@@ -32,6 +32,7 @@ describe("Slack project knowledge architecture", () => {
     expect(pmUpsert).toContain("retryOnUniqueCollision");
     expect(pmUpsert).toContain('error.code === "23505"');
     expect(pmUpsert).toContain("byIdentity && match.item?.id !== byIdentity.id");
+    expect(pmUpsert).toContain('item.status === "open" || item.status === "in_progress"');
     expect(migration).toContain("idx_project_knowledge_sources_slack_thread_unique");
   });
 

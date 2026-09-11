@@ -143,7 +143,9 @@ export async function loadProjectPmActionsForUpsert(
 }
 
 function findByIdentity(items: Record<string, unknown>[], identity: string): Record<string, unknown> | null {
-  return items.find((item) => item.action_identity === identity) ?? null;
+  return items.find((item) =>
+    item.action_identity === identity && (item.status === "open" || item.status === "in_progress")
+  ) ?? items.find((item) => item.action_identity === identity) ?? null;
 }
 
 function proposedFromInput(input: UpsertPmActionInput): ProposedPmAction {
