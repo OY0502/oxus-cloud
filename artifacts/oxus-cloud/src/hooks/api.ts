@@ -1930,22 +1930,22 @@ export function useDeleteAttachment() {
   });
 }
 
-let screenshotUploadTokenRefresh: Promise<string> | null = null;
+let uploadTokenRefresh: Promise<string> | null = null;
 
-async function getFreshScreenshotUploadToken(): Promise<string> {
-  if (!screenshotUploadTokenRefresh) {
-    screenshotUploadTokenRefresh = (async () => {
+async function getFreshUploadToken(): Promise<string> {
+  if (!uploadTokenRefresh) {
+    uploadTokenRefresh = (async () => {
       const { data, error } = await supabase.auth.refreshSession();
       const token = data.session?.access_token;
       if (error || !token) throw new Error("Your session has expired. Sign in again and retry the upload.");
       return token;
     })();
   }
-  const pending = screenshotUploadTokenRefresh;
+  const pending = uploadTokenRefresh;
   try {
     return await pending;
   } finally {
-    if (screenshotUploadTokenRefresh === pending) screenshotUploadTokenRefresh = null;
+    if (uploadTokenRefresh === pending) uploadTokenRefresh = null;
   }
 }
 
@@ -1954,12 +1954,11 @@ export async function uploadProjectAgentIntakeFile(
   file: File,
   onProgress?: (percent: number) => void,
 ): Promise<string> {
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError) throw new Error(sessionError.message);
-  const accessToken = file.type.startsWith("image/")
-    ? await getFreshScreenshotUploadToken()
-    : sessionData.session?.access_token;
-  if (!accessToken) throw new Error("You must be signed in.");
+  // Always refresh before creating either a normal or resumable upload. A
+  // cached session can still exist after its access token has expired, and
+  // Storage rejects that stale value as an invalid compact JWS. The shared
+  // promise also prevents concurrent recording uploads from racing refreshes.
+  const accessToken = await getFreshUploadToken();
   const { data: auth, error: authError } = await supabase.auth.getUser(accessToken);
   if (authError || !auth.user) throw new Error("Your session has expired. Sign in again and retry the upload.");
   const safeName = file.name.replace(/[^\w.\-]+/g, "_");

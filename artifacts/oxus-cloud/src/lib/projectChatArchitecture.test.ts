@@ -147,7 +147,9 @@ describe("project chat architecture", () => {
     expect(chat).toContain("confirmation before ClickUp creation");
     expect(api).toContain('if (file.type.startsWith("image/"))');
     expect(api).toContain("await supabase.auth.refreshSession()");
-    expect(api).toContain("screenshotUploadTokenRefresh");
+    expect(api).toContain("uploadTokenRefresh");
+    expect(api).toContain("const accessToken = await getFreshUploadToken()");
+    expect(api).not.toContain('const accessToken = file.type.startsWith("image/")');
     expect(api).toContain("supabase.storage.from(DOCUMENTS_BUCKET).upload");
     expect(api).toContain("Your session has expired. Sign in again and retry the upload.");
     expect(orchestration).toContain("extractImageEvidence");
