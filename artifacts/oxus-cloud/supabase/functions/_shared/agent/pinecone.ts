@@ -382,7 +382,9 @@ export async function describePineconeNamespace(projectId: string): Promise<{ ve
       {},
       QUERY_TIMEOUT_MS,
     );
-    return { vectorCount: result.record_count ?? result.recordCount ?? 0 };
+    const rawCount = result.record_count ?? result.recordCount ?? 0;
+    const vectorCount = Number(rawCount);
+    return { vectorCount: Number.isFinite(vectorCount) ? vectorCount : 0 };
   } catch (error) {
     if ((error as Error & { status?: number }).status === 404) return { vectorCount: 0 };
     throw error;

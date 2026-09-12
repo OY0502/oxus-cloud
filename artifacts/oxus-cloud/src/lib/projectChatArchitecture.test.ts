@@ -451,6 +451,7 @@ describe("project chat architecture", () => {
     expect(pinecone).toContain('deletion_protection: "enabled"');
     expect(pinecone).toContain("generatePineconeSparseVectors");
     expect(pinecone).toContain("rerankPinecone");
+    expect(pinecone).toContain("const vectorCount = Number(rawCount)");
     expect(pinecone).toContain('metric: config.hybridEnabled ? "dotproduct" : "cosine"');
     expect(retrieval).toContain('mode: "pinecone_hybrid"');
     expect(retrieval).toContain('config.retrievalMode === "primary"');
