@@ -150,6 +150,9 @@ describe("project chat architecture", () => {
     expect(api).toContain("uploadTokenRefresh");
     expect(api).toContain("const accessToken = await getFreshUploadToken()");
     expect(api).not.toContain('const accessToken = file.type.startsWith("image/")');
+    expect(api).toContain("supabaseResumableUploadEndpoint(supabaseUrl)");
+    expect(api).not.toContain("apikey: publishableKey");
+    expect(api).toContain('"x-upsert": "false"');
     expect(api).toContain("supabase.storage.from(DOCUMENTS_BUCKET).upload");
     expect(api).toContain("Your session has expired. Sign in again and retry the upload.");
     expect(orchestration).toContain("extractImageEvidence");

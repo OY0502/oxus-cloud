@@ -16,6 +16,7 @@ import { supabase } from "@/lib/supabase";
 import { hasRunningAgentToolRuns } from "@/lib/agentToolRunUtils";
 import { deleteProjectRecord, purgeProjectStorage } from "@/lib/projectDelete";
 import { parseEdgeFunctionError } from "@/lib/edgeFunctionErrors";
+import { isCompactJwt, supabaseResumableUploadEndpoint } from "@/lib/storageUpload";
 import {
   invoiceAmountDueEur,
   invoiceTotalEur,
@@ -1938,6 +1939,7 @@ async function getFreshUploadToken(): Promise<string> {
       const { data, error } = await supabase.auth.refreshSession();
       const token = data.session?.access_token;
       if (error || !token) throw new Error("Your session has expired. Sign in again and retry the upload.");
+      if (!isCompactJwt(token)) throw new Error("Your session token is invalid. Sign in again and retry the upload.");
       return token;
     })();
   }
@@ -1964,7 +1966,6 @@ export async function uploadProjectAgentIntakeFile(
   const safeName = file.name.replace(/[^\w.\-]+/g, "_");
   const path = `project/${projectId}/${crypto.randomUUID()}_${safeName}`;
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
-  const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
 
   if (file.type.startsWith("image/")) {
     // Screenshots are small enough for a normal Storage upload. This path uses
@@ -1980,8 +1981,8 @@ export async function uploadProjectAgentIntakeFile(
     onProgress?.(100);
   } else await new Promise<void>((resolve, reject) => {
     const upload = new Upload(file, {
-      endpoint: `${supabaseUrl}/storage/v1/upload/resumable`,
-      headers: { authorization: `Bearer ${accessToken}`, apikey: publishableKey },
+      endpoint: supabaseResumableUploadEndpoint(supabaseUrl),
+      headers: { authorization: `Bearer ${accessToken}`, "x-upsert": "false" },
       uploadDataDuringCreation: true,
       removeFingerprintOnSuccess: true,
       retryDelays: [0, 1000, 3000, 5000, 10000],
@@ -1995,7 +1996,10 @@ export async function uploadProjectAgentIntakeFile(
       onBeforeRequest: async (request) => {
         const { data } = await supabase.auth.getSession();
         const freshToken = data.session?.access_token;
-        if (freshToken) request.setHeader("authorization", `Bearer ${freshToken}`);
+        if (!freshToken || !isCompactJwt(freshToken)) {
+          throw new Error("Your session has expired. Sign in again and retry the upload.");
+        }
+        request.setHeader("authorization", `Bearer ${freshToken}`);
       },
       onError: reject,
       onProgress: (uploaded, total) => onProgress?.(total > 0 ? Math.round((uploaded / total) * 100) : 0),
