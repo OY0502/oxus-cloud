@@ -84,6 +84,8 @@ function messageMetadata(value: unknown): {
   tasksChecked?: number;
   snapshotSource?: string;
   memoryProvider?: string;
+  memoryOutcome?: "used" | "no_relevant_match" | "unavailable";
+  memoryWarning?: string;
   memoryMatches?: number;
   memorySources: string[];
   memoryCitations: MemoryCitation[];
@@ -114,6 +116,10 @@ function messageMetadata(value: unknown): {
     tasksChecked: typeof metadata.clickup_tasks_checked === "number" ? metadata.clickup_tasks_checked : undefined,
     snapshotSource: typeof metadata.clickup_task_snapshot_source === "string" ? metadata.clickup_task_snapshot_source : undefined,
     memoryProvider: typeof metadata.memory_provider === "string" ? metadata.memory_provider : undefined,
+    memoryOutcome: metadata.memory_outcome === "used" || metadata.memory_outcome === "no_relevant_match" || metadata.memory_outcome === "unavailable"
+      ? metadata.memory_outcome
+      : undefined,
+    memoryWarning: typeof metadata.memory_warning === "string" ? metadata.memory_warning : undefined,
     memoryMatches: typeof metadata.memory_matches === "number" ? metadata.memory_matches : undefined,
     memorySources: Array.isArray(metadata.memory_sources)
       ? metadata.memory_sources.filter((entry): entry is string => typeof entry === "string").slice(0, 4)
@@ -888,18 +894,25 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
                       )}
                     </div>
 
-                    {!fromUser && metadata.memoryMatches != null && metadata.memoryMatches > 0 && (
+                    {!fromUser && ((metadata.memoryMatches ?? 0) > 0 || metadata.memoryWarning) && (
                       <div className="space-y-1.5 px-1 text-[11px] leading-4 text-muted-foreground">
                         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
                           <Database className="h-3 w-3 text-info" />
                           <span className="font-medium text-foreground/75">
-                            {metadata.memoryProvider === "pinecone" ? "Pinecone retrieval" : "Supabase fallback"}
+                            {metadata.memoryOutcome === "no_relevant_match"
+                              ? "No relevant Pinecone evidence"
+                              : metadata.memoryOutcome === "unavailable"
+                                ? "Pinecone evidence unavailable"
+                                : "Pinecone retrieval"}
                           </span>
-                          <span>· {metadata.memoryMatches} relevant passage{metadata.memoryMatches === 1 ? "" : "s"}</span>
+                          {(metadata.memoryMatches ?? 0) > 0 && (
+                            <span>· {metadata.memoryMatches} relevant passage{metadata.memoryMatches === 1 ? "" : "s"}</span>
+                          )}
                           {metadata.memorySources.length > 0 && (
                             <span className="truncate">· {metadata.memorySources.join(", ")}</span>
                           )}
                         </div>
+                        {metadata.memoryWarning && <p className="text-amber-600">{metadata.memoryWarning}</p>}
                         {metadata.memoryCitations.length > 0 && (
                           <div className="flex flex-wrap gap-1.5" aria-label="Answer sources">
                             {metadata.memoryCitations.map((citation) => {

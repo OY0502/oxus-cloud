@@ -130,8 +130,16 @@ Deno.serve(async (req) => {
       return json({
         configured: true,
         mode: result.mode,
+        pinecone_outcome: result.pinecone_outcome,
         pinecone_used: result.pinecone_used,
         pinecone_matches: result.pinecone_matches,
+        pinecone_candidates: result.pinecone_candidates,
+        pinecone_reranked: result.pinecone_reranked,
+        pinecone_top_rerank_score: result.pinecone_top_rerank_score,
+        pinecone_passages_rejected: result.pinecone_passages_rejected,
+        pinecone_selected_count: result.pinecone_selected_count,
+        pinecone_authoritative_namespace_count: result.pinecone_authoritative_namespace_count,
+        pinecone_failure_reason: result.pinecone_failure_reason,
         pinecone_error: result.pinecone_error,
         matches: result.chunks.map((chunk) => ({
           id: chunk.id,

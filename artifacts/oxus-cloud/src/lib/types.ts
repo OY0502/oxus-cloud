@@ -1216,7 +1216,7 @@ export type ProjectAgentRunResult = {
   confidence?: number;
   diagnostics?: {
     model?: string;
-    retrieval_mode?: "vector" | "fallback";
+    retrieval_mode?: "pinecone_hybrid" | "pinecone_no_match" | "pinecone_unavailable" | "vector" | "fallback";
     chunks_retrieved_count?: number;
     langfuse_trace_id?: string;
     langfuse_generation_id?: string;
@@ -1233,6 +1233,13 @@ export type ProjectAgentRunResult = {
     embeddings_enabled?: boolean;
     embedding_provider?: string;
     embedding_skip_reason?: string;
+    pinecone_outcome?: "used" | "no_relevant_match" | "unavailable";
+    pinecone_candidates?: number;
+    pinecone_top_rerank_score?: number;
+    pinecone_passages_rejected?: number;
+    pinecone_selected_count?: number;
+    pinecone_authoritative_namespace_count?: number;
+    pinecone_failure_reason?: string;
     trigger_configured?: boolean;
     trigger_enabled?: boolean;
     trigger_run_id?: string;

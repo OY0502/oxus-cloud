@@ -67,7 +67,12 @@ export function pineconeConfig() {
     sparseModel: Deno.env.get("PINECONE_SPARSE_MODEL")?.trim() || "pinecone-sparse-english-v0",
     rerankEnabled: envBoolean("PINECONE_RERANK_ENABLED", true),
     rerankModel: Deno.env.get("PINECONE_RERANK_MODEL")?.trim() || "bge-reranker-v2-m3",
+    minRerankScore: envNumber("PINECONE_MIN_RERANK_SCORE", 0.01, 0, 1),
     hybridAlpha: envNumber("PINECONE_HYBRID_ALPHA", 0.65, 0, 1),
+    minCandidates: envNumber("PINECONE_MIN_CANDIDATES", 40, 10, 100),
+    candidateMultiplier: envNumber("PINECONE_CANDIDATE_MULTIPLIER", 5, 1, 10),
+    minReranked: envNumber("PINECONE_MIN_RERANKED", 12, 1, 100),
+    rerankMultiplier: envNumber("PINECONE_RERANK_MULTIPLIER", 2, 1, 10),
     retrievalMode,
   };
 }

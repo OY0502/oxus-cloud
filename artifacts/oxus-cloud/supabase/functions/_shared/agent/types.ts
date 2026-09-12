@@ -132,7 +132,7 @@ export type RetrievalChunk = {
 
 export type AgentDiagnostics = {
   model?: string;
-  retrieval_mode?: "pinecone_hybrid" | "vector" | "fallback";
+  retrieval_mode?: "pinecone_hybrid" | "pinecone_no_match" | "pinecone_unavailable" | "vector" | "fallback";
   chunks_retrieved_count?: number;
   trigger_run_id?: string;
   trigger_enabled?: boolean;
@@ -159,6 +159,12 @@ export type AgentDiagnostics = {
   pinecone_candidates?: number;
   pinecone_reranked?: number;
   pinecone_mode?: "off" | "shadow" | "primary";
+  pinecone_outcome?: "used" | "no_relevant_match" | "unavailable";
+  pinecone_top_rerank_score?: number;
+  pinecone_passages_rejected?: number;
+  pinecone_selected_count?: number;
+  pinecone_authoritative_namespace_count?: number;
+  pinecone_failure_reason?: string;
   pinecone_shadow_overlap?: number;
   pinecone_error?: string;
   pinecone_index?: string;

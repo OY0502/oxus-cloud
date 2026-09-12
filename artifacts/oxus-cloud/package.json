@@ -9,6 +9,7 @@
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "benchmark:pinecone": "vitest run src/lib/pineconeRetrievalBenchmark.test.ts",
     "trigger:dev": "pnpm exec trigger.dev@4.5.0 dev",
     "trigger:deploy": "pnpm exec trigger.dev@4.5.0 deploy"
   },

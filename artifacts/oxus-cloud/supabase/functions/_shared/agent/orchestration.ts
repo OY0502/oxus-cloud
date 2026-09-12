@@ -1123,7 +1123,8 @@ export async function runProjectAgent(args: {
   const retrieval = await retrieveProjectKnowledge({
     admin: args.admin,
     projectId: input.project_id,
-    queryText: retrievalQuery,
+    queryText: agentInputText || "Review the current project context and summarize the current state.",
+    queryVariants: [retrievalQuery],
     usePinecone: input.chat === true,
   });
 
@@ -1303,6 +1304,12 @@ export async function runProjectAgent(args: {
     usage = generated.usage;
     traceId = generated.traceId;
     generationId = generated.generationId;
+  }
+  if (input.chat && retrieval.pinecone_outcome !== "used") {
+    const retrievalWarning = retrieval.pinecone_outcome === "no_relevant_match"
+      ? "Pinecone did not find sufficiently relevant project evidence for this question."
+      : "Pinecone project evidence is currently unavailable.";
+    plan.answer = `${retrievalWarning}\n\n${plan.answer ?? ""}`.trim();
   }
   plan.answer = validateAnswerSourceCitations(plan.answer, retrieval.chunks);
 
@@ -1817,6 +1824,12 @@ export async function runProjectAgent(args: {
     pinecone_candidates: retrieval.pinecone_candidates,
     pinecone_reranked: retrieval.pinecone_reranked,
     pinecone_mode: retrieval.pinecone_mode,
+    pinecone_outcome: retrieval.pinecone_outcome,
+    pinecone_top_rerank_score: retrieval.pinecone_top_rerank_score,
+    pinecone_passages_rejected: retrieval.pinecone_passages_rejected,
+    pinecone_selected_count: retrieval.pinecone_selected_count,
+    pinecone_authoritative_namespace_count: retrieval.pinecone_authoritative_namespace_count,
+    pinecone_failure_reason: retrieval.pinecone_failure_reason,
     pinecone_shadow_overlap: retrieval.pinecone_shadow_overlap,
     retrieval_query: retrieval.retrieval_query,
     pinecone_error: retrieval.pinecone_error,
@@ -1947,7 +1960,13 @@ export async function runProjectAgent(args: {
       tool_run_ids: toolRunIds,
       clickup_tasks_checked: input.chat ? clickupTaskSnapshot.tasks.length : undefined,
       clickup_task_snapshot_source: input.chat ? clickupTaskSnapshot.source : undefined,
-      memory_provider: retrieval.pinecone_used ? "pinecone" : "supabase",
+      memory_provider: retrieval.pinecone_used ? "pinecone" : "none",
+      memory_outcome: retrieval.pinecone_outcome,
+      memory_warning: retrieval.pinecone_outcome === "used"
+        ? null
+        : retrieval.pinecone_outcome === "no_relevant_match"
+        ? "Pinecone found no sufficiently relevant project evidence."
+        : "Pinecone project evidence was unavailable.",
       memory_matches: retrieval.chunks.length,
       memory_citations: retrieval.chunks.map((chunk, index) => ({
         id: typeof chunk.metadata?.citation_id === "string" ? chunk.metadata.citation_id : `S${index + 1}`,

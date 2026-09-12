@@ -456,8 +456,17 @@ describe("project chat architecture", () => {
     expect(retrieval).toContain('config.retrievalMode === "primary"');
     expect(retrieval).toContain("diversifyBySource");
     expect(retrieval).toContain("addNeighborContext");
+    expect(retrieval).toContain("queryVariants?: string[]");
+    expect(retrieval).toContain("for (const result of queryResults) addRanked");
+    expect(retrieval).toContain("candidate.chunk.similarity ?? 0) >= minScore");
+    expect(retrieval).toContain("Project chat intentionally does not silently substitute Supabase evidence");
+    expect(retrieval).toContain("describePineconeNamespace(args.projectId)");
+    expect(retrieval).toContain('p_action: "upsert_project"');
     expect(orchestration).toContain("usePinecone: input.chat === true");
     expect(orchestration).toContain("buildHistoryAwareRetrievalQuery");
+    expect(orchestration).toContain("queryVariants: [retrievalQuery]");
+    expect(orchestration).toContain('memory_provider: retrieval.pinecone_used ? "pinecone" : "none"');
+    expect(orchestration).toContain("Pinecone project evidence is currently unavailable");
     expect(orchestration).toContain("syncPinecone: true");
     expect(migration).toContain("project_knowledge_index_jobs");
     expect(migration).toContain("delete_namespace");

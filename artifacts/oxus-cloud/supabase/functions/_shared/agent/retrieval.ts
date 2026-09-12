@@ -15,6 +15,7 @@ import {
   deletePineconeNamespace,
   deletePineconeSource,
   deletePineconeSourceVersionsBefore,
+  describePineconeNamespace,
   generatePineconeSparseVectors,
   isPineconeConfigured,
   pineconeConfig,
@@ -49,7 +50,7 @@ export type PineconeSyncResult = {
 
 export type ProjectKnowledgeRetrievalResult = {
   chunks: RetrievalChunk[];
-  mode: "pinecone_hybrid" | "vector" | "fallback";
+  mode: "pinecone_hybrid" | "pinecone_no_match" | "pinecone_unavailable" | "vector" | "fallback";
   clickup_doc_chunks_retrieved: number;
   active_clickup_doc_sources: number;
   excluded_out_of_scope_sources: number;
@@ -63,6 +64,12 @@ export type ProjectKnowledgeRetrievalResult = {
   pinecone_candidates: number;
   pinecone_reranked: number;
   pinecone_mode: "off" | "shadow" | "primary";
+  pinecone_outcome: "used" | "no_relevant_match" | "unavailable";
+  pinecone_top_rerank_score?: number;
+  pinecone_passages_rejected: number;
+  pinecone_selected_count: number;
+  pinecone_authoritative_namespace_count?: number;
+  pinecone_failure_reason?: string;
   pinecone_shadow_overlap?: number;
   pinecone_error?: string;
   pinecone_index?: string;
@@ -286,38 +293,53 @@ async function addNeighborContext(
 async function retrieveFromPinecone(args: {
   admin: SupabaseClient;
   projectId: string;
-  queryText: string;
-  embedding: number[];
+  queries: Array<{ text: string; embedding: number[] }>;
+  rerankQuery: string;
   matchCount: number;
   activeSourceIds: Set<string>;
-}): Promise<{ chunks: RetrievalChunk[]; candidates: number; reranked: number }> {
-  const [sparseVector] = await generatePineconeSparseVectors([args.queryText], "query")
+}): Promise<{
+  chunks: RetrievalChunk[];
+  candidates: number;
+  reranked: number;
+  topRerankScore?: number;
+  passagesRejected: number;
+}> {
+  const sparseVectors = await generatePineconeSparseVectors(args.queries.map((query) => query.text), "query")
     .catch((error) => {
       console.warn("[pinecone] Sparse query embedding failed; continuing dense-only:", (error as Error).message);
-      return [null];
+      return args.queries.map(() => null);
     });
-  const globalQuery = queryPinecone({
-    projectId: args.projectId,
-    vector: args.embedding,
-    sparseVector,
-    topK: Math.max(40, args.matchCount * 5),
-    filter: { status: { $eq: "active" } },
-  });
-  const temporalQuery = isTemporalKnowledgeQuery(args.queryText)
-    ? queryPinecone({
+  const retrievalConfig = pineconeConfig();
+  const rankedQueries = args.queries.flatMap((query, queryIndex) => {
+    const sparseVector = sparseVectors[queryIndex];
+    const queryWeight = queryIndex === args.queries.length - 1 ? 1.1 : 1;
+    const globalQuery = queryPinecone({
+      projectId: args.projectId,
+      vector: query.embedding,
+      sparseVector,
+      topK: Math.max(retrievalConfig.minCandidates, args.matchCount * retrievalConfig.candidateMultiplier),
+      filter: { status: { $eq: "active" } },
+    }).then((matches) => ({ matches, weight: queryWeight }));
+    const temporalQuery = isTemporalKnowledgeQuery(query.text)
+      ? queryPinecone({
         projectId: args.projectId,
-        vector: args.embedding,
+        vector: query.embedding,
         sparseVector,
-        topK: Math.max(25, args.matchCount * 4),
+        topK: Math.max(
+          Math.ceil(retrievalConfig.minCandidates * 0.625),
+          args.matchCount * Math.max(1, retrievalConfig.candidateMultiplier - 1),
+        ),
         filter: {
           $and: [
             { status: { $eq: "active" } },
             { source_type: { $in: OPERATIONAL_SOURCE_TYPES } },
           ],
         },
-      })
-    : Promise.resolve([] as PineconeMatch[]);
-  const [globalMatches, temporalMatches] = await Promise.all([globalQuery, temporalQuery]);
+      }).then((matches) => ({ matches, weight: queryWeight * 1.2 }))
+      : Promise.resolve({ matches: [] as PineconeMatch[], weight: queryWeight * 1.2 });
+    return [globalQuery, temporalQuery];
+  });
+  const queryResults = await Promise.all(rankedQueries);
 
   const fused = new Map<string, { match: PineconeMatch; score: number }>();
   const addRanked = (matches: PineconeMatch[], weight: number) => matches.forEach((match, index) => {
@@ -327,8 +349,7 @@ async function retrieveFromPinecone(args: {
       score: (previous?.score ?? 0) + weight / (60 + index + 1),
     });
   });
-  addRanked(globalMatches, 1);
-  addRanked(temporalMatches, 1.2);
+  for (const result of queryResults) addRanked(result.matches, result.weight);
   let candidates = [...fused.values()]
     .sort((a, b) => b.score - a.score)
     .map((entry) => ({ ...candidateFromMatch(entry.match), retrievalScore: entry.score }));
@@ -340,11 +361,15 @@ async function retrieveFromPinecone(args: {
 
   let ranked = candidates;
   let rerankedCount = 0;
+  let topRerankScore: number | undefined;
   try {
     const reranked = await rerankPinecone({
-      query: args.queryText,
+      query: args.rerankQuery,
       documents: candidates.slice(0, 60).map((candidate) => ({ id: candidate.pineconeId, text: candidate.chunk.content })),
-      topN: Math.min(Math.max(args.matchCount * 2, 12), candidates.length),
+      topN: Math.min(
+        Math.max(args.matchCount * retrievalConfig.rerankMultiplier, retrievalConfig.minReranked),
+        candidates.length,
+      ),
     });
     if (reranked.length > 0) {
       const rerankMap = new Map(reranked.map((row, index) => [row.id, { score: row.score, index }]));
@@ -363,12 +388,18 @@ async function retrieveFromPinecone(args: {
         }))
         .sort((a, b) => rerankMap.get(a.pineconeId)!.index - rerankMap.get(b.pineconeId)!.index);
       rerankedCount = ranked.length;
+      topRerankScore = ranked[0]?.chunk.similarity;
     }
   } catch (error) {
-    console.warn("[pinecone] Rerank failed; using hybrid retrieval order:", (error as Error).message);
+    throw new Error(`Pinecone rerank failed: ${(error as Error).message}`);
   }
 
-  const diverse = diversifyBySource(ranked, args.matchCount);
+  const minScore = pineconeConfig().minRerankScore;
+  const relevant = rerankedCount > 0
+    ? ranked.filter((candidate) => (candidate.chunk.similarity ?? 0) >= minScore)
+    : ranked;
+  const passagesRejected = ranked.length - relevant.length;
+  const diverse = diversifyBySource(relevant, args.matchCount);
   const expanded = await addNeighborContext(args.admin, args.projectId, diverse);
   return {
     chunks: expanded.map((candidate, index) => ({
@@ -377,6 +408,8 @@ async function retrieveFromPinecone(args: {
     })),
     candidates: candidates.length,
     reranked: rerankedCount,
+    topRerankScore,
+    passagesRejected,
   };
 }
 
@@ -384,6 +417,7 @@ export async function retrieveProjectKnowledge(args: {
   admin: SupabaseClient;
   projectId: string;
   queryText: string;
+  queryVariants?: string[];
   matchCount?: number;
   usePinecone?: boolean;
 }): Promise<ProjectKnowledgeRetrievalResult> {
@@ -400,6 +434,11 @@ export async function retrieveProjectKnowledge(args: {
   let pineconeReranked = 0;
   let pineconeQueried = false;
   let shadowOverlap: number | undefined;
+  let pineconeTopRerankScore: number | undefined;
+  let pineconePassagesRejected = 0;
+  let pineconeSelectedCount = 0;
+  let pineconeAuthoritativeNamespaceCount: number | undefined;
+  let pineconeOutcome: ProjectKnowledgeRetrievalResult["pinecone_outcome"] = "unavailable";
 
   const [{ count: excludedOutOfScope }, { count: activeClickupDocs }, activeSourceIds] = await Promise.all([
     args.admin
@@ -440,6 +479,12 @@ export async function retrieveProjectKnowledge(args: {
     pinecone_candidates: pineconeCandidates,
     pinecone_reranked: pineconeReranked,
     pinecone_mode: config.retrievalMode,
+    pinecone_outcome: pineconeOutcome,
+    pinecone_top_rerank_score: pineconeTopRerankScore,
+    pinecone_passages_rejected: pineconePassagesRejected,
+    pinecone_selected_count: pineconeSelectedCount,
+    pinecone_authoritative_namespace_count: pineconeAuthoritativeNamespaceCount,
+    pinecone_failure_reason: pineconeError,
     pinecone_shadow_overlap: shadowOverlap,
     pinecone_error: pineconeError,
     pinecone_index: pineconeEnabled ? config.indexName : undefined,
@@ -449,37 +494,72 @@ export async function retrieveProjectKnowledge(args: {
 
   try {
     if (embeddingsEnabled && queryText) {
-      const embedding = await embedQuery(queryText);
+      const queryTexts = [...new Set([queryText, ...(args.queryVariants ?? [])].map((query) => query.trim()).filter(Boolean))]
+        .slice(0, 2);
+      const embeddings = await Promise.all(queryTexts.map((query) =>
+        embedQuery(query).catch((error) => {
+          console.warn("[retrieval] Query embedding failed:", (error as Error).message);
+          return null;
+        })
+      ));
+      const pineconeQueries = queryTexts.flatMap((text, index) => embeddings[index] ? [{ text, embedding: embeddings[index]! }] : []);
+      const embedding = embeddings[0] ?? pineconeQueries[0]?.embedding ?? null;
       if (embedding) {
-        if (pineconeEnabled && config.retrievalMode === "primary") {
+        if (pineconeEnabled && (config.retrievalMode === "primary" || args.usePinecone === true)) {
           pineconeQueried = true;
           try {
-            const pinecone = await retrieveFromPinecone({
-              admin: args.admin,
-              projectId: args.projectId,
-              queryText,
-              embedding,
-              matchCount,
-              activeSourceIds,
-            });
+            const [pinecone, namespaceStats] = await Promise.all([
+              retrieveFromPinecone({
+                admin: args.admin,
+                projectId: args.projectId,
+                queries: pineconeQueries,
+                rerankQuery: queryTexts.at(-1) ?? queryText,
+                matchCount,
+                activeSourceIds,
+              }),
+              describePineconeNamespace(args.projectId).catch(() => null),
+            ]);
+            pineconeAuthoritativeNamespaceCount = namespaceStats?.vectorCount;
             pineconeCandidates = pinecone.candidates;
             pineconeReranked = pinecone.reranked;
+            pineconeTopRerankScore = pinecone.topRerankScore;
+            pineconePassagesRejected = pinecone.passagesRejected;
+            pineconeSelectedCount = pinecone.chunks.length;
+            pineconeOutcome = pinecone.chunks.length > 0 ? "used" : "no_relevant_match";
             await updatePineconeSyncState(args.admin, args.projectId, {
               status: "ready",
               last_queried_at: new Date().toISOString(),
               last_verified_at: new Date().toISOString(),
               last_error: null,
-              metadata: { retrieval_mode: "primary", candidates: pinecone.candidates, reranked: pinecone.reranked },
+              metadata: {
+                retrieval_mode: config.retrievalMode,
+                candidates: pinecone.candidates,
+                reranked: pinecone.reranked,
+                top_rerank_score: pinecone.topRerankScore ?? null,
+                passages_rejected: pinecone.passagesRejected,
+                selected_count: pinecone.chunks.length,
+                authoritative_namespace_count: pineconeAuthoritativeNamespaceCount ?? null,
+                outcome: pineconeOutcome,
+              },
             });
             if (pinecone.chunks.length > 0) return response(pinecone.chunks, "pinecone_hybrid", true);
           } catch (error) {
             pineconeError = (error as Error).message;
+            pineconeOutcome = "unavailable";
             await updatePineconeSyncState(args.admin, args.projectId, {
               status: "degraded",
               last_queried_at: new Date().toISOString(),
               last_verified_at: new Date().toISOString(),
               last_error: pineconeError.slice(0, 1000),
             });
+          }
+          // Project chat intentionally does not silently substitute Supabase evidence.
+          if (args.usePinecone === true) {
+            return response(
+              [],
+              pineconeOutcome === "no_relevant_match" ? "pinecone_no_match" : "pinecone_unavailable",
+              false,
+            );
           }
           const fallback = await retrieveFromSupabase({
             admin: args.admin,
@@ -506,20 +586,24 @@ export async function retrieveProjectKnowledge(args: {
                   return await retrieveFromPinecone({
                     admin: args.admin,
                     projectId: args.projectId,
-                    queryText,
-                    embedding,
+                    queries: pineconeQueries,
+                    rerankQuery: queryTexts.at(-1) ?? queryText,
                     matchCount,
                     activeSourceIds,
                   });
                 } catch (error) {
                   pineconeError = (error as Error).message;
-                  return { chunks: [] as RetrievalChunk[], candidates: 0, reranked: 0 };
+                  return { chunks: [] as RetrievalChunk[], candidates: 0, reranked: 0, passagesRejected: 0 };
                 }
               })()
-            : Promise.resolve({ chunks: [] as RetrievalChunk[], candidates: 0, reranked: 0 });
+            : Promise.resolve({ chunks: [] as RetrievalChunk[], candidates: 0, reranked: 0, passagesRejected: 0 });
           const [supabaseChunks, pinecone] = await Promise.all([supabasePromise, pineconePromise]);
           pineconeCandidates = pinecone.candidates;
           pineconeReranked = pinecone.reranked;
+          pineconeTopRerankScore = pinecone.topRerankScore;
+          pineconePassagesRejected = pinecone.passagesRejected;
+          pineconeSelectedCount = pinecone.chunks.length;
+          pineconeOutcome = pinecone.chunks.length > 0 ? "used" : pineconeEnabled ? "no_relevant_match" : "unavailable";
           if (pineconeEnabled) {
             const supabaseIds = new Set(supabaseChunks.map((chunk) => chunk.id));
             shadowOverlap = pinecone.chunks.filter((chunk) => supabaseIds.has(chunk.id)).length;
@@ -536,13 +620,34 @@ export async function retrieveProjectKnowledge(args: {
               },
             });
           }
+          if (args.usePinecone === true) {
+            if (pinecone.chunks.length > 0) return response(pinecone.chunks, "pinecone_hybrid", true);
+            return response(
+              [],
+              pineconeOutcome === "no_relevant_match" ? "pinecone_no_match" : "pinecone_unavailable",
+              false,
+            );
+          }
           if (supabaseChunks.length > 0) return response(supabaseChunks, "vector", false);
           if (pinecone.chunks.length > 0) return response(pinecone.chunks, "pinecone_hybrid", true);
         }
       }
     }
   } catch (error) {
+    pineconeError = (error as Error).message;
+    pineconeOutcome = "unavailable";
     console.warn("[retrieval] Vector search failed, using lexical fallback:", (error as Error).message);
+  }
+
+  if (args.usePinecone === true) {
+    pineconeError ??= !embeddingsEnabled
+      ? embeddingSkipReason ?? "Embeddings are disabled."
+      : !isPineconeConfigured()
+      ? "Pinecone is not configured."
+      : config.retrievalMode === "off"
+      ? "Pinecone retrieval is disabled."
+      : "Pinecone retrieval did not complete.";
+    return response([], "pinecone_unavailable", false);
   }
 
   const activeIds = [...activeSourceIds];
@@ -689,6 +794,41 @@ export async function syncProjectKnowledgeToPinecone(args: {
       }
     }
 
+    const activeIds = [...activeSourceIds];
+    const expectedCountQuery = args.admin
+      .from("project_knowledge_chunks")
+      .select("id", { count: "exact", head: true })
+      .eq("project_id", args.projectId)
+      .not("embedding", "is", null);
+    const { count: expectedCount, error: expectedCountError } = activeIds.length > 0
+      ? await expectedCountQuery.in("source_id", activeIds)
+      : { count: 0, error: null };
+    if (expectedCountError) throw new Error(expectedCountError.message);
+
+    let authoritativeCount = 0;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      authoritativeCount = (await describePineconeNamespace(args.projectId)).vectorCount;
+      if (authoritativeCount === (expectedCount ?? 0)) break;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+    }
+    const countMismatch = authoritativeCount !== (expectedCount ?? 0);
+    const countMismatchMessage = countMismatch
+      ? `Pinecone namespace count ${authoritativeCount} does not match ${expectedCount ?? 0} eligible project chunks.`
+      : null;
+    if (countMismatch) {
+      const { error: reconcileError } = await args.admin.rpc("enqueue_project_knowledge_index_job", {
+        p_project_id: args.projectId,
+        p_action: "upsert_project",
+        p_source_id: null,
+        p_metadata: {
+          reason: "namespace_count_mismatch",
+          authoritative_count: authoritativeCount,
+          expected_count: expectedCount ?? 0,
+        },
+      });
+      if (reconcileError) console.warn("[pinecone] Could not queue namespace reconciliation:", reconcileError.message);
+    }
+
     const now = new Date().toISOString();
     if (indexedSourceIds.size > 0) {
       await args.admin
@@ -697,16 +837,20 @@ export async function syncProjectKnowledgeToPinecone(args: {
         .in("id", [...indexedSourceIds]);
     }
     await updatePineconeSyncState(args.admin, args.projectId, {
-      status: "ready",
-      vector_count: eligible.length,
+      status: countMismatch ? "degraded" : "ready",
+      vector_count: authoritativeCount,
       last_indexed_at: now,
       last_verified_at: now,
-      last_error: null,
+      last_error: countMismatchMessage,
       metadata: {
         retrieval_mode: config.retrievalMode,
         hybrid_enabled: config.hybridEnabled,
         sparse_model: config.sparseModel,
         rerank_model: config.rerankEnabled ? config.rerankModel : null,
+        min_rerank_score: config.minRerankScore,
+        authoritative_namespace_count: authoritativeCount,
+        expected_chunk_count: expectedCount ?? 0,
+        count_consistent: !countMismatch,
       },
     });
     let completedJobs = args.admin
@@ -721,11 +865,12 @@ export async function syncProjectKnowledgeToPinecone(args: {
     if (completedJobsError) console.warn("[pinecone] Could not complete outbox rows:", completedJobsError.message);
     return {
       configured: true,
-      status: "ready",
+      status: countMismatch ? "degraded" : "ready",
       indexed_count: indexedCount,
       deleted_source_count: staleSources.length,
       index_name: config.indexName,
       namespace,
+      ...(countMismatchMessage ? { error: countMismatchMessage } : {}),
     };
   } catch (error) {
     const message = (error as Error).message;

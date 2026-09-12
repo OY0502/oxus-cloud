@@ -130,7 +130,7 @@ export function ProjectContextStatus({ projectId, compact = false }: { projectId
               : vectorSync?.status === "syncing"
                 ? "Indexing project knowledge…"
                 : vectorSync?.status === "degraded"
-                  ? "Supabase fallback is active"
+                  ? "Pinecone index needs reconciliation"
                   : "Ready after Pinecone is connected"
           }
         />

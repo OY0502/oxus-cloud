@@ -636,7 +636,7 @@ function taskValuesFromPayload(payload: Record<string, unknown>): ClickupTaskFor
 
 type ProjectAgentRunResultDiagnostics = {
   model?: string;
-  retrieval_mode?: "vector" | "fallback";
+  retrieval_mode?: "pinecone_hybrid" | "pinecone_no_match" | "pinecone_unavailable" | "vector" | "fallback";
   chunks_retrieved_count?: number;
   trigger_run_id?: string;
   langfuse_trace_id?: string;
@@ -654,6 +654,13 @@ type ProjectAgentRunResultDiagnostics = {
   embeddings_enabled?: boolean;
   embedding_provider?: string;
   embedding_skip_reason?: string;
+  pinecone_outcome?: "used" | "no_relevant_match" | "unavailable";
+  pinecone_candidates?: number;
+  pinecone_top_rerank_score?: number;
+  pinecone_passages_rejected?: number;
+  pinecone_selected_count?: number;
+  pinecone_authoritative_namespace_count?: number;
+  pinecone_failure_reason?: string;
   trigger_enabled?: boolean;
   fallback_used?: boolean;
   runtime?: string;
@@ -795,6 +802,23 @@ export function AgentRunDiagnosticsPanel({
                   ? ")"
                   : ""}
             </p>
+          )}
+          {diagnostics?.pinecone_outcome && (
+            <p className={diagnostics.pinecone_outcome === "used" ? undefined : "text-amber-600"}>
+              pinecone: {diagnostics.pinecone_outcome}
+              {diagnostics.pinecone_candidates != null ? ` · ${diagnostics.pinecone_candidates} candidates` : ""}
+              {diagnostics.pinecone_selected_count != null ? ` · ${diagnostics.pinecone_selected_count} selected` : ""}
+              {diagnostics.pinecone_passages_rejected != null ? ` · ${diagnostics.pinecone_passages_rejected} rejected` : ""}
+              {diagnostics.pinecone_top_rerank_score != null
+                ? ` · top score ${diagnostics.pinecone_top_rerank_score.toFixed(3)}`
+                : ""}
+            </p>
+          )}
+          {diagnostics?.pinecone_authoritative_namespace_count != null && (
+            <p>pinecone_namespace_vectors: {diagnostics.pinecone_authoritative_namespace_count}</p>
+          )}
+          {diagnostics?.pinecone_failure_reason && (
+            <p className="text-amber-600">pinecone_error: {diagnostics.pinecone_failure_reason}</p>
           )}
           {diagnostics?.embeddings_enabled != null && (
             <p>
