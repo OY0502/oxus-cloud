@@ -133,11 +133,12 @@ describe("project chat architecture", () => {
 
   it("pastes screenshots into project chat and analyzes them before proposing ClickUp tasks", async () => {
     const fs = await import("node:fs/promises");
-    const [chat, api, orchestration, model] = await Promise.all([
+    const [chat, api, orchestration, model, uploadSigner] = await Promise.all([
       fs.readFile(new URL("../components/projects/ProjectChat.tsx", import.meta.url), "utf8"),
       fs.readFile(new URL("../hooks/api.ts", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/functions/_shared/agent/orchestration.ts", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/functions/_shared/agent/aiModel.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/functions/project-upload-signature/index.ts", import.meta.url), "utf8"),
     ]);
 
     expect(chat).toContain("onPaste={(event)");
@@ -150,11 +151,15 @@ describe("project chat architecture", () => {
     expect(api).toContain("uploadTokenRefresh");
     expect(api).toContain("const accessToken = await getFreshUploadToken()");
     expect(api).not.toContain('const accessToken = file.type.startsWith("image/")');
-    expect(api).toContain("supabaseResumableUploadEndpoint(supabaseUrl)");
+    expect(api).toContain("supabaseResumableUploadEndpoint(supabaseUrl, true)");
+    expect(api).toContain('"project-upload-signature"');
+    expect(api).toContain('headers: { "x-signature": uploadSignature }');
+    expect(api).not.toContain('headers: { authorization: `Bearer ${accessToken}`');
     expect(api).not.toContain("apikey: publishableKey");
-    expect(api).toContain('"x-upsert": "false"');
     expect(api).toContain("supabase.storage.from(DOCUMENTS_BUCKET).upload");
     expect(api).toContain("Your session has expired. Sign in again and retry the upload.");
+    expect(uploadSigner).toContain("assertInternalOxusUser(req)");
+    expect(uploadSigner).toContain("createSignedUploadUrl(objectPath, { upsert: false })");
     expect(orchestration).toContain("extractImageEvidence");
     expect(orchestration).toContain("Keep screenshots below 12 MB");
     expect(model).toContain("project_image_evidence");

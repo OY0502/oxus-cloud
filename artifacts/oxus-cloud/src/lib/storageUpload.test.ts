@@ -8,6 +8,12 @@ describe("project intake storage uploads", () => {
     );
   });
 
+  it("uses Supabase's signed resumable endpoint when requested", () => {
+    expect(supabaseResumableUploadEndpoint("https://example.supabase.co", true)).toBe(
+      "https://example.storage.supabase.co/storage/v1/upload/resumable/sign",
+    );
+  });
+
   it("preserves a custom host while replacing its upload path", () => {
     expect(supabaseResumableUploadEndpoint("https://storage.example.com/api?old=true")).toBe(
       "https://storage.example.com/storage/v1/upload/resumable",

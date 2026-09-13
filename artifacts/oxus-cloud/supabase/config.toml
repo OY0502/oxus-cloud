@@ -59,6 +59,12 @@ verify_jwt = false
 [functions.project-meeting-transcribe-chunk]
 verify_jwt = false
 
+# Auth is validated inside the function against Supabase Auth. Keeping gateway
+# verification off avoids the Storage/Gateway asymmetric-JWT compatibility path
+# that this function exists to bypass.
+[functions.project-upload-signature]
+verify_jwt = false
+
 [functions.clickup-sync-project-hierarchy]
 verify_jwt = false
 

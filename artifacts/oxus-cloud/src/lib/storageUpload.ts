@@ -1,9 +1,9 @@
-export function supabaseResumableUploadEndpoint(projectUrl: string): string {
+export function supabaseResumableUploadEndpoint(projectUrl: string, signed = false): string {
   const endpoint = new URL(projectUrl);
   if (endpoint.hostname.endsWith(".supabase.co") && !endpoint.hostname.endsWith(".storage.supabase.co")) {
     endpoint.hostname = endpoint.hostname.replace(/\.supabase\.co$/, ".storage.supabase.co");
   }
-  endpoint.pathname = "/storage/v1/upload/resumable";
+  endpoint.pathname = `/storage/v1/upload/resumable${signed ? "/sign" : ""}`;
   endpoint.search = "";
   endpoint.hash = "";
   return endpoint.toString();

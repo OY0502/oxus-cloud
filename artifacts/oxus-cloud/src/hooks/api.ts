@@ -1979,37 +1979,51 @@ export async function uploadProjectAgentIntakeFile(
     });
     if (uploadError) throw new Error(uploadError.message);
     onProgress?.(100);
-  } else await new Promise<void>((resolve, reject) => {
-    const upload = new Upload(file, {
-      endpoint: supabaseResumableUploadEndpoint(supabaseUrl),
-      headers: { authorization: `Bearer ${accessToken}`, "x-upsert": "false" },
-      uploadDataDuringCreation: true,
-      removeFingerprintOnSuccess: true,
-      retryDelays: [0, 1000, 3000, 5000, 10000],
-      chunkSize: 6 * 1024 * 1024,
-      metadata: {
-        bucketName: DOCUMENTS_BUCKET,
-        objectName: path,
-        contentType: file.type || "application/octet-stream",
-        cacheControl: "3600",
-      },
-      onBeforeRequest: async (request) => {
-        const { data } = await supabase.auth.getSession();
-        const freshToken = data.session?.access_token;
-        if (!freshToken || !isCompactJwt(freshToken)) {
-          throw new Error("Your session has expired. Sign in again and retry the upload.");
-        }
-        request.setHeader("authorization", `Bearer ${freshToken}`);
-      },
-      onError: reject,
-      onProgress: (uploaded, total) => onProgress?.(total > 0 ? Math.round((uploaded / total) * 100) : 0),
-      onSuccess: () => resolve(),
+  } else {
+    // Storage's authenticated TUS route can reject otherwise-valid asymmetric
+    // Supabase Auth JWTs before RLS is evaluated. Authorize the exact object
+    // once through an Edge Function, then use Storage's object-bound signed TUS
+    // route. The browser never receives the service key and the signature is
+    // valid only for this path and upload operation.
+    const { data: signedUpload, error: signError } = await supabase.functions.invoke<{
+      token?: string;
+      error?: string;
+    }>("project-upload-signature", {
+      body: { project_id: projectId, object_path: path },
+      headers: { Authorization: `Bearer ${accessToken}` },
     });
-    upload.findPreviousUploads().then((previous) => {
-      if (previous[0]) upload.resumeFromPreviousUpload(previous[0]);
+    const uploadSignature = signedUpload?.token;
+    if (signError || !uploadSignature || !isCompactJwt(uploadSignature)) {
+      throw new Error(
+        signedUpload?.error || signError?.message || "Could not authorize the recording upload. Please retry.",
+      );
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const upload = new Upload(file, {
+        endpoint: supabaseResumableUploadEndpoint(supabaseUrl, true),
+        headers: { "x-signature": uploadSignature },
+        uploadDataDuringCreation: true,
+        removeFingerprintOnSuccess: true,
+        retryDelays: [0, 1000, 3000, 5000, 10000],
+        chunkSize: 6 * 1024 * 1024,
+        metadata: {
+          bucketName: DOCUMENTS_BUCKET,
+          objectName: path,
+          contentType: file.type || "application/octet-stream",
+          cacheControl: "3600",
+        },
+        onError: reject,
+        onProgress: (uploaded, total) => onProgress?.(total > 0 ? Math.round((uploaded / total) * 100) : 0),
+        onSuccess: () => resolve(),
+      });
+      // A fresh random object path is generated for every submission. Reusing a
+      // previous TUS URL here would upload to the old path while recording the new
+      // path in `attachments`, so retries are handled by this uploader instance
+      // only.
       upload.start();
-    }).catch(reject);
-  });
+    });
+  }
 
   const { data, error: insErr } = await supabase
     .from("attachments")
