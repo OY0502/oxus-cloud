@@ -373,7 +373,7 @@ export const projectMeetingFileIngestTask = task({
   run: async (payload: { batch_id: string; item_id: string; project_id: string; user_id: string }) => {
     const admin = getServiceClient();
     const { data: item, error: itemError } = await admin.from("project_meeting_ingestion_items")
-      .select("*, attachment:attachments(id, file_name, file_path, mime_type, file_size)")
+      .select("*, attachment:attachments!project_meeting_ingestion_items_attachment_id_fkey(id, file_name, file_path, mime_type, file_size)")
       .eq("id", payload.item_id).eq("batch_id", payload.batch_id).single();
     if (itemError || !item?.attachment) throw new Error(itemError?.message ?? "Meeting ingestion item not found.");
     if (item.status === "completed") return { item_id: payload.item_id, skipped: true };

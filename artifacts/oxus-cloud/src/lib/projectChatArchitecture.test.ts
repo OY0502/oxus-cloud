@@ -128,11 +128,12 @@ describe("project chat architecture", () => {
     expect(chat).toContain("batch.chat_session_id === activeSessionId");
     expect(batchStart).toContain("attachments: (attachments ?? []).map");
     expect(retry).toContain("isServiceRoleRequest(req)");
-    expect(retry).toContain('item.status === "queued"');
+    expect(retry).toContain('body.include_failed ? new Set(["queued", "failed"])');
     expect(retry).toContain('triggerDevTask("project-meeting-batch"');
     expect(chat).not.toContain(".pdf,.doc,.docx");
     expect(trigger).toContain('id: "project-meeting-batch"');
     expect(trigger).toContain('id: "project-meeting-file-ingest"');
+    expect(trigger).toContain("attachments!project_meeting_ingestion_items_attachment_id_fkey");
     expect(trigger).toContain("childBatch.runs.map");
     expect(trigger).toContain("counts.completed + counts.failed !== counts.total");
     expect(trigger).toContain('counts.completed === counts.total ? "completed"');

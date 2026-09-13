@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "Method not allowed." }, 405);
   if (!(await isServiceRoleRequest(req))) return json({ error: "Forbidden." }, 403);
 
-  const body = await req.json().catch(() => ({})) as { batch_id?: string };
+  const body = await req.json().catch(() => ({})) as { batch_id?: string; include_failed?: boolean };
   const batchId = body.batch_id?.trim();
   if (!batchId) return json({ error: "batch_id is required." }, 400);
 
@@ -41,8 +41,9 @@ Deno.serve(async (req) => {
     .select("id, status")
     .eq("batch_id", batchId);
   if (itemsError) return json({ error: itemsError.message }, 500);
-  const retryIds = (items ?? []).filter((item) => item.status === "queued").map((item) => item.id);
-  if (!retryIds.length) return json({ error: "Meeting batch has no stranded queued files." }, 409);
+  const retryableStatuses = body.include_failed ? new Set(["queued", "failed"]) : new Set(["queued"]);
+  const retryIds = (items ?? []).filter((item) => retryableStatuses.has(item.status)).map((item) => item.id);
+  if (!retryIds.length) return json({ error: "Meeting batch has no retryable files." }, 409);
   const completedCount = (items ?? []).filter((item) => item.status === "completed").length;
   const failedCount = (items ?? []).filter((item) => item.status === "failed").length;
   const progress = items?.length ? Math.round(((completedCount + failedCount) / items.length) * 100) : 0;
