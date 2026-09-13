@@ -111,19 +111,31 @@ describe("project chat architecture", () => {
 
   it("accepts large recording batches through durable background ingestion", async () => {
     const fs = await import("node:fs/promises");
-    const [chat, trigger, migration, transcriber] = await Promise.all([
+    const [chat, trigger, migration, transcriber, batchStart, retry] = await Promise.all([
       fs.readFile(new URL("../components/projects/ProjectChat.tsx", import.meta.url), "utf8"),
       fs.readFile(new URL("../trigger/index.ts", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/migrations/20260902120000_project_meeting_ingestion.sql", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/functions/project-meeting-transcribe-chunk/index.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/functions/project-meeting-batch-start/index.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/functions/project-meeting-retry/index.ts", import.meta.url), "utf8"),
     ]);
 
     expect(chat).toContain(".mp3,.mp4,.m4a,.wav,.webm");
     expect(chat).toContain("up to 20 recordings or transcripts");
-    expect(chat).toContain("processing continues after you leave");
+    expect(chat).toContain("background analysis does not lock the chat");
+    expect(chat).toContain("You can keep chatting");
+    expect(chat).toContain("Replies sent now use existing project context");
+    expect(chat).toContain("batch.chat_session_id === activeSessionId");
+    expect(batchStart).toContain("attachments: (attachments ?? []).map");
+    expect(retry).toContain("isServiceRoleRequest(req)");
+    expect(retry).toContain('item.status === "queued"');
+    expect(retry).toContain('triggerDevTask("project-meeting-batch"');
     expect(chat).not.toContain(".pdf,.doc,.docx");
     expect(trigger).toContain('id: "project-meeting-batch"');
     expect(trigger).toContain('id: "project-meeting-file-ingest"');
+    expect(trigger).toContain("childBatch.runs.map");
+    expect(trigger).toContain("counts.completed + counts.failed !== counts.total");
+    expect(trigger).toContain('counts.completed === counts.total ? "completed"');
     expect(trigger).toContain('"-segment_time", "600"');
     expect(migration).toContain("project_meeting_ingestion_batches");
     expect(migration).toContain("project_meeting_ingestion_items");
@@ -165,9 +177,12 @@ describe("project chat architecture", () => {
     expect(model).toContain("project_image_evidence");
     expect(model).toContain('detail: "high"');
     expect(model).toContain("confirmation-gated task suggestions");
-    expect(chat).toContain("ChatImageAttachments");
-    expect(chat).toContain("Message screenshots");
-    expect(chat).toContain("Full-size screenshot attached to this chat message");
+    expect(chat).toContain("ChatFileAttachments");
+    expect(chat).toContain("Message attachments");
+    expect(chat).toContain('attachmentPreviewKind(selected) === "pdf"');
+    expect(chat).toContain('attachmentPreviewKind(selected) === "text"');
+    expect(chat).toContain('attachmentPreviewKind(selected) === "audio"');
+    expect(chat).toContain('attachmentPreviewKind(selected) === "video"');
     expect(chat).toContain("getAttachmentUrl");
     expect(chat).toContain('useAttachments("project", projectId)');
     expect(chat).toContain("ageMs <= 5 * 60_000");

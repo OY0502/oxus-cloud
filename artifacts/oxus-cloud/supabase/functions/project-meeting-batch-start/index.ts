@@ -83,7 +83,18 @@ Deno.serve(async (req) => {
   }
   await admin.from("project_chat_messages").insert({
     project_id: projectId, chat_session_id: sessionId, user_id: auth.userId, role: "user", content: message,
-    metadata: { meeting_ingestion_batch_id: batchId, file_count: attachmentIds.length, background_processing: true },
+    metadata: {
+      meeting_ingestion_batch_id: batchId,
+      file_count: attachmentIds.length,
+      background_processing: true,
+      attachments: (attachments ?? []).map((attachment) => ({
+        id: attachment.id,
+        file_name: attachment.file_name,
+        file_path: attachment.file_path,
+        file_size: attachment.file_size,
+        mime_type: attachment.mime_type,
+      })),
+    },
   });
   try {
     const triggered = await triggerDevTask("project-meeting-batch", {

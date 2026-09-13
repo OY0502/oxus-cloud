@@ -475,12 +475,28 @@ export const projectMeetingBatchTask = task({
     await admin.from("project_meeting_ingestion_batches").update({ status: "processing", started_at: new Date().toISOString(), error_message: null }).eq("id", payload.batch_id);
     const { data: items, error } = await admin.from("project_meeting_ingestion_items").select("id").eq("batch_id", payload.batch_id).order("created_at");
     if (error || !items?.length) throw new Error(error?.message ?? "Meeting batch has no files.");
-    await tasks.batchTriggerAndWait("project-meeting-file-ingest", items.map((item) => ({
+    const childBatch = await tasks.batchTriggerAndWait("project-meeting-file-ingest", items.map((item) => ({
       payload: { batch_id: payload.batch_id, item_id: item.id, project_id: payload.project_id, user_id: payload.user_id },
-      options: { idempotencyKey: `project-meeting-file-ingest:${item.id}` },
     })));
+    // A child can fail before its task body starts (for example during worker
+    // scheduling). In that case it never gets a chance to mark its ingestion
+    // item failed, so reconcile the Trigger result back into durable item state.
+    await Promise.all(childBatch.runs.map(async (childRun, index) => {
+      if (childRun.ok) return;
+      await admin.from("project_meeting_ingestion_items").update({
+        status: "failed",
+        progress_percent: 100,
+        error_message: errorMessage(childRun.error).slice(0, 1000),
+        completed_at: new Date().toISOString(),
+      }).eq("id", items[index].id).neq("status", "completed");
+    }));
     const counts = await updateMeetingBatchCounts(payload.batch_id);
-    const status = counts.failed === 0 ? "completed" : counts.completed > 0 ? "partial" : "failed";
+    if (counts.completed + counts.failed !== counts.total) {
+      throw new Error(
+        `Meeting batch stopped before all files reached a terminal state (${counts.completed + counts.failed}/${counts.total}).`,
+      );
+    }
+    const status = counts.completed === counts.total ? "completed" : counts.completed > 0 ? "partial" : "failed";
     const completedAt = new Date().toISOString();
     await admin.from("project_meeting_ingestion_batches").update({ status, progress_percent: 100, completed_at: completedAt }).eq("id", payload.batch_id);
 

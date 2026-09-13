@@ -65,6 +65,11 @@ verify_jwt = false
 [functions.project-upload-signature]
 verify_jwt = false
 
+# Internal recovery for safely requeuing a stored meeting batch without asking
+# the user to upload the original recordings again.
+[functions.project-meeting-retry]
+verify_jwt = false
+
 [functions.clickup-sync-project-hierarchy]
 verify_jwt = false
 

@@ -9,6 +9,7 @@ import {
   CircleHelp,
   Clock3,
   Database,
+  Download,
   FileText,
   Image as ImageIcon,
   ListChecks,
@@ -75,6 +76,7 @@ type ChatAttachment = {
   fileName: string;
   filePath: string;
   mimeType?: string;
+  fileSize?: number;
 };
 
 function messageMetadata(value: unknown): {
@@ -91,9 +93,11 @@ function messageMetadata(value: unknown): {
   memoryCitations: MemoryCitation[];
   attachments: ChatAttachment[];
   uploadedFileCount: number;
+  meetingBatchId?: string;
+  backgroundProcessing: boolean;
 } {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { fileReview: false, failed: false, questions: [], memorySources: [], memoryCitations: [], attachments: [], uploadedFileCount: 0 };
+    return { fileReview: false, failed: false, questions: [], memorySources: [], memoryCitations: [], attachments: [], uploadedFileCount: 0, backgroundProcessing: false };
   }
   const metadata = value as Record<string, unknown>;
   const questions = Array.isArray(metadata.clarification_questions)
@@ -152,57 +156,139 @@ function messageMetadata(value: unknown): {
             fileName: typeof row.file_name === "string" ? row.file_name : "Screenshot",
             filePath,
             mimeType: typeof row.mime_type === "string" ? row.mime_type : undefined,
+            fileSize: typeof row.file_size === "number" ? row.file_size : undefined,
           }];
         })
       : [],
-    uploadedFileCount: typeof metadata.uploaded_file_count === "number" ? metadata.uploaded_file_count : 0,
+    uploadedFileCount: typeof metadata.uploaded_file_count === "number"
+      ? metadata.uploaded_file_count
+      : typeof metadata.file_count === "number" ? metadata.file_count : 0,
+    meetingBatchId: typeof metadata.meeting_ingestion_batch_id === "string" ? metadata.meeting_ingestion_batch_id : undefined,
+    backgroundProcessing: metadata.background_processing === true,
   };
 }
 
-function ChatImageAttachments({ attachments }: { attachments: ChatAttachment[] }) {
-  const images = attachments.filter((attachment) => attachment.mimeType?.startsWith("image/"));
+type AttachmentPreviewKind = "image" | "pdf" | "text" | "audio" | "video" | "file";
+
+function attachmentPreviewKind(attachment: ChatAttachment): AttachmentPreviewKind {
+  const mime = attachment.mimeType?.toLowerCase() ?? "";
+  const extension = attachment.fileName.split(".").pop()?.toLowerCase() ?? "";
+  if (mime.startsWith("image/")) return "image";
+  if (mime === "application/pdf" || extension === "pdf") return "pdf";
+  if (mime.startsWith("text/") || ["txt", "md", "csv", "json", "vtt", "srt"].includes(extension)) return "text";
+  if (mime.startsWith("audio/")) return "audio";
+  if (mime.startsWith("video/")) return "video";
+  return "file";
+}
+
+function formatAttachmentSize(bytes?: number): string | undefined {
+  if (bytes == null || !Number.isFinite(bytes)) return undefined;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+function attachmentIcon(kind: AttachmentPreviewKind) {
+  if (kind === "image") return <ImageIcon className="h-4 w-4" />;
+  if (kind === "audio" || kind === "video") return <AudioLines className="h-4 w-4" />;
+  return <FileText className="h-4 w-4" />;
+}
+
+function ChatFileAttachments({ attachments, status }: { attachments: ChatAttachment[]; status?: string }) {
   const [urls, setUrls] = useState<Record<string, string>>({});
+  const [textPreviews, setTextPreviews] = useState<Record<string, string>>({});
   const [selected, setSelected] = useState<ChatAttachment | null>(null);
+  const attachmentKey = attachments.map((attachment) => `${attachment.id}:${attachment.filePath}`).join("|");
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all(images.map(async (attachment) => [attachment.id, await getAttachmentUrl(attachment.filePath)] as const))
-      .then((entries) => {
-        if (!cancelled) setUrls(Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => !!entry[1])));
+    const controller = new AbortController();
+    void Promise.all(attachments.map(async (attachment) => {
+      const url = await getAttachmentUrl(attachment.filePath);
+      if (!url || attachmentPreviewKind(attachment) !== "text") return { id: attachment.id, url };
+      try {
+        const response = await fetch(url, { headers: { Range: "bytes=0-65535" }, signal: controller.signal });
+        if (!response.ok) return { id: attachment.id, url };
+        const preview = (await response.text()).slice(0, 65_536);
+        return { id: attachment.id, url, preview };
+      } catch {
+        return { id: attachment.id, url };
+      }
+    })).then((entries) => {
+        if (!cancelled) {
+          setUrls(Object.fromEntries(entries.flatMap((entry) => entry.url ? [[entry.id, entry.url]] : [])));
+          setTextPreviews(Object.fromEntries(entries.flatMap((entry) => entry.preview ? [[entry.id, entry.preview]] : [])));
+        }
       });
-    return () => { cancelled = true; };
-  }, [attachments]);
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [attachmentKey]);
 
-  if (images.length === 0) return null;
+  if (attachments.length === 0) return null;
   return (
     <>
-      <div className="mt-2 grid max-w-md grid-cols-2 gap-2" aria-label="Message screenshots">
-        {images.map((attachment) => (
-          <button
-            key={attachment.id}
-            type="button"
-            onClick={() => setSelected(attachment)}
-            disabled={!urls[attachment.id]}
-            className="group overflow-hidden rounded-lg border border-primary-foreground/20 bg-background/10 text-left disabled:opacity-60"
-            aria-label={`View ${attachment.fileName}`}
-          >
-            {urls[attachment.id] ? (
-              <img src={urls[attachment.id]} alt={attachment.fileName} className="h-28 w-full object-cover transition-transform group-hover:scale-[1.02]" />
-            ) : (
-              <span className="flex h-28 items-center justify-center"><Loader2 className="h-4 w-4 animate-spin" /></span>
-            )}
-            <span className="block truncate border-t border-primary-foreground/15 px-2 py-1 text-[11px]">{attachment.fileName}</span>
-          </button>
-        ))}
+      <div className="mt-2 grid max-w-lg grid-cols-1 gap-2 sm:grid-cols-2" aria-label="Message attachments">
+        {attachments.map((attachment) => {
+          const kind = attachmentPreviewKind(attachment);
+          const preview = textPreviews[attachment.id]?.replace(/\s+/g, " ").trim();
+          return (
+            <button
+              key={attachment.id}
+              type="button"
+              onClick={() => setSelected(attachment)}
+              disabled={!urls[attachment.id]}
+              className="group min-w-0 overflow-hidden rounded-lg border border-primary-foreground/20 bg-background/10 text-left disabled:opacity-60"
+              aria-label={`Preview ${attachment.fileName}`}
+            >
+              {kind === "image" ? (
+                urls[attachment.id]
+                  ? <img src={urls[attachment.id]} alt={attachment.fileName} className="h-28 w-full object-cover transition-transform group-hover:scale-[1.02]" />
+                  : <span className="flex h-28 items-center justify-center"><Loader2 className="h-4 w-4 animate-spin" /></span>
+              ) : (
+                <span className="flex min-h-20 flex-col gap-1.5 p-2.5">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="text-primary-foreground/80">{attachmentIcon(kind)}</span>
+                    <span className="min-w-0 flex-1 truncate font-medium">{attachment.fileName}</span>
+                    {!urls[attachment.id] && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  </span>
+                  {preview ? (
+                    <span className="line-clamp-2 text-[11px] leading-4 text-primary-foreground/70">{preview}</span>
+                  ) : (
+                    <span className="text-[11px] text-primary-foreground/65">
+                      {kind === "pdf" ? "PDF preview" : kind === "audio" ? "Audio recording" : kind === "video" ? "Video recording" : "File preview"}
+                    </span>
+                  )}
+                  <span className="mt-auto text-[10px] uppercase tracking-wide text-primary-foreground/55">
+                    {[kind, formatAttachmentSize(attachment.fileSize), status].filter(Boolean).join(" · ")}
+                  </span>
+                </span>
+              )}
+              {kind === "image" && (
+                <span className="block truncate border-t border-primary-foreground/15 px-2 py-1 text-[11px]">
+                  {attachment.fileName}{status ? ` · ${status}` : ""}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
       <Dialog open={!!selected} onOpenChange={(open) => { if (!open) setSelected(null); }}>
         <DialogContent className="max-h-[92vh] max-w-5xl overflow-auto p-3 sm:p-4">
           <DialogHeader className="pr-8 text-left">
             <DialogTitle className="truncate text-sm">{selected?.fileName}</DialogTitle>
-            <DialogDescription className="sr-only">Full-size screenshot attached to this chat message.</DialogDescription>
+            <DialogDescription>Preview of the file attached to this chat message.</DialogDescription>
           </DialogHeader>
-          {selected && urls[selected.id] && (
-            <img src={urls[selected.id]} alt={selected.fileName} className="mx-auto max-h-[80vh] max-w-full rounded-md object-contain" />
+          {selected && urls[selected.id] && attachmentPreviewKind(selected) === "image" && <img src={urls[selected.id]} alt={selected.fileName} className="mx-auto max-h-[80vh] max-w-full rounded-md object-contain" />}
+          {selected && urls[selected.id] && attachmentPreviewKind(selected) === "pdf" && <iframe src={urls[selected.id]} title={selected.fileName} className="h-[75vh] w-full rounded-md border" />}
+          {selected && attachmentPreviewKind(selected) === "text" && <pre className="max-h-[75vh] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-4 text-xs leading-5">{textPreviews[selected.id] || "Preview unavailable."}</pre>}
+          {selected && urls[selected.id] && attachmentPreviewKind(selected) === "audio" && <audio src={urls[selected.id]} controls className="w-full" />}
+          {selected && urls[selected.id] && attachmentPreviewKind(selected) === "video" && <video src={urls[selected.id]} controls className="max-h-[75vh] w-full rounded-md bg-black" />}
+          {selected && urls[selected.id] && attachmentPreviewKind(selected) === "file" && (
+            <a href={urls[selected.id]} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted">
+              <Download className="h-4 w-4" /> Open file
+            </a>
           )}
         </DialogContent>
       </Dialog>
@@ -409,7 +495,7 @@ function withoutDuplicatedClarifications(content: string, hasInteractiveQuestion
 export function ProjectChat({ projectId, className }: { projectId: string; className?: string }) {
   const { toast } = useToast();
   const { data: chatSessions = [], isLoading: sessionsLoading, refetch: refetchSessions } = useProjectChatSessions(projectId);
-  const { data: projectAttachments = [] } = useAttachments("project", projectId);
+  const { data: projectAttachments = [], refetch: refetchProjectAttachments } = useAttachments("project", projectId);
   const [activeSessionId, setActiveSessionId] = useState<string>();
   const [chatPickerOpen, setChatPickerOpen] = useState(false);
   const { data: messages = [], isLoading, refetch } = useProjectChatMessages(projectId, activeSessionId);
@@ -434,7 +520,9 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
 
   const uploading = startMeetingIngestion.isPending || Object.keys(uploadProgress).length > 0;
   const running = runAgent.isPending || run.data?.status === "pending" || run.data?.status === "running";
-  const activeMeetingBatch = meetingBatches.find((batch) => batch.status === "queued" || batch.status === "processing");
+  const activeMeetingBatches = meetingBatches.filter((batch) =>
+    batch.chat_session_id === activeSessionId && (batch.status === "queued" || batch.status === "processing")
+  );
 
   useEffect(() => {
     setActiveSessionId(undefined);
@@ -605,7 +693,7 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
           setUploadProgress({});
           if (fileInputRef.current) fileInputRef.current.value = "";
           setActiveRunId(result.agent_run_id);
-          await Promise.all([refetch(), refetchSessions()]);
+          await Promise.all([refetch(), refetchSessions(), refetchProjectAttachments()]);
           if (!result.async) setActiveRunId(undefined);
           return;
         }
@@ -620,7 +708,7 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
         setFiles([]);
         setUploadProgress({});
         if (fileInputRef.current) fileInputRef.current.value = "";
-        await Promise.all([refetch(), refetchSessions(), refetchMeetingBatches()]);
+        await Promise.all([refetch(), refetchSessions(), refetchMeetingBatches(), refetchProjectAttachments()]);
         toast({
           title: "Meeting import started",
           description: `${selectedFiles.length} file${selectedFiles.length === 1 ? " is" : "s are"} processing in the background. You can safely leave this page.`,
@@ -822,35 +910,55 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
               </div>
             )}
 
-            {activeMeetingBatch && (
-              <div className="rounded-xl border border-info/25 bg-info-muted/35 p-3.5" role="status" aria-live="polite">
+            {activeMeetingBatches.map((batch) => (
+              <div key={batch.id} className="rounded-xl border border-info/25 bg-info-muted/35 p-3.5" role="status" aria-live="polite">
                 <div className="flex items-start gap-3">
                   <div className="rounded-lg bg-info/10 p-2 text-info"><AudioLines className="h-4 w-4" /></div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-sm font-semibold">Processing meeting context</p>
-                      <span className="text-xs tabular-nums text-muted-foreground">{activeMeetingBatch.progress_percent}%</span>
+                      <span className="text-xs tabular-nums text-muted-foreground">{batch.progress_percent}%</span>
                     </div>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                      {activeMeetingBatch.completed_count} of {activeMeetingBatch.file_count} files analyzed
-                      {activeMeetingBatch.failed_count > 0 ? ` · ${activeMeetingBatch.failed_count} failed` : ""}
+                      {batch.completed_count} of {batch.file_count} files analyzed
+                      {batch.failed_count > 0 ? ` · ${batch.failed_count} failed` : ""}
                     </p>
                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-info/10">
-                      <div className="h-full rounded-full bg-info transition-[width] duration-500" style={{ width: `${activeMeetingBatch.progress_percent}%` }} />
+                      <div className="h-full rounded-full bg-info transition-[width] duration-500" style={{ width: `${batch.progress_percent}%` }} />
                     </div>
-                    <p className="mt-2 text-[11px] text-muted-foreground">Safe to leave this page — analysis continues in the background and the summary will appear here.</p>
+                    {(batch.items ?? []).length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {(batch.items ?? []).map((item) => (
+                          <div key={item.id} className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                            {item.status === "completed"
+                              ? <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                              : item.status === "failed"
+                                ? <X className="h-3 w-3 text-destructive" />
+                                : item.status === "queued"
+                                  ? <Clock3 className="h-3 w-3 text-info" />
+                                  : <Loader2 className="h-3 w-3 animate-spin text-info" />}
+                            <span className="min-w-0 flex-1 truncate">{item.file_name}</span>
+                            <span className="capitalize">{item.status.replaceAll("_", " ")}</span>
+                            <span className="w-8 text-right tabular-nums">{item.progress_percent}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <p className="mt-2 text-[11px] text-muted-foreground">
+                      You can keep chatting. Replies sent now use existing project context; these meetings become available after analysis finishes, and the summary will appear here.
+                    </p>
                   </div>
                 </div>
               </div>
-            )}
+            ))}
 
             {messages.map((message) => {
               const fromUser = message.role === "user";
               const metadata = messageMetadata(message.metadata);
-              const fallbackImages = fromUser && metadata.attachments.length === 0 && metadata.uploadedFileCount > 0
+              const fallbackAttachments = fromUser && metadata.attachments.length === 0 && metadata.uploadedFileCount > 0
                 ? projectAttachments
                   .filter((attachment) => {
-                    if (!attachment.file_path || !attachment.mime_type?.startsWith("image/")) return false;
+                    if (!attachment.file_path) return false;
                     if (message.user_id && attachment.uploaded_by !== message.user_id) return false;
                     const ageMs = new Date(message.created_at).getTime() - new Date(attachment.created_at).getTime();
                     return ageMs >= -30_000 && ageMs <= 5 * 60_000;
@@ -863,9 +971,16 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
                     fileName: attachment.file_name ?? "Screenshot",
                     filePath: attachment.file_path!,
                     mimeType: attachment.mime_type ?? undefined,
+                    fileSize: attachment.file_size ?? undefined,
                   }))
                 : [];
-              const messageAttachments = metadata.attachments.length > 0 ? metadata.attachments : fallbackImages;
+              const messageAttachments = metadata.attachments.length > 0 ? metadata.attachments : fallbackAttachments;
+              const meetingBatch = metadata.meetingBatchId
+                ? meetingBatches.find((batch) => batch.id === metadata.meetingBatchId)
+                : undefined;
+              const attachmentStatus = meetingBatch?.status === "queued"
+                ? "queued"
+                : meetingBatch?.status === "processing" ? `${meetingBatch.progress_percent}% processing` : meetingBatch?.status;
               return (
                 <div key={message.id} className={cn("flex gap-2.5", fromUser && "flex-row-reverse")}>
                   <div className={cn(
@@ -884,7 +999,7 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
                       {fromUser ? (
                         <div>
                           <p className="whitespace-pre-wrap">{message.content}</p>
-                          <ChatImageAttachments attachments={messageAttachments} />
+                          <ChatFileAttachments attachments={messageAttachments} status={attachmentStatus} />
                         </div>
                       ) : (
                         <ChatMessageContent
@@ -1114,7 +1229,7 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
               {running || uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             </Button>
           </div>
-          <p className="mt-1.5 text-[11px] text-muted-foreground">Attach up to 20 recordings or transcripts, or paste/attach screenshots with Ctrl+V. Large recording uploads resume automatically; processing continues after you leave. Screenshot tasks are always shown for confirmation before ClickUp creation.</p>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">Attach up to 20 recordings or transcripts, or paste/attach screenshots with Ctrl+V. Large recordings upload in resumable chunks; background analysis does not lock the chat. Screenshot tasks are always shown for confirmation before ClickUp creation.</p>
         </div>
       </CardContent>
     </Card>
