@@ -32,7 +32,7 @@ describe("project chat architecture", () => {
     expect(model).toContain("Freshness policy: current time is");
     expect(model).toContain("live ClickUp and Slack evidence update their current status");
     expect(orchestration).toContain('.from("project_chat_messages")');
-    expect(orchestration).toContain(".limit(8)");
+    expect(orchestration).toContain(".limit(16)");
     expect(model).toContain("message.content.slice(0, 1200)");
   });
 
@@ -111,13 +111,16 @@ describe("project chat architecture", () => {
 
   it("accepts large recording batches through durable background ingestion", async () => {
     const fs = await import("node:fs/promises");
-    const [chat, trigger, migration, transcriber, batchStart, retry] = await Promise.all([
+    const [chat, trigger, migration, transcriber, batchStart, retry, orchestration, retrieval, aiModel] = await Promise.all([
       fs.readFile(new URL("../components/projects/ProjectChat.tsx", import.meta.url), "utf8"),
       fs.readFile(new URL("../trigger/index.ts", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/migrations/20260902120000_project_meeting_ingestion.sql", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/functions/project-meeting-transcribe-chunk/index.ts", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/functions/project-meeting-batch-start/index.ts", import.meta.url), "utf8"),
       fs.readFile(new URL("../../supabase/functions/project-meeting-retry/index.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/functions/_shared/agent/orchestration.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/functions/_shared/agent/retrieval.ts", import.meta.url), "utf8"),
+      fs.readFile(new URL("../../supabase/functions/_shared/agent/aiModel.ts", import.meta.url), "utf8"),
     ]);
 
     expect(chat).toContain(".mp3,.mp4,.m4a,.wav,.webm");
@@ -137,6 +140,13 @@ describe("project chat architecture", () => {
     expect(trigger).toContain("childBatch.runs.map");
     expect(trigger).toContain("counts.completed + counts.failed !== counts.total");
     expect(trigger).toContain('counts.completed === counts.total ? "completed"');
+    expect(trigger).toContain('.select("user_message")');
+    expect(trigger).toContain("Original user request that initiated this import");
+    expect(trigger).toContain("Do not substitute a generic meeting summary");
+    expect(orchestration).toContain(".limit(16)");
+    expect(orchestration).toContain("inputText || agentInputText");
+    expect(retrieval).toContain('export { buildHistoryAwareRetrievalQuery } from "./conversationContext.ts"');
+    expect(aiModel).toContain("continues the latest unresolved objective");
     expect(trigger).toContain('"-segment_time", "600"');
     expect(migration).toContain("project_meeting_ingestion_batches");
     expect(migration).toContain("project_meeting_ingestion_items");

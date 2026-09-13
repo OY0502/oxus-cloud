@@ -500,16 +500,24 @@ export const projectMeetingBatchTask = task({
     const completedAt = new Date().toISOString();
     await admin.from("project_meeting_ingestion_batches").update({ status, progress_percent: 100, completed_at: completedAt }).eq("id", payload.batch_id);
 
+    const { data: batch } = await admin.from("project_meeting_ingestion_batches")
+      .select("user_message")
+      .eq("id", payload.batch_id)
+      .maybeSingle();
+    const originalRequest = typeof batch?.user_message === "string" && batch.user_message.trim()
+      ? batch.user_message.trim()
+      : "Review the newly processed meetings and summarize the relevant project context.";
+
     const { data: run, error: runError } = await admin.from("project_agent_runs").insert({
       project_id: payload.project_id, chat_session_id: payload.chat_session_id, user_id: payload.user_id,
-      input_summary: `Summarize completed meeting import (${counts.completed}/${counts.total})`, status: "running",
+      input_summary: `Answer meeting request after import (${counts.completed}/${counts.total}): ${originalRequest.slice(0, 300)}`, status: "running",
       diagnostics: { runtime: "trigger.dev", meeting_ingestion_batch_id: payload.batch_id },
     }).select("id").single();
     if (!runError && run) {
       try {
         const result = await workerPost("project-agent-run-worker", {
           project_id: payload.project_id, user_id: payload.user_id, agent_run_id: run.id,
-          input_text: `The background meeting import finished: ${counts.completed} of ${counts.total} files succeeded and ${counts.failed} failed. Summarize the newly learned project context, decisions, risks, open questions, and action items. Mention failed files without claiming their contents were analyzed.`,
+          input_text: `The background meeting import finished: ${counts.completed} of ${counts.total} files succeeded and ${counts.failed} failed.\n\nOriginal user request that initiated this import:\n${originalRequest}\n\nAnswer the original request directly using the newly ingested meetings and the active conversation thread. Preserve the subject, client question, people, and unresolved objective established in earlier messages. Do not substitute a generic meeting summary for the requested investigation. Include other decisions, risks, or action items only when they help answer the request. Mention failed files without claiming their contents were analyzed.`,
           mode: "answer_only", chat: true, chat_session_id: payload.chat_session_id, retry_managed: true,
         });
         if (result.error) throw new Error(String(result.error));

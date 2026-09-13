@@ -360,9 +360,9 @@ export function buildAgentContextBlock(ctx: {
   }
   if (ctx.chatHistory?.length) {
     parts.push(
-      `Recent conversation (for continuity only; it is not project knowledge):\n${ctx.chatHistory
+      `Active conversation thread (authoritative for resolving the user's subject, referents, and requested task; it is not factual project evidence):\n${ctx.chatHistory
         .map((message) => `${message.role}: ${message.content.slice(0, 1200)}`)
-        .join("\n\n")}`,
+        .join("\n\n")}\nTreat an underspecified follow-up, including a request to check attached meetings or files, as continuing the most recent unresolved user objective unless the user explicitly changes topic. Answer that objective after examining the new evidence; do not replace it with a generic summary of the files.`,
     );
   }
   if (ctx.profile) parts.push(`Project memory:\n${JSON.stringify(ctx.profile, null, 2)}`);
@@ -922,7 +922,7 @@ export async function generateAgentPlan(args: {
        args.reviewUploadedFiles
          ? "You are reviewing newly uploaded project evidence or revising an earlier review after clarifications inside project chat. Think like a senior project manager: extract requests faithfully, carry forward all useful project context, reconcile every action against the current ClickUp snapshot, and produce complete, detailed, confirmation-gated task suggestions. Only build dated meeting memory when the evidence is actually from a meeting."
        : args.isChat
-        ? "You are in the project's persistent chat. Give a direct, useful answer that reflects the freshest available project state. For weekly planning, anchor on the latest structured meeting and reconcile it with live ClickUp and Slack. Use the recent conversation only for continuity."
+        ? "You are in the project's persistent chat. Give a direct, useful answer that reflects the freshest available project state. For weekly planning, anchor on the latest structured meeting and reconcile it with live ClickUp and Slack. Use the active conversation thread to resolve what the user means across multiple messages. A short follow-up or newly attached evidence continues the latest unresolved objective unless the user explicitly changes topic. Conversation establishes intent and referents, not factual evidence."
         : "This is a single-shot intake, NOT a chat.",
       "Plan safe actions; external side effects require confirmation. Never tag, mention, ping, notify, or directly call out a client in a ClickUp comment unless the current user message explicitly requests it.",
       "You have access to the existing ClickUp hierarchy in context.",

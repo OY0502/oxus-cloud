@@ -11,6 +11,7 @@ import {
 import { contextualizeKnowledgeChunk } from "../knowledgeChunking.ts";
 import { loadActiveKnowledgeSourceIds } from "../knowledgeSourceScope.ts";
 import type { RetrievalChunk } from "./types.ts";
+export { buildHistoryAwareRetrievalQuery } from "./conversationContext.ts";
 import {
   deletePineconeNamespace,
   deletePineconeSource,
@@ -127,22 +128,6 @@ function isUuid(value: string): boolean {
 export function isTemporalKnowledgeQuery(query: string): boolean {
   return /\b(current|latest|recent|today|this week|next meeting|changed|blocker|risk|progress|priority|status|attention|update|yesterday|tomorrow)\b/i
     .test(query);
-}
-
-/** Add only the minimum conversation needed to resolve short follow-ups. */
-export function buildHistoryAwareRetrievalQuery(
-  currentMessage: string,
-  history: Array<{ role: string; content: string }> = [],
-): string {
-  const query = currentMessage.trim();
-  if (!query || history.length === 0) return query;
-  const needsContext = query.length < 90 || /\b(it|that|those|they|them|this|these|he|she|there|same|above|former|latter)\b/i.test(query);
-  if (!needsContext) return query;
-  const context = history
-    .slice(-4)
-    .map((message) => `${message.role}: ${message.content.replace(/\s+/g, " ").trim().slice(0, 700)}`)
-    .join("\n");
-  return `Conversation context:\n${context}\n\nCurrent question:\n${query}`.slice(-3_800);
 }
 
 async function updatePineconeSyncState(

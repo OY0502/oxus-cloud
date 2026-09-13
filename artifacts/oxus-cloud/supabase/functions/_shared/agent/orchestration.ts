@@ -1061,7 +1061,7 @@ export async function runProjectAgent(args: {
         .eq("chat_session_id", chatSessionId)
         .neq("agent_run_id", input.agent_run_id)
         .order("created_at", { ascending: false })
-        .limit(8)
+        .limit(16)
     : { data: [] as Array<{ role: string; content: string }> };
   const chatHistory = ((chatHistoryRes.data ?? []) as Array<{ role: string; content: string }>).reverse();
   let clarificationSourceRunId: string | null = null;
@@ -1117,7 +1117,7 @@ export async function runProjectAgent(args: {
     }
   }
   const retrievalQuery = buildHistoryAwareRetrievalQuery(
-    agentInputText || "Review the current project context and summarize the current state.",
+    inputText || agentInputText || "Review the current project context and summarize the current state.",
     chatHistory,
   );
   const retrieval = await retrieveProjectKnowledge({
