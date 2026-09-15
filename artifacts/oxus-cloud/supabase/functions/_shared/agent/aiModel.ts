@@ -470,7 +470,7 @@ const AGENT_PLAN_SCHEMA = `Return strict JSON:
   "confidence": 0.0
 }
 Rules:
-- Max 3 clarification_questions. Prefer 0.
+- Default clarification_questions to []. Ask only for unresolved information necessary to proceed reliably; use as many distinct questions as needed, with no fixed count. Do not ask for optional fields that can remain unset or information already in context.
 - Side-effect tools (ClickUp create/update/move) must set requires_confirmation=true.
 - Read existing ClickUp hierarchy before proposing docs/tasks. Prefer existing folders/lists.
 - NEVER create, rename, move, or archive folders/lists unless the user explicitly asks for folder/list management.
@@ -692,10 +692,10 @@ Rules:
 - Compare every concrete action item against the Current ClickUp task snapshot. Match by meaning, not exact wording.
 - Classify each actionable item as either new work or an update to existing work. If an equivalent ClickUp task already exists and the new evidence adds status, progress, client feedback, a decision, clarification, blocker, changed requirement, or acceptance information, emit an add_clickup_comment call for that exact task instead of create_clickup_task.
 - The proposed comment must state only the useful new update, preserve relevant source context, and be ready for PM review. Never post automatically. Do not tag, @mention, ping, or directly call out a client unless the current user message explicitly asks for it.
-- In answer, use only the relevant short sections from: Decisions, Existing tasks with proposed updates, Suggested new tasks. Omit empty sections.
+- In answer, briefly summarize decisions and the overall review outcome. Task names, descriptions, and proposed updates belong in the confirmation cards below: do not repeat them as lists or sections in the message body. Refer to the cards collectively when needed.
 - Format answer as readable Markdown with section headings and short bullet lists. Never return a dense wall of prose.
 - Never include a Questions or Questions to clarify section, clarification question objects, or their reasons in answer. clarification_questions are rendered separately as interactive controls.
-- Ask up to 3 specific, answerable clarification questions that materially improve ownership, scope, due date, acceptance criteria, or whether work is still required. Never ask generic questions such as "Anything else?".
+- Default clarification_questions to []. Ask only when missing or contradictory information prevents a reliable scope, outcome, or necessary decision and cannot be resolved from the supplied context. Ask exactly as many distinct questions as needed, with no fixed count or quota. Do not ask about optional ownership, dates, or estimates when they can remain unset; do not repeat answered questions. State the concrete decision each question blocks in reason. Never ask generic questions such as "Anything else?".
 - For every actionable unit of missing work with no semantically equivalent ClickUp task, emit one create_clickup_task tool call. Do not target three, five, or any other fixed count: return exactly as many tasks as the evidence and project context require, splitting only when work has a distinct outcome, owner, or delivery path. It will only become a pending confirmation card; do not claim it was created.
 - Do not emit a task for a vague discussion, completed work, a low-priority idea explicitly deferred, or an item that needs clarification first.
 - Never duplicate an existing open, in-progress, or completed ClickUp task unless the meeting clearly defines distinct new follow-up work.
@@ -703,7 +703,7 @@ Rules:
 - If the task snapshot source is unavailable, state that ClickUp could not be verified and emit no create_clickup_task or add_clickup_comment calls.
 - Use the existing ClickUp hierarchy to choose the best destination list. Never create or reorganize folders/lists.
 - Use all useful supplied context, including the screenshot/transcript, recent conversation, project memory, live ClickUp, Slack, and clarification evidence. The current upload is important but must not erase relevant established context.
-- Every task description must be implementation-ready Markdown, not a restatement of the title. Include: objective/outcome; relevant client and project context; scope and implementation notes; dependencies or constraints when known; and concrete, testable acceptance criteria. Preserve important names, UI behavior, edge cases, and rationale from the evidence. Do not leave description empty or generic.
+- Every task description must be implementation-ready Markdown, not a restatement of the title. Include: objective/outcome; relevant client and project context; scope and implementation notes; dependencies or constraints when known; and concrete, testable acceptance criteria. Preserve important names, UI behavior, edge cases, and rationale from the evidence. Do not leave description empty or generic. Identify where the work appears: the affected product page, feature, screen, or user workflow, and where the request originated (conversation, screenshot, channel, or meeting; include speaker/date/link when supplied). Include relevant user-provided quotes verbatim in Markdown blockquotes, with attribution when known. Never invent quotations, locations, or source details. Put this context and evidence inside description itself, not only in source_context or separate fields.
 - Default every new task to status "to do". Set start_date to today unless the evidence supports a later start. Never emit a start or due date earlier than the current date in Freshness policy.
 - Infer a due date when reasonably possible. Prefer a date before the next meeting when the task can realistically fit; for work too large or uncertain to schedule responsibly, use null. Never invent a past due date.
 - Estimate time only when the scope is sufficiently bounded; otherwise use null.
@@ -850,7 +850,6 @@ const FILE_REVIEW_JSON_SCHEMA: Record<string, unknown> = {
     proposed_tasks: { type: "array", maxItems: 0, items: { type: "string" } },
     clarification_questions: {
       type: "array",
-      maxItems: 3,
       items: {
         type: "object",
         additionalProperties: false,
@@ -947,7 +946,7 @@ export async function generateAgentPlan(args: {
       .filter((fact) => fact?.explicit_user_fact === true)
       .slice(0, 6),
     proposed_tasks: data.proposed_tasks ?? [],
-    clarification_questions: (data.clarification_questions ?? []).slice(0, 3),
+    clarification_questions: data.clarification_questions ?? [],
     tool_calls: (data.tool_calls ?? []).map((tc) => {
       const raw = tc as Record<string, unknown> & { tool_name?: AgentToolName; requires_confirmation?: boolean };
       return {

@@ -33,7 +33,7 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
   { name: "link_clickup_doc_to_task", description: "Link a ClickUp doc to a task after user confirmation.", requires_confirmation: true },
   { name: "sync_clickup_docs", description: "Sync ClickUp docs into project knowledge (explicit user action).", requires_confirmation: true },
   { name: "sync_slack_channel", description: "Sync linked Slack channel history.", requires_confirmation: false },
-  { name: "ask_clarification_questions", description: "Surface up to 3 clarification questions.", requires_confirmation: false },
+  { name: "ask_clarification_questions", description: "Surface only necessary clarification questions, with no fixed count.", requires_confirmation: false },
   { name: "answer_project_question", description: "Answer from project context without side effects.", requires_confirmation: false },
   { name: "read_clickup_hierarchy", description: "Read cached ClickUp folder/list/doc hierarchy.", requires_confirmation: false },
   { name: "sync_clickup_hierarchy", description: "Refresh ClickUp hierarchy cache from API.", requires_confirmation: true },

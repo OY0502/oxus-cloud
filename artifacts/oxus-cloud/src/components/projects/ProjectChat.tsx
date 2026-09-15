@@ -663,7 +663,7 @@ export function ProjectChat({ projectId, className }: { projectId: string; class
         ? `Clarification responses\n\n${text}`
         : text || (reviewingImages
           ? `Review the attached ${files.length === 1 ? "client conversation screenshot" : "client conversation screenshots"}. Extract every actionable client request, reconcile it with all useful project context and the current ClickUp board, and propose exactly the non-duplicate tasks needed to cover the work. Make each description implementation-ready with context and acceptance criteria. Prepare confirmation cards so I can review each task before creation.`
-          : `Review the attached ${files.length === 1 ? "meeting file" : "meeting files"} as a project manager. Compare every action item against the current ClickUp board, identify what is already covered, ask specific clarification questions, and prepare confirmation cards for genuinely missing tasks.`);
+          : `Review the attached ${files.length === 1 ? "meeting file" : "meeting files"} as a project manager. Compare every action item against the current ClickUp board, identify what is already covered, ask clarification questions only if necessary to resolve missing information, and prepare confirmation cards for genuinely missing tasks.`);
       if (reviewingFiles) {
         const selectedFiles = [...files];
         const uploadedFileIds = new Array<string>(selectedFiles.length);

@@ -16,6 +16,7 @@ import {
   docTitleFromPayload,
   isClickupDocContentValid,
   sourceContextFromPayload,
+  taskDescriptionFromPayload,
 } from "@/lib/clickupDocTool";
 import type { AgentToolRun } from "@/lib/types";
 import {
@@ -621,7 +622,7 @@ function taskValuesFromPayload(payload: Record<string, unknown>): ClickupTaskFor
 
   return {
     title: docTitleFromPayload(payload),
-    description: docContentFromPayload(payload),
+    description: taskDescriptionFromPayload(payload),
     priority: ["urgent", "high", "medium", "low"].includes(priority)
       ? priority as ClickupTaskFormValues["priority"]
       : "medium",

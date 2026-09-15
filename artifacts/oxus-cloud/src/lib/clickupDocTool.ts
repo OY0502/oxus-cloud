@@ -1,6 +1,12 @@
 /** Mirror of server CLICKUP_DOC_MIN_CONTENT_LENGTH — keep in sync with clickupDocTool.ts */
 export const CLICKUP_DOC_MIN_CONTENT_LENGTH = 100;
 
+export function taskDescriptionFromPayload(payload: Record<string, unknown>): string {
+  return typeof payload.description === "string" && payload.description.trim()
+    ? payload.description
+    : docContentFromPayload(payload);
+}
+
 export function docContentFromPayload(payload: Record<string, unknown>): string {
   const val = (key: string) => (typeof payload[key] === "string" ? payload[key] as string : "");
   return (
